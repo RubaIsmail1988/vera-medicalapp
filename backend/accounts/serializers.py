@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from django.contrib.auth import get_user_model
-from .models import CustomUser, DoctorDetails, PatientDetails, Hospital, Lab, AccountDeletionRequest
+from .models import CustomUser, DoctorDetails, PatientDetails, Hospital, Lab, AccountDeletionRequest, AppointmentType, DoctorAppointmentType, DoctorAvailability
 from django.utils import timezone
 from django.contrib.auth import get_user_model
 ...
@@ -237,3 +237,70 @@ class PasswordResetConfirmSerializer(serializers.Serializer):
     email = serializers.EmailField()
     code = serializers.CharField(max_length=6)
     new_password = serializers.CharField(min_length=6, max_length=128)
+
+class AppointmentTypeSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AppointmentType
+        fields = ["id", "type_name", "description", "created_at", "updated_at"]
+        read_only_fields = ["id", "created_at", "updated_at"]
+
+
+class DoctorAppointmentTypeSerializer(serializers.ModelSerializer):
+    doctor = serializers.PrimaryKeyRelatedField(read_only=True)
+
+    class Meta:
+        model = DoctorAppointmentType
+        fields = ["id", "doctor", "appointment_type", "duration_minutes"]
+        read_only_fields = ["id", "doctor"]
+
+    def validate_duration_minutes(self, value):
+        if value <= 0:
+            raise serializers.ValidationError("duration_minutes must be > 0.")
+        return value
+    def validate(self, attrs):
+        request = self.context.get("request")
+        doctor = getattr(request, "user", None) if request else None
+
+        appointment_type = attrs.get("appointment_type")
+        if doctor and appointment_type:
+            if DoctorAppointmentType.objects.filter(
+                doctor=doctor,
+                appointment_type=appointment_type,
+            ).exists():
+              raise serializers.ValidationError({
+                "appointment_type": "This appointment type is already configured for this doctor."
+              })
+        return attrs
+
+from .models import DoctorAvailability
+
+class DoctorAvailabilitySerializer(serializers.ModelSerializer):
+    doctor = serializers.PrimaryKeyRelatedField(read_only=True)
+
+    class Meta:
+        model = DoctorAvailability
+        fields = ["id", "doctor", "day_of_week", "start_time", "end_time", "created_at", "updated_at"]
+        read_only_fields = ["id", "doctor", "created_at", "updated_at"]
+
+    def validate(self, attrs):
+        request = self.context.get("request")
+        doctor = getattr(request, "user", None)
+
+        day_of_week = attrs.get("day_of_week")
+        start_time = attrs.get("start_time")
+        end_time = attrs.get("end_time")
+
+        if start_time and end_time and start_time >= end_time:
+            raise serializers.ValidationError("start_time must be earlier than end_time.")
+
+        if doctor and day_of_week:
+            exists = DoctorAvailability.objects.filter(
+                doctor=doctor,
+                day_of_week=day_of_week,
+            ).exists()
+            if exists:
+                raise serializers.ValidationError({
+                    "day_of_week": "Availability for this day already exists for this doctor."
+                })
+
+        return attrs

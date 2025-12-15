@@ -2,6 +2,7 @@ from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin, BaseU
 from django.db import models
 from django.utils import timezone
 from django.conf import settings
+from django.core.validators import MinValueValidator
 
 # نموذج المحافظة المرجعية
 class Governorate(models.Model):
@@ -143,15 +144,21 @@ class PatientDetails(models.Model):
     def __str__(self):
         return f"{self.user.username} - Patient"
 
+#------------------------------
+#Appointment Type
+#-----------------------------
+
 class AppointmentType(models.Model):
-    type_name = models.CharField(max_length=150)
+    type_name = models.CharField(max_length=150, unique=True)
     description = models.TextField(blank=True, null=True)
     created_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(auto_now=True)
 
+    class Meta:
+        ordering = ["type_name"]
+
     def __str__(self):
         return self.type_name
-
 #------------------------------
 #reset password
 #-----------------------------
@@ -205,12 +212,26 @@ class PasswordResetOTP(models.Model):
 # أنواع زيارة الطبيب الخاصة به (مدة محددة لكل طبيب)
 # -----------------------------
 class DoctorAppointmentType(models.Model):
-    doctor = models.ForeignKey('CustomUser', on_delete=models.CASCADE, limit_choices_to={'is_staff': False})
-    appointment_type = models.ForeignKey(AppointmentType, on_delete=models.CASCADE)
-    duration_minutes = models.PositiveIntegerField()
+    doctor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="doctor_appointment_types",
+        limit_choices_to={"role": "doctor"},
+    )
+    appointment_type = models.ForeignKey(
+        AppointmentType,
+        on_delete=models.CASCADE,
+        related_name="doctor_appointment_types",
+    )
+    duration_minutes = models.PositiveIntegerField(validators=[MinValueValidator(1)])
 
     class Meta:
-        unique_together = ('doctor', 'appointment_type')
+        constraints = [
+            models.UniqueConstraint(
+                fields=["doctor", "appointment_type"],
+                name="uniq_doctor_appointment_type",
+            ),
+        ]
 
     def __str__(self):
         return f"{self.doctor.username} - {self.appointment_type.type_name}"
@@ -220,20 +241,39 @@ class DoctorAppointmentType(models.Model):
 # -----------------------------
 class DoctorAvailability(models.Model):
     DAYS_OF_WEEK = [
-        ('Monday','Monday'),
-        ('Tuesday','Tuesday'),
-        ('Wednesday','Wednesday'),
-        ('Thursday','Thursday'),
-        ('Friday','Friday'),
-        ('Saturday','Saturday'),
-        ('Sunday','Sunday'),
+        ("Monday", "Monday"),
+        ("Tuesday", "Tuesday"),
+        ("Wednesday", "Wednesday"),
+        ("Thursday", "Thursday"),
+        ("Friday", "Friday"),
+        ("Saturday", "Saturday"),
+        ("Sunday", "Sunday"),
     ]
-    doctor = models.ForeignKey('CustomUser', on_delete=models.CASCADE, limit_choices_to={'is_staff': False})
+
+    doctor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="availabilities",
+        limit_choices_to={"role": "doctor"},
+    )
     day_of_week = models.CharField(max_length=10, choices=DAYS_OF_WEEK)
     start_time = models.TimeField()
     end_time = models.TimeField()
     created_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["doctor", "day_of_week"],
+                name="uniq_doctor_day_of_week",
+            ),
+            models.CheckConstraint(
+                check=models.Q(start_time__lt=models.F("end_time")),
+                name="chk_start_time_before_end_time",
+            ),
+        ]
+        ordering = ["doctor", "day_of_week", "start_time"]
 
     def __str__(self):
         return f"{self.doctor.username} - {self.day_of_week}: {self.start_time}-{self.end_time}"
