@@ -1,0 +1,28 @@
+# General
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Secrets
+.env
+.env.*
+
+# Python / Django
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.log
+backend/venv/
+backend/.venv/
+myenv/
+backend/*.sqlite3
+backend/media/
+backend/staticfiles/
+
+# Flutter / Dart
+mobile/.dart_tool/
+mobile/.pub/
+mobile/build/
+mobile/.flutter-plugins
+mobile/.flutter-plugins-dependencies
