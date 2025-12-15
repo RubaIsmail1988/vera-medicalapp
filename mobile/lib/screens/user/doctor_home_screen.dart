@@ -5,6 +5,12 @@ import 'doctor_details_entry_point.dart';
 import '/services/account_deletion_service.dart';
 import 'account_deletion_status_screen.dart';
 
+// Phase C (Doctor Scheduling Settings)
+import '../doctor/doctor_scheduling_settings_screen.dart';
+
+// UI Helpers
+import '../../utils/ui_helpers.dart';
+
 class DoctorHomeScreen extends StatefulWidget {
   final int userId;
   final String token;
@@ -43,13 +49,6 @@ class _DoctorHomeScreenState extends State<DoctorHomeScreen> {
     });
   }
 
-  void showSnackBar(String message) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(message)));
-  }
-
   @override
   Widget build(BuildContext context) {
     final greeting =
@@ -58,14 +57,12 @@ class _DoctorHomeScreenState extends State<DoctorHomeScreen> {
             : 'أهلاً بك';
 
     return Scaffold(
-      //appBar: AppBar(title: const Text('الصفحة الرئيسية - الطبيب')),
       body: Center(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(24),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // رسالة ترحيب بالاسم
               Text(
                 greeting,
                 textAlign: TextAlign.center,
@@ -80,7 +77,6 @@ class _DoctorHomeScreenState extends State<DoctorHomeScreen> {
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 14, color: Colors.grey),
               ),
-
               const SizedBox(height: 32),
 
               // عرض / تعديل بيانات الطبيب
@@ -100,6 +96,24 @@ class _DoctorHomeScreenState extends State<DoctorHomeScreen> {
                     );
                   },
                   child: const Text('عرض / تعديل بيانات الطبيب'),
+                ),
+              ),
+
+              const SizedBox(height: 12),
+
+              // Phase C - إعدادات الجدولة
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const DoctorSchedulingSettingsScreen(),
+                      ),
+                    );
+                  },
+                  child: const Text('إعدادات الجدولة'),
                 ),
               ),
 
@@ -136,13 +150,15 @@ class _DoctorHomeScreenState extends State<DoctorHomeScreen> {
                           ),
                           actions: [
                             TextButton(
-                              onPressed:
-                                  () => Navigator.pop(dialogContext, false),
+                              onPressed: () {
+                                Navigator.pop(dialogContext, false);
+                              },
                               child: const Text('إلغاء'),
                             ),
                             ElevatedButton(
-                              onPressed:
-                                  () => Navigator.pop(dialogContext, true),
+                              onPressed: () {
+                                Navigator.pop(dialogContext, true);
+                              },
                               child: const Text('تأكيد الطلب'),
                             ),
                           ],
@@ -150,24 +166,30 @@ class _DoctorHomeScreenState extends State<DoctorHomeScreen> {
                       },
                     );
 
-                    // بعد أول await
-                    if (!mounted) return;
+                    if (!context.mounted) {
+                      return;
+                    }
 
-                    if (confirmed != true) return;
+                    if (confirmed != true) {
+                      return;
+                    }
 
                     final success = await deletionService.createDeletionRequest(
                       reason: reasonController.text,
                     );
 
-                    // بعد ثاني await
-                    if (!mounted) return;
+                    if (!context.mounted) {
+                      return;
+                    }
 
-                    showSnackBar(
+                    showAppSnackBar(
+                      context,
                       success
                           ? 'تم إرسال طلب حذف الحساب بنجاح.'
                           : 'فشل إرسال طلب حذف الحساب، حاول مرة أخرى.',
                     );
                   },
+
                   child: const Text('طلب حذف الحساب'),
                 ),
               ),

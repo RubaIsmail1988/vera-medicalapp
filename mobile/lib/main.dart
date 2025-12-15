@@ -20,6 +20,8 @@ import 'screens/user/patient_home_screen.dart';
 import 'screens/user/doctor_home_screen.dart';
 import 'screens/admin/hospital_list_screen.dart';
 import 'screens/admin/lab_list_screen.dart';
+//phase c
+import 'screens/doctor/doctor_scheduling_settings_screen.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -113,6 +115,8 @@ class MyAppState extends State<MyApp> {
             token: args['token'] as String,
           );
         },
+        '/doctor-scheduling-settings':
+            (context) => const DoctorSchedulingSettingsScreen(),
         '/hospital-list': (context) => const HospitalListScreen(),
         '/lab-list': (context) => const LabListScreen(),
       },
