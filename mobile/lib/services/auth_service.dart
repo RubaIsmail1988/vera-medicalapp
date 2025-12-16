@@ -248,10 +248,8 @@ class AuthService {
       return http.Response('Unauthorized', 401);
     }
 
-    // جرّب الطلب بالتوكن الحالي
     final first = await send(token);
 
-    // إذا انتهت صلاحية التوكن → 401 → refresh → retry مرة واحدة
     if (first.statusCode == 401) {
       await refreshToken();
       final newToken = await getAccessToken();
