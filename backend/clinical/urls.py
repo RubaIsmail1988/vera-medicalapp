@@ -11,6 +11,7 @@ from .views import (
     PrescriptionRetrieveView,
     MedicationAdherenceListCreateView,
     OutboxEventListView,
+    OrderFileDeleteView,
 )
 
 urlpatterns = [
@@ -35,4 +36,6 @@ urlpatterns = [
 
     # Outbox (optional)
     path("outbox/", OutboxEventListView.as_view(), name="outbox-list"),
+    path("files/<int:file_id>/", OrderFileDeleteView.as_view(), name="clinical-file-delete"),
+
 ]

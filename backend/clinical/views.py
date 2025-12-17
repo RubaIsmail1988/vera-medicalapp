@@ -5,6 +5,8 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.views import APIView
+from django.shortcuts import get_object_or_404
 
 from .models import (
     ClinicalOrder,
@@ -38,6 +40,16 @@ def _create_outbox_event(*, event_type: str, actor, patient=None, obj=None, payl
     except Exception:
         # Fail-safe: لا نفشل العملية الأساسية إذا فشل تسجيل الحدث
         pass
+
+
+def _is_pending_review_status(value: str) -> bool:
+    """
+    توحيد التعامل مع pending:
+    - بعض ردود API عندكم كانت "pending"
+    - السياسة الجديدة تسميها "pending_review"
+    """
+    v = (value or "").strip().lower()
+    return v in ("pending", "pending_review", "pending-review")
 
 
 class ClinicalOrderListCreateView(generics.ListCreateAPIView):
@@ -162,6 +174,75 @@ class OrderFileUploadView(generics.CreateAPIView):
         return Response(MedicalRecordFileSerializer(file_obj).data, status=status.HTTP_201_CREATED)
 
 
+class OrderFileDeleteView(APIView):
+    """
+    DELETE /api/clinical/files/<file_id>/
+
+    - admin: مسموح دائمًا
+    - patient: فقط إذا:
+        - file.patient_id == request.user.id
+        - file.review_status == pending (يدعم pending / pending_review)
+      غير ذلك: 403
+    - عند الحذف: حذف من storage ثم حذف السجل
+    - (اختياري) تسجيل OutboxEvent MEDICAL_FILE_DELETED (Pending)
+    """
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, file_id):
+        record_file = get_object_or_404(MedicalRecordFile, pk=file_id)
+
+        user = request.user
+
+        # admin مسموح دائمًا
+        if is_admin(user):
+            if getattr(record_file, "file", None):
+                record_file.file.delete(save=False)
+            record_file.delete()
+
+            _create_outbox_event(
+                event_type="MEDICAL_FILE_DELETED",
+                actor=user,
+                patient=getattr(record_file, "patient", None),
+                obj=record_file,
+                payload={"reason": "deleted_by_admin"},
+            )
+
+            return Response(status=status.HTTP_204_NO_CONTENT)
+
+        # patient مسموح فقط إذا الملف له + pending
+        if is_patient(user):
+            if getattr(record_file, "patient_id", None) != getattr(user, "id", None):
+                return Response(
+                    {"detail": "You do not have permission to delete this file."},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+            if not _is_pending_review_status(getattr(record_file, "review_status", "")):
+                return Response(
+                    {"detail": "You can only delete a pending file."},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+            if getattr(record_file, "file", None):
+                record_file.file.delete(save=False)
+            record_file.delete()
+
+            _create_outbox_event(
+                event_type="MEDICAL_FILE_DELETED",
+                actor=user,
+                patient=getattr(record_file, "patient", None),
+                obj=record_file,
+                payload={"reason": "deleted_by_patient"},
+            )
+
+            return Response(status=status.HTTP_204_NO_CONTENT)
+
+        return Response(
+            {"detail": "You do not have permission to delete this file."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+
 @api_view(["POST"])
 @permission_classes([IsAuthenticated, IsDoctor])
 def approve_medical_record_file(request, file_id: int):
@@ -172,6 +253,10 @@ def approve_medical_record_file(request, file_id: int):
     # Doctor must own the related order
     if not (is_admin(request.user) or f.order.doctor_id == request.user.id):
         return Response({"detail": "You can only review files for your own orders."}, status=403)
+
+    # Lock decision: لا يسمح بالمراجعة إذا الملف لم يعد pending
+    if not _is_pending_review_status(getattr(f, "review_status", "")):
+        return Response({"detail": "File already reviewed."}, status=status.HTTP_409_CONFLICT)
 
     f.review_status = MedicalRecordFile.ReviewStatus.APPROVED
     f.reviewed_by = request.user
@@ -199,6 +284,10 @@ def reject_medical_record_file(request, file_id: int):
 
     if not (is_admin(request.user) or f.order.doctor_id == request.user.id):
         return Response({"detail": "You can only review files for your own orders."}, status=403)
+
+    # Lock decision: لا يسمح بالمراجعة إذا الملف لم يعد pending
+    if not _is_pending_review_status(getattr(f, "review_status", "")):
+        return Response({"detail": "File already reviewed."}, status=status.HTTP_409_CONFLICT)
 
     doctor_note = request.data.get("doctor_note", "") or ""
     if not doctor_note.strip():
@@ -283,7 +372,9 @@ class MedicationAdherenceListCreateView(generics.ListCreateAPIView):
 
     def get_queryset(self):
         user = self.request.user
-        qs = MedicationAdherence.objects.all().select_related("patient", "prescription_item", "prescription_item__prescription")
+        qs = MedicationAdherence.objects.all().select_related(
+            "patient", "prescription_item", "prescription_item__prescription"
+        )
 
         if is_admin(user):
             return qs
