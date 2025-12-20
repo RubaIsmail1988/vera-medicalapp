@@ -8,6 +8,7 @@ import 'hospital_public_list_screen.dart';
 import 'lab_public_list_screen.dart';
 import 'patient_details_entry_point.dart';
 import 'doctor_details_entry_point.dart';
+import 'unified_record_screen.dart';
 import '/services/auth_service.dart';
 
 class UserShellScreen extends StatefulWidget {
@@ -182,10 +183,12 @@ class _UserShellScreenState extends State<UserShellScreen> {
       case 0:
         return buildHomeTab();
       case 1:
-        return const HospitalPublicListScreen();
+        return UnifiedRecordScreen(role: widget.role, userId: widget.userId);
       case 2:
-        return const LabPublicListScreen();
+        return const HospitalPublicListScreen();
       case 3:
+        return const LabPublicListScreen();
+      case 4:
         return buildAccountTab(context);
       default:
         return buildHomeTab();
@@ -204,8 +207,10 @@ class _UserShellScreenState extends State<UserShellScreen> {
                   ? "الصفحة الرئيسية - الطبيب"
                   : "الصفحة الرئيسية - المريض")
               : currentIndex == 1
-              ? "المشافي"
+              ? "الإضبارة الطبية"
               : currentIndex == 2
+              ? "المشافي"
+              : currentIndex == 3
               ? "المخابر"
               : "الحساب",
         ),
@@ -240,6 +245,10 @@ class _UserShellScreenState extends State<UserShellScreen> {
         type: BottomNavigationBarType.fixed,
         items: const [
           BottomNavigationBarItem(icon: Icon(Icons.home), label: "الرئيسية"),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.folder_shared),
+            label: "الأضبارة",
+          ),
           BottomNavigationBarItem(
             icon: Icon(Icons.local_hospital),
             label: "المشافي",
