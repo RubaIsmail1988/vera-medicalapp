@@ -10,13 +10,22 @@ from .models import (
 )
 
 
+# ---------------------------------------------------------------------------
+# Clinical Orders
+# ---------------------------------------------------------------------------
+
 class ClinicalOrderSerializer(serializers.ModelSerializer):
+    doctor_display_name = serializers.SerializerMethodField()
+    patient_display_name = serializers.SerializerMethodField()
+
     class Meta:
         model = ClinicalOrder
         fields = [
             "id",
             "doctor",
+            "doctor_display_name",
             "patient",
+            "patient_display_name",
             "order_category",
             "title",
             "details",
@@ -27,6 +36,44 @@ class ClinicalOrderSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["id", "created_at", "updated_at"]
 
+    def get_doctor_display_name(self, obj):
+        doctor = obj.doctor
+        if not doctor:
+            return None
+
+        full_name = getattr(doctor, "get_full_name", None)
+        if callable(full_name) and full_name():
+            return full_name()
+
+        if getattr(doctor, "username", None):
+            return doctor.username
+
+        if getattr(doctor, "email", None):
+            return doctor.email
+
+        return f"Doctor #{doctor.id}"
+
+    def get_patient_display_name(self, obj):
+        patient = obj.patient
+        if not patient:
+            return None
+
+        full_name = getattr(patient, "get_full_name", None)
+        if callable(full_name) and full_name():
+            return full_name()
+
+        if getattr(patient, "username", None):
+            return patient.username
+
+        if getattr(patient, "email", None):
+            return patient.email
+
+        return f"Patient #{patient.id}"
+
+
+# ---------------------------------------------------------------------------
+# Medical Record Files
+# ---------------------------------------------------------------------------
 
 class MedicalRecordFileCreateSerializer(serializers.ModelSerializer):
     """
@@ -56,8 +103,6 @@ class MedicalRecordFileCreateSerializer(serializers.ModelSerializer):
         ]
 
     def validate(self, attrs):
-        # لا ندخل هنا منطق صلاحيات (Doctor/Patient) لأنه مكانه views/permissions.
-        # فقط تحقق سلامة ربط الملف بطلب.
         order = attrs.get("order")
         patient = attrs.get("patient")
         if order and patient and order.patient_id != patient.id:
@@ -91,6 +136,10 @@ class MedicalRecordFileSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "uploaded_at"]
 
 
+# ---------------------------------------------------------------------------
+# Prescriptions
+# ---------------------------------------------------------------------------
+
 class PrescriptionItemSerializer(serializers.ModelSerializer):
     class Meta:
         model = PrescriptionItem
@@ -108,19 +157,57 @@ class PrescriptionItemSerializer(serializers.ModelSerializer):
 
 class PrescriptionSerializer(serializers.ModelSerializer):
     items = PrescriptionItemSerializer(many=True)
+    doctor_display_name = serializers.SerializerMethodField()
+    patient_display_name = serializers.SerializerMethodField()
 
     class Meta:
         model = Prescription
         fields = [
             "id",
             "doctor",
+            "doctor_display_name",
             "patient",
+            "patient_display_name",
             "appointment",
             "notes",
             "created_at",
             "items",
         ]
         read_only_fields = ["id", "created_at"]
+
+    def get_doctor_display_name(self, obj):
+        doctor = obj.doctor
+        if not doctor:
+            return None
+
+        full_name = getattr(doctor, "get_full_name", None)
+        if callable(full_name) and full_name():
+            return full_name()
+
+        if getattr(doctor, "username", None):
+            return doctor.username
+
+        if getattr(doctor, "email", None):
+            return doctor.email
+
+        return f"Doctor #{doctor.id}"
+
+    def get_patient_display_name(self, obj):
+        patient = obj.patient
+        if not patient:
+            return None
+
+        full_name = getattr(patient, "get_full_name", None)
+        if callable(full_name) and full_name():
+            return full_name()
+
+        if getattr(patient, "username", None):
+            return patient.username
+
+        if getattr(patient, "email", None):
+            return patient.email
+
+        return f"Patient #{patient.id}"
 
     def create(self, validated_data):
         items_data = validated_data.pop("items", [])
@@ -136,7 +223,6 @@ class PrescriptionSerializer(serializers.ModelSerializer):
         return prescription
 
     def update(self, instance, validated_data):
-        # تحديث بسيط: إذا أُرسلت items نستبدلها بالكامل (بدون ذكاء/دمج).
         items_data = validated_data.pop("items", None)
 
         for attr, value in validated_data.items():
@@ -155,19 +241,70 @@ class PrescriptionSerializer(serializers.ModelSerializer):
         return instance
 
 
+# ---------------------------------------------------------------------------
+# Medication Adherence
+# ---------------------------------------------------------------------------
+
 class MedicationAdherenceSerializer(serializers.ModelSerializer):
+    # --- حقول مشتقة للعرض فقط ---
+    medicine_name = serializers.SerializerMethodField()
+    dosage = serializers.SerializerMethodField()
+    frequency = serializers.SerializerMethodField()
+    patient_display_name = serializers.SerializerMethodField()
+
     class Meta:
         model = MedicationAdherence
         fields = [
             "id",
             "patient",
+            "patient_display_name",
             "prescription_item",
+            "medicine_name",
+            "dosage",
+            "frequency",
             "status",
             "taken_at",
             "created_at",
         ]
         read_only_fields = ["id", "created_at"]
 
+    # ----------------------------
+    # Serializer methods
+    # ----------------------------
+
+    def get_medicine_name(self, obj):
+        item = getattr(obj, "prescription_item", None)
+        return getattr(item, "medicine_name", None)
+
+    def get_dosage(self, obj):
+        item = getattr(obj, "prescription_item", None)
+        return getattr(item, "dosage", None)
+
+    def get_frequency(self, obj):
+        item = getattr(obj, "prescription_item", None)
+        return getattr(item, "frequency", None)
+
+    def get_patient_display_name(self, obj):
+        patient = getattr(obj, "patient", None)
+        if not patient:
+            return None
+
+        full_name = getattr(patient, "get_full_name", None)
+        if callable(full_name) and full_name():
+            return full_name()
+
+        if getattr(patient, "username", None):
+            return patient.username
+
+        if getattr(patient, "email", None):
+            return patient.email
+
+        return f"Patient #{patient.id}"
+
+
+# ---------------------------------------------------------------------------
+# Outbox
+# ---------------------------------------------------------------------------
 
 class OutboxEventSerializer(serializers.ModelSerializer):
     class Meta:

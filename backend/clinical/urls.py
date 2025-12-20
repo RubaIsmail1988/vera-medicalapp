@@ -26,7 +26,7 @@ urlpatterns = [
     # File review actions
     path("files/<int:file_id>/approve/", approve_medical_record_file, name="file-approve"),
     path("files/<int:file_id>/reject/", reject_medical_record_file, name="file-reject"),
-
+    path("files/<int:file_id>/", OrderFileDeleteView.as_view(), name="clinical-file-delete"), 
     # Prescriptions
     path("prescriptions/", PrescriptionListCreateView.as_view(), name="prescription-list-create"),
     path("prescriptions/<int:pk>/", PrescriptionRetrieveView.as_view(), name="prescription-retrieve"),
@@ -36,6 +36,6 @@ urlpatterns = [
 
     # Outbox (optional)
     path("outbox/", OutboxEventListView.as_view(), name="outbox-list"),
-    path("files/<int:file_id>/", OrderFileDeleteView.as_view(), name="clinical-file-delete"),
+    
 
 ]
