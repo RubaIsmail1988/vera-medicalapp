@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 
 import '/models/hospital.dart';
+import '/models/governorate.dart';
 import '/services/hospital_service.dart';
+import '/services/governorate_service.dart';
 
 class HospitalFormScreen extends StatefulWidget {
   final Hospital? hospital;
@@ -13,93 +15,136 @@ class HospitalFormScreen extends StatefulWidget {
 }
 
 class _HospitalFormScreenState extends State<HospitalFormScreen> {
-  final _formKey = GlobalKey<FormState>();
-  final HospitalService _hospitalService = HospitalService();
+  final formKey = GlobalKey<FormState>();
+  final hospitalService = HospitalService();
+  final governorateService = GovernorateService();
 
-  late TextEditingController _nameController;
-  late TextEditingController _governorateController;
-  late TextEditingController _addressController;
-  late TextEditingController _latitudeController;
-  late TextEditingController _longitudeController;
-  late TextEditingController _specialtyController;
-  late TextEditingController _contactInfoController;
+  late TextEditingController nameController;
+  late TextEditingController addressController;
+  late TextEditingController latitudeController;
+  late TextEditingController longitudeController;
+  late TextEditingController specialtyController;
+  late TextEditingController contactInfoController;
 
   bool loading = false;
+
+  List<Governorate> governorates = [];
+  int? selectedGovernorateId;
+  bool loadingGovernorates = true;
 
   @override
   void initState() {
     super.initState();
     final h = widget.hospital;
 
-    _nameController = TextEditingController(text: h?.name ?? "");
-    _governorateController = TextEditingController(
-      text: h?.governorate.toString() ?? "",
-    );
-    _addressController = TextEditingController(text: h?.address ?? "");
-    _latitudeController = TextEditingController(
+    nameController = TextEditingController(text: h?.name ?? "");
+    addressController = TextEditingController(text: h?.address ?? "");
+    latitudeController = TextEditingController(
       text: h?.latitude?.toString() ?? "",
     );
-    _longitudeController = TextEditingController(
+    longitudeController = TextEditingController(
       text: h?.longitude?.toString() ?? "",
     );
-    _specialtyController = TextEditingController(text: h?.specialty ?? "");
-    _contactInfoController = TextEditingController(text: h?.contactInfo ?? "");
+    specialtyController = TextEditingController(text: h?.specialty ?? "");
+    contactInfoController = TextEditingController(text: h?.contactInfo ?? "");
+
+    selectedGovernorateId = h?.governorate;
+
+    loadGovernorates();
+  }
+
+  Future<void> loadGovernorates() async {
+    setState(() {
+      loadingGovernorates = true;
+    });
+
+    try {
+      final items = await governorateService.fetchGovernorates();
+      if (!mounted) return;
+
+      setState(() {
+        governorates = items..sort((a, b) => a.name.compareTo(b.name));
+        loadingGovernorates = false;
+
+        // في وضع التعديل: إن لم تعد القيمة موجودة لأي سبب
+        if (selectedGovernorateId != null) {
+          final exists = governorates.any((g) => g.id == selectedGovernorateId);
+          if (!exists) {
+            selectedGovernorateId = null;
+          }
+        }
+      });
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        loadingGovernorates = false;
+      });
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text("فشل تحميل المحافظات: $e")));
+    }
   }
 
   @override
   void dispose() {
-    _nameController.dispose();
-    _governorateController.dispose();
-    _addressController.dispose();
-    _latitudeController.dispose();
-    _longitudeController.dispose();
-    _specialtyController.dispose();
-    _contactInfoController.dispose();
+    nameController.dispose();
+    addressController.dispose();
+    latitudeController.dispose();
+    longitudeController.dispose();
+    specialtyController.dispose();
+    contactInfoController.dispose();
     super.dispose();
   }
 
-  Future<void> _submit() async {
-    if (!_formKey.currentState!.validate()) return;
+  Future<void> submit() async {
+    if (!formKey.currentState!.validate()) return;
+
+    if (selectedGovernorateId == null) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text("يرجى اختيار المحافظة.")));
+      return;
+    }
 
     setState(() => loading = true);
 
-    final int governorateId =
-        int.tryParse(_governorateController.text.trim()) ?? 0;
     final double? lat =
-        _latitudeController.text.trim().isEmpty
+        latitudeController.text.trim().isEmpty
             ? null
-            : double.tryParse(_latitudeController.text.trim());
+            : double.tryParse(latitudeController.text.trim());
     final double? lng =
-        _longitudeController.text.trim().isEmpty
+        longitudeController.text.trim().isEmpty
             ? null
-            : double.tryParse(_longitudeController.text.trim());
+            : double.tryParse(longitudeController.text.trim());
 
     final hospital = Hospital(
       id: widget.hospital?.id,
-      name: _nameController.text.trim(),
-      governorate: governorateId,
+      name: nameController.text.trim(),
+      governorate: selectedGovernorateId!,
       address:
-          _addressController.text.trim().isEmpty
+          addressController.text.trim().isEmpty
               ? null
-              : _addressController.text.trim(),
+              : addressController.text.trim(),
       latitude: lat,
       longitude: lng,
       specialty:
-          _specialtyController.text.trim().isEmpty
+          specialtyController.text.trim().isEmpty
               ? null
-              : _specialtyController.text.trim(),
+              : specialtyController.text.trim(),
       contactInfo:
-          _contactInfoController.text.trim().isEmpty
+          contactInfoController.text.trim().isEmpty
               ? null
-              : _contactInfoController.text.trim(),
+              : contactInfoController.text.trim(),
     );
 
     try {
       final isEdit = widget.hospital != null;
       final response =
           isEdit
-              ? await _hospitalService.updateHospital(hospital)
-              : await _hospitalService.createHospital(hospital);
+              ? await hospitalService.updateHospital(hospital)
+              : await hospitalService.createHospital(hospital);
 
       if (!mounted) return;
 
@@ -138,34 +183,52 @@ class _HospitalFormScreenState extends State<HospitalFormScreen> {
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: Form(
-          key: _formKey,
+          key: formKey,
           child: ListView(
             children: [
               TextFormField(
-                controller: _nameController,
+                controller: nameController,
                 decoration: const InputDecoration(labelText: "اسم المشفى"),
                 validator:
                     (v) => v == null || v.trim().isEmpty ? "الحقل مطلوب" : null,
               ),
               const SizedBox(height: 12),
 
-              TextFormField(
-                controller: _governorateController,
-                decoration: const InputDecoration(labelText: "المحافظة (ID)"),
-                keyboardType: TextInputType.number,
-                validator:
-                    (v) => v == null || v.trim().isEmpty ? "الحقل مطلوب" : null,
-              ),
+              loadingGovernorates
+                  ? const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 8),
+                    child: LinearProgressIndicator(),
+                  )
+                  : DropdownButtonFormField<int>(
+                    value: selectedGovernorateId,
+                    items:
+                        governorates
+                            .map(
+                              (g) => DropdownMenuItem<int>(
+                                value: g.id,
+                                child: Text(g.name),
+                              ),
+                            )
+                            .toList(),
+                    onChanged: (v) {
+                      setState(() {
+                        selectedGovernorateId = v;
+                      });
+                    },
+                    decoration: const InputDecoration(labelText: "المحافظة"),
+                    validator: (v) => v == null ? "الحقل مطلوب" : null,
+                  ),
+
               const SizedBox(height: 12),
 
               TextFormField(
-                controller: _addressController,
+                controller: addressController,
                 decoration: const InputDecoration(labelText: "العنوان"),
               ),
               const SizedBox(height: 12),
 
               TextFormField(
-                controller: _latitudeController,
+                controller: latitudeController,
                 decoration: const InputDecoration(
                   labelText: "خط العرض (latitude)",
                 ),
@@ -176,7 +239,7 @@ class _HospitalFormScreenState extends State<HospitalFormScreen> {
               const SizedBox(height: 12),
 
               TextFormField(
-                controller: _longitudeController,
+                controller: longitudeController,
                 decoration: const InputDecoration(
                   labelText: "خط الطول (longitude)",
                 ),
@@ -187,13 +250,13 @@ class _HospitalFormScreenState extends State<HospitalFormScreen> {
               const SizedBox(height: 12),
 
               TextFormField(
-                controller: _specialtyController,
+                controller: specialtyController,
                 decoration: const InputDecoration(labelText: "التخصص"),
               ),
               const SizedBox(height: 12),
 
               TextFormField(
-                controller: _contactInfoController,
+                controller: contactInfoController,
                 decoration: const InputDecoration(labelText: "بيانات الاتصال"),
               ),
               const SizedBox(height: 20),
@@ -201,7 +264,7 @@ class _HospitalFormScreenState extends State<HospitalFormScreen> {
               loading
                   ? const Center(child: CircularProgressIndicator())
                   : ElevatedButton(
-                    onPressed: _submit,
+                    onPressed: submit,
                     child: Text(isEdit ? "حفظ التعديلات" : "حفظ"),
                   ),
             ],

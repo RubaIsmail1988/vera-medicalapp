@@ -6,8 +6,8 @@ import '../../main.dart'; // لإتاحة toggleTheme()
 import 'admin_home_screen.dart';
 import 'user_list_screen.dart';
 import 'deletion_requests_screen.dart';
-import '../admin/hospital_list_screen.dart';
-import '../admin/lab_list_screen.dart';
+import 'hospital_list_screen.dart';
+import 'lab_list_screen.dart';
 import '/services/auth_service.dart';
 
 class AdminShellScreen extends StatefulWidget {
@@ -26,10 +26,32 @@ class _AdminShellScreenState extends State<AdminShellScreen> {
   bool? isActive;
   bool loadingUserInfo = true;
 
+  late final List<Widget> pages;
+
   @override
   void initState() {
     super.initState();
-    loadUserInfo();
+
+    pages = [
+      AdminHomeScreen(
+        onNavigateToTab: (index) {
+          if (!mounted) return;
+          setState(() => currentIndex = index);
+        },
+      ),
+
+      UserListScreen(
+        onOpenDeletionRequests: () {
+          if (!mounted) return;
+          setState(() => currentIndex = 4); // تبويب Requests
+        },
+      ),
+
+      const HospitalListScreen(),
+      const LabListScreen(),
+      const DeletionRequestsScreen(),
+      const SizedBox.shrink(), // مكان احتياطي (لن يُستخدم)
+    ];
   }
 
   Future<void> loadUserInfo() async {
@@ -58,26 +80,6 @@ class _AdminShellScreenState extends State<AdminShellScreen> {
     if (!context.mounted) return;
 
     Navigator.pushNamedAndRemoveUntil(context, '/login', (route) => false);
-  }
-
-  Widget buildDashboardTab() {
-    return const AdminHomeScreen();
-  }
-
-  Widget buildUsersTab() {
-    return const UserListScreen();
-  }
-
-  Widget buildHospitalsTab() {
-    return const HospitalListScreen();
-  }
-
-  Widget buildLabsTab() {
-    return const LabListScreen();
-  }
-
-  Widget buildDeletionRequestsTab() {
-    return const DeletionRequestsScreen();
   }
 
   Widget buildProfileTab(BuildContext context) {
@@ -122,9 +124,7 @@ class _AdminShellScreenState extends State<AdminShellScreen> {
               activationText,
               style: TextStyle(fontSize: 14, color: activationColor),
             ),
-
             const SizedBox(height: 24),
-
             SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
@@ -139,22 +139,22 @@ class _AdminShellScreenState extends State<AdminShellScreen> {
     );
   }
 
-  Widget buildBody(BuildContext context) {
+  String appBarTitle() {
     switch (currentIndex) {
       case 0:
-        return buildDashboardTab();
+        return 'Dashboard';
       case 1:
-        return buildUsersTab();
+        return 'Users';
       case 2:
-        return buildHospitalsTab();
+        return 'Hospitals';
       case 3:
-        return buildLabsTab();
+        return 'Labs';
       case 4:
-        return buildDeletionRequestsTab();
+        return 'طلبات الحذف';
       case 5:
-        return buildProfileTab(context);
+        return 'Profile';
       default:
-        return buildDashboardTab();
+        return 'Dashboard';
     }
   }
 
@@ -164,20 +164,7 @@ class _AdminShellScreenState extends State<AdminShellScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(
-          currentIndex == 0
-              ? 'Dashboard'
-              : currentIndex == 1
-              ? 'Users'
-              : currentIndex == 2
-              ? 'Hospitals'
-              : currentIndex == 3
-              ? 'Labs'
-              : currentIndex == 4
-              ? 'طلبات الحذف'
-              : 'Profile',
-        ),
-
+        title: Text(appBarTitle()),
         // زر تبديل الثيم يظهر فقط في Dashboard
         actions:
             currentIndex == 0
@@ -195,9 +182,17 @@ class _AdminShellScreenState extends State<AdminShellScreen> {
                 ]
                 : null,
       ),
-
-      body: buildBody(context),
-
+      body: IndexedStack(
+        index: currentIndex,
+        children: [
+          pages[0],
+          pages[1],
+          pages[2],
+          pages[3],
+          pages[4],
+          buildProfileTab(context),
+        ],
+      ),
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: currentIndex,
         onTap: (index) {

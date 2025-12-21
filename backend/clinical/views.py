@@ -51,6 +51,27 @@ def _is_pending_review_status(value: str) -> bool:
     v = (value or "").strip().lower()
     return v in ("pending", "pending_review", "pending-review")
 
+def _doctor_is_linked_to_patient(*, doctor, patient_id: int) -> bool:
+    # 1) Existing clinical relationship via previous Orders
+    if ClinicalOrder.objects.filter(doctor=doctor, patient_id=patient_id).exists():
+        return True
+
+    # 2) Existing clinical relationship via previous Prescriptions
+    if Prescription.objects.filter(doctor=doctor, patient_id=patient_id).exists():
+        return True
+
+    # 3) Optional: if Appointment exists already, use it as a stronger link
+    try:
+        from accounts.models import Appointment  # عدّل المسار إذا لزم
+        if Appointment.objects.filter(doctor_id=doctor.id, patient_id=patient_id).exists():
+            return True
+    except Exception:
+        # Appointment model may not exist / import path differs; ignore safely
+        pass
+
+    return False
+
+
 
 class ClinicalOrderListCreateView(generics.ListCreateAPIView):
     serializer_class = ClinicalOrderSerializer
@@ -77,8 +98,17 @@ class ClinicalOrderListCreateView(generics.ListCreateAPIView):
 
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        patient = serializer.validated_data.get("patient")
+        patient_id = getattr(patient, "id", None)
 
-        order = serializer.save()
+        if patient_id is None:
+            return Response({"patient": "patient is required."}, status=400)
+
+        if is_doctor(request.user) and not _doctor_is_linked_to_patient(doctor=request.user, patient_id=patient_id):
+            return Response({"detail": "You cannot create orders for this patient."}, status=403)
+
+
+        order = serializer.save(doctor=request.user)
 
         _create_outbox_event(
             event_type="CLINICAL_ORDER_CREATED",
@@ -332,7 +362,16 @@ class PrescriptionListCreateView(generics.ListCreateAPIView):
 
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        rx = serializer.save()
+        patient = serializer.validated_data.get("patient")
+        patient_id = getattr(patient, "id", None)
+
+        if patient_id is None:
+            return Response({"patient": "patient is required."}, status=400)
+
+        if is_doctor(request.user) and not _doctor_is_linked_to_patient(doctor=request.user, patient_id=patient_id):
+            return Response({"detail": "You cannot create prescriptions for this patient."}, status=403)
+
+        rx = serializer.save(doctor=request.user)
 
         _create_outbox_event(
             event_type="PRESCRIPTION_CREATED",
@@ -389,16 +428,14 @@ class MedicationAdherenceListCreateView(generics.ListCreateAPIView):
         return qs.none()
 
     def create(self, request, *args, **kwargs):
-        # Patient only (admin allowed)
         if not (is_patient(request.user) or is_admin(request.user)):
             return Response({"detail": "Only patients can record adherence."}, status=403)
 
-        data = request.data.copy()
-        data["patient"] = str(request.user.id)
-
-        serializer = self.get_serializer(data=data)
+        serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        log = serializer.save()
+
+        #  Force patient من السيرفر دائمًا
+        log = serializer.save(patient=request.user)
 
         _create_outbox_event(
             event_type="MEDICATION_ADHERENCE_RECORDED",
@@ -408,14 +445,92 @@ class MedicationAdherenceListCreateView(generics.ListCreateAPIView):
             payload={"prescription_item_id": log.prescription_item_id, "status": log.status},
         )
 
-        return Response(MedicationAdherenceSerializer(log).data, status=status.HTTP_201_CREATED)
+        return Response(MedicationAdherenceSerializer(log, context={"request": request}).data, status=status.HTTP_201_CREATED)
 
+
+class ClinicalRecordAggregationView(APIView):
+    """
+    GET /api/clinical/record/?patient_id=...
+    Read-only aggregation within role scope.
+
+    - Admin: sees all data for patient
+    - Doctor: sees only data created by that doctor for the patient
+    - Patient: (option A) only self
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        patient_id_raw = request.query_params.get("patient_id")
+        if not patient_id_raw:
+            return Response({"patient_id": "patient_id is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            patient_id = int(patient_id_raw)
+        except ValueError:
+            return Response({"patient_id": "patient_id must be an integer."}, status=status.HTTP_400_BAD_REQUEST)
+
+        user = request.user
+
+        # -------------------------
+        # Scope resolution
+        # -------------------------
+        if is_admin(user):
+            orders_qs = ClinicalOrder.objects.filter(patient_id=patient_id).select_related("doctor", "patient", "appointment")
+            rx_qs = Prescription.objects.filter(patient_id=patient_id).select_related("doctor", "patient", "appointment").prefetch_related("items")
+            adh_qs = MedicationAdherence.objects.filter(patient_id=patient_id).select_related(
+                "patient", "prescription_item", "prescription_item__prescription"
+            )
+            scope = {"role": "admin", "admin_id": user.id}
+
+        elif is_doctor(user):
+            # Doctor scope: only what this doctor created for this patient
+            orders_qs = ClinicalOrder.objects.filter(doctor=user, patient_id=patient_id).select_related("doctor", "patient", "appointment")
+            rx_qs = Prescription.objects.filter(doctor=user, patient_id=patient_id).select_related("doctor", "patient", "appointment").prefetch_related("items")
+            adh_qs = MedicationAdherence.objects.filter(
+                patient_id=patient_id,
+                prescription_item__prescription__doctor=user,
+            ).select_related("patient", "prescription_item", "prescription_item__prescription")
+            scope = {"role": "doctor", "doctor_id": user.id}
+
+        elif is_patient(user):
+            # Option A : patient can only access their own record aggregation
+            if user.id != patient_id:
+                return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+            orders_qs = ClinicalOrder.objects.filter(patient=user).select_related("doctor", "patient", "appointment")
+            rx_qs = Prescription.objects.filter(patient=user).select_related("doctor", "patient", "appointment").prefetch_related("items")
+            adh_qs = MedicationAdherence.objects.filter(patient=user).select_related(
+                "patient", "prescription_item", "prescription_item__prescription"
+            )
+            scope = {"role": "patient", "patient_id": user.id}
+
+        else:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        # -------------------------
+        # Serialize
+        # -------------------------
+        orders_data = ClinicalOrderSerializer(orders_qs, many=True, context={"request": request}).data
+        prescriptions_data = PrescriptionSerializer(rx_qs, many=True, context={"request": request}).data
+        adherence_data = MedicationAdherenceSerializer(adh_qs, many=True, context={"request": request}).data
+
+        return Response(
+            {
+                "patient_id": patient_id,
+                "scope": scope,
+                "orders": orders_data,
+                "prescriptions": prescriptions_data,
+                "adherence": adherence_data,
+                "counts": {
+                    "orders": len(orders_data),
+                    "prescriptions": len(prescriptions_data),
+                    "adherence": len(adherence_data),
+                },
+            },
+            status=status.HTTP_200_OK,
+        )
 
 class OutboxEventListView(generics.ListAPIView):
-    """
-    للمتابعة الداخلية فقط (اختياري): admin يرى كل شيء.
-    doctor/patient يرون الأحداث المرتبطة بهم.
-    """
     serializer_class = OutboxEventSerializer
     permission_classes = [IsAuthenticated]
 
@@ -426,5 +541,5 @@ class OutboxEventListView(generics.ListAPIView):
         if is_admin(user):
             return qs
 
-        # Narrow to actor/patient matches
-        return qs.filter(actor=user) | qs.filter(patient=user)
+        return qs.none()
+

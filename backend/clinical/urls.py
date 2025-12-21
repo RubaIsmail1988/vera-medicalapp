@@ -12,6 +12,7 @@ from .views import (
     MedicationAdherenceListCreateView,
     OutboxEventListView,
     OrderFileDeleteView,
+    ClinicalRecordAggregationView,
 )
 
 urlpatterns = [
@@ -33,6 +34,10 @@ urlpatterns = [
 
     # Adherence
     path("adherence/", MedicationAdherenceListCreateView.as_view(), name="adherence-list-create"),
+
+    #aggrigation
+    path("record/", ClinicalRecordAggregationView.as_view(), name="clinical-record-aggregation"),
+
 
     # Outbox (optional)
     path("outbox/", OutboxEventListView.as_view(), name="outbox-list"),

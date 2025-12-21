@@ -17,8 +17,9 @@ from .serializers import (
     AppointmentTypeSerializer,
     DoctorAppointmentTypeSerializer,
     DoctorAvailabilitySerializer,
+    GovernorateSerializer,
 )
-from .models import CustomUser, PatientDetails, DoctorDetails, Hospital, Lab, AccountDeletionRequest,AppointmentType, DoctorAppointmentType, DoctorAvailability 
+from .models import CustomUser, PatientDetails, DoctorDetails, Hospital, Lab, AccountDeletionRequest,AppointmentType, DoctorAppointmentType, DoctorAvailability, Governorate 
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -592,3 +593,11 @@ class AppointmentTypeReadOnlyListView(ListAPIView):
     queryset = AppointmentType.objects.all()
     serializer_class = AppointmentTypeSerializer
     permission_classes = [IsAuthenticated]
+
+
+class GovernorateListView(generics.ListAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = GovernorateSerializer
+
+    def get_queryset(self):
+        return Governorate.objects.all().order_by("name")

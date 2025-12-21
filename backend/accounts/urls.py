@@ -42,6 +42,8 @@ from .views import (
 
     # CurrentUser:
     CurrentUserView,
+
+    GovernorateListView,
 )
 from .views import (
     PasswordResetRequestView,
@@ -158,5 +160,6 @@ urlpatterns = [
     path("doctor-availabilities/", DoctorAvailabilityListCreateView.as_view(), name="doctor-availabilities-list-create"),
     path("doctor-availabilities/<int:pk>/", DoctorAvailabilityRetrieveUpdateDestroyView.as_view(), name="doctor-availabilities-detail"),
     path("appointment-types-read/", AppointmentTypeReadOnlyListView.as_view(), name="appointment-types-read",),
-
+    # ...
+    path("governorates/", GovernorateListView.as_view(), name="governorate-list"),
 ]

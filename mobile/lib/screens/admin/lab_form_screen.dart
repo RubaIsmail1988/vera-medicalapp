@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 
 import '/models/lab.dart';
+import '/models/governorate.dart';
 import '/services/lab_service.dart';
+import '/services/governorate_service.dart';
 
 class LabFormScreen extends StatefulWidget {
   final Lab? lab;
@@ -13,95 +15,136 @@ class LabFormScreen extends StatefulWidget {
 }
 
 class _LabFormScreenState extends State<LabFormScreen> {
-  final _formKey = GlobalKey<FormState>();
-  final LabService _labService = LabService();
+  final formKey = GlobalKey<FormState>();
+  final labService = LabService();
+  final governorateService = GovernorateService();
 
-  late TextEditingController _nameController;
-  late TextEditingController _governorateController;
-  late TextEditingController _addressController;
-  late TextEditingController _latitudeController;
-  late TextEditingController _longitudeController;
-  late TextEditingController _specialtyController;
-  late TextEditingController _contactInfoController;
+  late TextEditingController nameController;
+  late TextEditingController addressController;
+  late TextEditingController latitudeController;
+  late TextEditingController longitudeController;
+  late TextEditingController specialtyController;
+  late TextEditingController contactInfoController;
 
   bool loading = false;
+
+  List<Governorate> governorates = [];
+  int? selectedGovernorateId;
+  bool loadingGovernorates = true;
 
   @override
   void initState() {
     super.initState();
-    final l = widget.lab;
+    final lab = widget.lab;
 
-    _nameController = TextEditingController(text: l?.name ?? "");
-    _governorateController = TextEditingController(
-      text: l?.governorate.toString() ?? "",
+    nameController = TextEditingController(text: lab?.name ?? "");
+    addressController = TextEditingController(text: lab?.address ?? "");
+    latitudeController = TextEditingController(
+      text: lab?.latitude?.toString() ?? "",
     );
-    _addressController = TextEditingController(text: l?.address ?? "");
-    _latitudeController = TextEditingController(
-      text: l?.latitude?.toString() ?? "",
+    longitudeController = TextEditingController(
+      text: lab?.longitude?.toString() ?? "",
     );
-    _longitudeController = TextEditingController(
-      text: l?.longitude?.toString() ?? "",
-    );
-    _specialtyController = TextEditingController(text: l?.specialty ?? "");
-    _contactInfoController = TextEditingController(text: l?.contactInfo ?? "");
+    specialtyController = TextEditingController(text: lab?.specialty ?? "");
+    contactInfoController = TextEditingController(text: lab?.contactInfo ?? "");
+
+    selectedGovernorateId = lab?.governorate;
+
+    loadGovernorates();
+  }
+
+  Future<void> loadGovernorates() async {
+    setState(() {
+      loadingGovernorates = true;
+    });
+
+    try {
+      final items = await governorateService.fetchGovernorates();
+      if (!mounted) return;
+
+      setState(() {
+        governorates = items..sort((a, b) => a.name.compareTo(b.name));
+        loadingGovernorates = false;
+
+        // لو كنا في edit وما في قيمة مطابقة (حالة نادرة) نتركها null
+        if (selectedGovernorateId != null) {
+          final exists = governorates.any((g) => g.id == selectedGovernorateId);
+          if (!exists) {
+            selectedGovernorateId = null;
+          }
+        }
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        loadingGovernorates = false;
+      });
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text("فشل تحميل المحافظات: $e")));
+    }
   }
 
   @override
   void dispose() {
-    _nameController.dispose();
-    _governorateController.dispose();
-    _addressController.dispose();
-    _latitudeController.dispose();
-    _longitudeController.dispose();
-    _specialtyController.dispose();
-    _contactInfoController.dispose();
+    nameController.dispose();
+    addressController.dispose();
+    latitudeController.dispose();
+    longitudeController.dispose();
+    specialtyController.dispose();
+    contactInfoController.dispose();
     super.dispose();
   }
 
-  Future<void> _submit() async {
-    if (!_formKey.currentState!.validate()) return;
+  Future<void> submit() async {
+    if (!formKey.currentState!.validate()) return;
+
+    if (selectedGovernorateId == null) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text("يرجى اختيار المحافظة.")));
+      return;
+    }
 
     setState(() => loading = true);
 
-    final int governorateId =
-        int.tryParse(_governorateController.text.trim()) ?? 0;
-
     final double? lat =
-        _latitudeController.text.trim().isEmpty
+        latitudeController.text.trim().isEmpty
             ? null
-            : double.tryParse(_latitudeController.text.trim());
+            : double.tryParse(latitudeController.text.trim());
 
     final double? lng =
-        _longitudeController.text.trim().isEmpty
+        longitudeController.text.trim().isEmpty
             ? null
-            : double.tryParse(_longitudeController.text.trim());
+            : double.tryParse(longitudeController.text.trim());
 
     final lab = Lab(
       id: widget.lab?.id,
-      name: _nameController.text.trim(),
-      governorate: governorateId,
+      name: nameController.text.trim(),
+      governorate: selectedGovernorateId!,
       address:
-          _addressController.text.trim().isEmpty
+          addressController.text.trim().isEmpty
               ? null
-              : _addressController.text.trim(),
+              : addressController.text.trim(),
       latitude: lat,
       longitude: lng,
       specialty:
-          _specialtyController.text.trim().isEmpty
+          specialtyController.text.trim().isEmpty
               ? null
-              : _specialtyController.text.trim(),
+              : specialtyController.text.trim(),
       contactInfo:
-          _contactInfoController.text.trim().isEmpty
+          contactInfoController.text.trim().isEmpty
               ? null
-              : _contactInfoController.text.trim(),
+              : contactInfoController.text.trim(),
     );
 
     try {
       final isEdit = widget.lab != null;
       final response =
           isEdit
-              ? await _labService.updateLab(lab)
-              : await _labService.createLab(lab);
+              ? await labService.updateLab(lab)
+              : await labService.createLab(lab);
 
       if (!mounted) return;
 
@@ -138,34 +181,52 @@ class _LabFormScreenState extends State<LabFormScreen> {
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: Form(
-          key: _formKey,
+          key: formKey,
           child: ListView(
             children: [
               TextFormField(
-                controller: _nameController,
+                controller: nameController,
                 decoration: const InputDecoration(labelText: "اسم المخبر"),
                 validator:
                     (v) => v == null || v.trim().isEmpty ? "الحقل مطلوب" : null,
               ),
               const SizedBox(height: 12),
 
-              TextFormField(
-                controller: _governorateController,
-                decoration: const InputDecoration(labelText: "المحافظة (ID)"),
-                keyboardType: TextInputType.number,
-                validator:
-                    (v) => v == null || v.trim().isEmpty ? "الحقل مطلوب" : null,
-              ),
+              loadingGovernorates
+                  ? const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 8),
+                    child: LinearProgressIndicator(),
+                  )
+                  : DropdownButtonFormField<int>(
+                    value: selectedGovernorateId,
+                    items:
+                        governorates
+                            .map(
+                              (g) => DropdownMenuItem<int>(
+                                value: g.id,
+                                child: Text(g.name),
+                              ),
+                            )
+                            .toList(),
+                    onChanged: (v) {
+                      setState(() {
+                        selectedGovernorateId = v;
+                      });
+                    },
+                    decoration: const InputDecoration(labelText: "المحافظة"),
+                    validator: (v) => v == null ? "الحقل مطلوب" : null,
+                  ),
+
               const SizedBox(height: 12),
 
               TextFormField(
-                controller: _addressController,
+                controller: addressController,
                 decoration: const InputDecoration(labelText: "العنوان"),
               ),
               const SizedBox(height: 12),
 
               TextFormField(
-                controller: _latitudeController,
+                controller: latitudeController,
                 decoration: const InputDecoration(labelText: "Latitude"),
                 keyboardType: const TextInputType.numberWithOptions(
                   decimal: true,
@@ -174,7 +235,7 @@ class _LabFormScreenState extends State<LabFormScreen> {
               const SizedBox(height: 12),
 
               TextFormField(
-                controller: _longitudeController,
+                controller: longitudeController,
                 decoration: const InputDecoration(labelText: "Longitude"),
                 keyboardType: const TextInputType.numberWithOptions(
                   decimal: true,
@@ -183,13 +244,13 @@ class _LabFormScreenState extends State<LabFormScreen> {
               const SizedBox(height: 12),
 
               TextFormField(
-                controller: _specialtyController,
+                controller: specialtyController,
                 decoration: const InputDecoration(labelText: "الاختصاص"),
               ),
               const SizedBox(height: 12),
 
               TextFormField(
-                controller: _contactInfoController,
+                controller: contactInfoController,
                 decoration: const InputDecoration(labelText: "معلومات الاتصال"),
               ),
               const SizedBox(height: 24),
@@ -197,7 +258,7 @@ class _LabFormScreenState extends State<LabFormScreen> {
               loading
                   ? const Center(child: CircularProgressIndicator())
                   : ElevatedButton(
-                    onPressed: _submit,
+                    onPressed: submit,
                     child: Text(isEdit ? "حفظ التعديلات" : "حفظ"),
                   ),
             ],

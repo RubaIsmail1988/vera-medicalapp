@@ -1,10 +1,14 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '/services/admin_user_service.dart';
 import '/screens/admin/deletion_requests_screen.dart';
 
 class UserListScreen extends StatefulWidget {
-  const UserListScreen({super.key});
+  const UserListScreen({super.key, this.onOpenDeletionRequests});
+
+  final VoidCallback? onOpenDeletionRequests;
 
   @override
   State<UserListScreen> createState() => _UserListScreenState();
@@ -12,42 +16,122 @@ class UserListScreen extends StatefulWidget {
 
 class _UserListScreenState extends State<UserListScreen>
     with SingleTickerProviderStateMixin {
-  final AdminUserService _adminService = AdminUserService();
+  final AdminUserService adminService = AdminUserService();
 
-  late TabController _tabController;
+  late TabController tabController;
 
-  late Future<List<Map<String, dynamic>>> _futureAll;
-  late Future<List<Map<String, dynamic>>> _futurePatients;
-  late Future<List<Map<String, dynamic>>> _futureDoctors;
+  late Future<List<Map<String, dynamic>>> futureAll;
+  late Future<List<Map<String, dynamic>>> futurePatients;
+  late Future<List<Map<String, dynamic>>> futureDoctors;
+
+  // Search
+  final TextEditingController searchController = TextEditingController();
+  Timer? searchDebounce;
+  String searchQuery = '';
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
-    _loadAll();
+    tabController = TabController(length: 3, vsync: this);
+    loadAll();
   }
 
-  void _loadAll() {
-    _futureAll = _adminService.fetchAllUsers();
-    _futurePatients = _adminService.fetchPatients();
-    _futureDoctors = _adminService.fetchDoctors();
+  void loadAll() {
+    futureAll = adminService.fetchAllUsers();
+    futurePatients = adminService.fetchPatients();
+    futureDoctors = adminService.fetchDoctors();
   }
 
-  Future<void> _refresh() async {
+  Future<void> refresh() async {
     setState(() {
-      _loadAll();
+      loadAll();
     });
   }
 
-  Future<void> _toggleActivation(Map<String, dynamic> user) async {
+  void onSearchChanged(String value) {
+    searchDebounce?.cancel();
+    searchDebounce = Timer(const Duration(milliseconds: 300), () {
+      if (!mounted) return;
+      setState(() {
+        searchQuery = value.trim().toLowerCase();
+      });
+    });
+  }
+
+  String normalizeQuery(String q) {
+    var v = q.trim().toLowerCase();
+
+    // تطبيع عربي بسيط
+    v = v.replaceAll('أ', 'ا').replaceAll('إ', 'ا').replaceAll('آ', 'ا');
+
+    // الحالة
+    v = v.replaceAll('مفعل', 'active');
+    v = v.replaceAll('مفعّل', 'active');
+    v = v.replaceAll('فعال', 'active');
+    v = v.replaceAll('نشط', 'active');
+
+    v = v.replaceAll('معطل', 'inactive');
+    v = v.replaceAll('معطّل', 'inactive');
+    v = v.replaceAll('غير مفعل', 'inactive');
+    v = v.replaceAll('غير مفعّل', 'inactive');
+    v = v.replaceAll('محظور', 'inactive');
+
+    // الأدوار
+    v = v.replaceAll('ادمن', 'admin');
+    v = v.replaceAll('أدمن', 'admin');
+    v = v.replaceAll('مسؤول', 'admin');
+
+    v = v.replaceAll('طبيب', 'doctor');
+    v = v.replaceAll('دكتور', 'doctor');
+
+    v = v.replaceAll('مريض', 'patient');
+
+    return v;
+  }
+
+  bool userMatchesQuery(Map<String, dynamic> user) {
+    if (searchQuery.isEmpty) return true;
+
+    final normalized = normalizeQuery(searchQuery);
+
+    final String email = user['email']?.toString().toLowerCase() ?? '';
+    final String username = user['username']?.toString().toLowerCase() ?? '';
+    final String role = user['role']?.toString().toLowerCase() ?? '';
+    final bool isActive = user['is_active'] as bool? ?? false;
+
+    // 1) معالجة الحالة بشكل صارم لتجنب مشكلة inactive يحتوي active
+    if (normalized == 'active') return isActive;
+    if (normalized == 'inactive') return !isActive;
+
+    // 2) (اختياري) دعم الدور فقط إذا رغبت (مفيد غالبًا في تبويب "الكل")
+    if (normalized == 'doctor') return role == 'doctor';
+    if (normalized == 'patient') return role == 'patient';
+    if (normalized == 'admin') return role == 'admin';
+
+    final int deletionCount = user['deletion_requests_count'] as int? ?? 0;
+    final String lastStatus =
+        user['latest_deletion_status']?.toString().toLowerCase() ?? '';
+
+    // بحث نصي عام (email/username/حالة طلبات الحذف)
+    final String haystack = [
+      email,
+      username,
+      '$deletionCount',
+      lastStatus,
+    ].join(' ');
+
+    return haystack.contains(normalized);
+  }
+
+  Future<void> toggleActivation(Map<String, dynamic> user) async {
     final int userId = user['id'] as int;
     final bool isActive = user['is_active'] as bool? ?? false;
 
     bool success;
     if (isActive) {
-      success = await _adminService.deactivateUser(userId);
+      success = await adminService.deactivateUser(userId);
     } else {
-      success = await _adminService.activateUser(userId);
+      success = await adminService.activateUser(userId);
     }
 
     if (!mounted) return;
@@ -65,11 +149,11 @@ class _UserListScreenState extends State<UserListScreen>
     );
 
     if (success) {
-      _refresh();
+      await refresh();
     }
   }
 
-  Widget _buildUserList(Future<List<Map<String, dynamic>>> future) {
+  Widget buildUserList(Future<List<Map<String, dynamic>>> future) {
     return FutureBuilder<List<Map<String, dynamic>>>(
       future: future,
       builder: (context, snapshot) {
@@ -82,20 +166,27 @@ class _UserListScreenState extends State<UserListScreen>
         }
 
         final users = snapshot.data ?? [];
+        final filteredUsers = users.where(userMatchesQuery).toList();
 
-        if (users.isEmpty) {
-          return const Center(child: Text('لا يوجد بيانات.'));
+        if (filteredUsers.isEmpty) {
+          return Center(
+            child: Text(
+              searchQuery.isEmpty
+                  ? 'لا يوجد بيانات.'
+                  : 'لا توجد نتائج مطابقة للبحث.',
+            ),
+          );
         }
 
         final cs = Theme.of(context).colorScheme;
 
         return RefreshIndicator(
-          onRefresh: _refresh,
+          onRefresh: refresh,
           child: ListView.builder(
             physics: const AlwaysScrollableScrollPhysics(),
-            itemCount: users.length,
+            itemCount: filteredUsers.length,
             itemBuilder: (context, index) {
-              final user = users[index];
+              final user = filteredUsers[index];
 
               final String email = user['email']?.toString() ?? '';
               final String username = user['username']?.toString() ?? '';
@@ -142,7 +233,7 @@ class _UserListScreenState extends State<UserListScreen>
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // الصف العلوي: الإيميل + حالة التفعيل
+                      // Email + Activation status
                       Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
@@ -160,7 +251,6 @@ class _UserListScreenState extends State<UserListScreen>
                               vertical: 4,
                             ),
                             decoration: BoxDecoration(
-                              // كان: statusColor.withOpacity(0.15)
                               color: statusColor.withValues(alpha: 0.15),
                               borderRadius: BorderRadius.circular(20),
                               border: Border.all(color: statusColor),
@@ -190,7 +280,7 @@ class _UserListScreenState extends State<UserListScreen>
 
                       const SizedBox(height: 8),
 
-                      // الاسم + الدور
+                      // Name + Role
                       Row(
                         children: [
                           Expanded(
@@ -205,7 +295,6 @@ class _UserListScreenState extends State<UserListScreen>
                               vertical: 4,
                             ),
                             decoration: BoxDecoration(
-                              // كان: cs.secondary.withOpacity(0.12)
                               color: cs.secondary.withValues(alpha: 0.12),
                               borderRadius: BorderRadius.circular(20),
                             ),
@@ -223,7 +312,7 @@ class _UserListScreenState extends State<UserListScreen>
 
                       const SizedBox(height: 8),
 
-                      // معلومات طلبات الحذف
+                      // Deletion requests info
                       Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
@@ -254,12 +343,12 @@ class _UserListScreenState extends State<UserListScreen>
 
                       const SizedBox(height: 12),
 
-                      // أزرار الإجراء (تفعيل/تعطيل)
+                      // Actions
                       Row(
                         mainAxisAlignment: MainAxisAlignment.end,
                         children: [
                           TextButton.icon(
-                            onPressed: () => _toggleActivation(user),
+                            onPressed: () => toggleActivation(user),
                             icon: Icon(
                               isActive ? Icons.lock_person : Icons.lock_open,
                               size: 18,
@@ -281,7 +370,9 @@ class _UserListScreenState extends State<UserListScreen>
 
   @override
   void dispose() {
-    _tabController.dispose();
+    searchDebounce?.cancel();
+    searchController.dispose();
+    tabController.dispose();
     super.dispose();
   }
 
@@ -290,19 +381,60 @@ class _UserListScreenState extends State<UserListScreen>
     return Scaffold(
       appBar: AppBar(
         title: const Text('إدارة المستخدمين'),
-        bottom: TabBar(
-          controller: _tabController,
-          tabs: const [
-            Tab(text: 'الكل'),
-            Tab(text: 'المرضى'),
-            Tab(text: 'الأطباء'),
-          ],
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(104),
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+                child: TextField(
+                  controller: searchController,
+                  onChanged: onSearchChanged,
+                  textInputAction: TextInputAction.search,
+                  decoration: InputDecoration(
+                    hintText: 'بحث (بريد، اسم، دور، حالة...)',
+                    prefixIcon: const Icon(Icons.search),
+                    suffixIcon:
+                        searchQuery.isEmpty
+                            ? null
+                            : IconButton(
+                              tooltip: 'مسح البحث',
+                              icon: const Icon(Icons.close),
+                              onPressed: () {
+                                searchController.clear();
+                                onSearchChanged('');
+                              },
+                            ),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    isDense: true,
+                  ),
+                ),
+              ),
+              TabBar(
+                controller: tabController,
+                tabs: const [
+                  Tab(text: 'الكل'),
+                  Tab(text: 'المرضى'),
+                  Tab(text: 'الأطباء'),
+                ],
+              ),
+            ],
+          ),
         ),
         actions: [
           IconButton(
             icon: const Icon(Icons.delete_forever),
             tooltip: 'طلبات حذف الحساب',
             onPressed: () {
+              final cb = widget.onOpenDeletionRequests;
+              if (cb != null) {
+                cb();
+                return;
+              }
+
+              // fallback إذا فُتحت الشاشة خارج الـ shell لأي سبب
               Navigator.push(
                 context,
                 MaterialPageRoute(
@@ -314,11 +446,11 @@ class _UserListScreenState extends State<UserListScreen>
         ],
       ),
       body: TabBarView(
-        controller: _tabController,
+        controller: tabController,
         children: [
-          _buildUserList(_futureAll),
-          _buildUserList(_futurePatients),
-          _buildUserList(_futureDoctors),
+          buildUserList(futureAll),
+          buildUserList(futurePatients),
+          buildUserList(futureDoctors),
         ],
       ),
     );

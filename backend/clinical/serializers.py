@@ -1,5 +1,5 @@
 from rest_framework import serializers
-
+from django.utils import timezone
 from .models import (
     ClinicalOrder,
     MedicalRecordFile,
@@ -34,7 +34,7 @@ class ClinicalOrderSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["id", "created_at", "updated_at"]
+        read_only_fields = ["id", "created_at", "updated_at", "doctor"]
 
     def get_doctor_display_name(self, obj):
         doctor = obj.doctor
@@ -173,7 +173,7 @@ class PrescriptionSerializer(serializers.ModelSerializer):
             "created_at",
             "items",
         ]
-        read_only_fields = ["id", "created_at"]
+        read_only_fields = ["id", "created_at", "doctor"]
 
     def get_doctor_display_name(self, obj):
         doctor = obj.doctor
@@ -266,7 +266,7 @@ class MedicationAdherenceSerializer(serializers.ModelSerializer):
             "taken_at",
             "created_at",
         ]
-        read_only_fields = ["id", "created_at"]
+        read_only_fields = ["id", "created_at", "patient"]
 
     # ----------------------------
     # Serializer methods
@@ -300,7 +300,40 @@ class MedicationAdherenceSerializer(serializers.ModelSerializer):
             return patient.email
 
         return f"Patient #{patient.id}"
+    def validate(self, attrs):
+        """
+        Fix (D-2.5): منع المريض من تسجيل adherence لعنصر لا يخصه.
+        - المريض الحالي يجب أن يطابق prescription_item.prescription.patient
+        """
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
 
+        # في حالة admin نسمح (حسب سياسة مشروعك الحالية أن admin = bypass)
+        if user and getattr(user, "is_authenticated", False):
+            if getattr(user, "is_staff", False) or getattr(user, "is_superuser", False) or getattr(user, "role", "") == "admin":
+                return attrs
+
+        item = attrs.get("prescription_item")
+        if not item:
+            raise serializers.ValidationError({"prescription_item": "This field is required."})
+
+        # تحقق الملكية عبر Rx patient
+        rx = getattr(item, "prescription", None)
+        rx_patient_id = getattr(rx, "patient_id", None)
+
+        if not user or not getattr(user, "is_authenticated", False):
+            raise serializers.ValidationError({"detail": "Authentication required."})
+
+        if rx_patient_id != user.id:
+            # لا تكشف وجود العنصر من عدمه ضمنيًا
+            raise serializers.ValidationError({"detail": "Not found."})
+
+        # (اختياري بسيط) منع taken_at في المستقبل بشكل فادح
+        taken_at = attrs.get("taken_at")
+        if taken_at and taken_at > timezone.now():
+            raise serializers.ValidationError({"taken_at": "taken_at cannot be in the future."})
+
+        return attrs
 
 # ---------------------------------------------------------------------------
 # Outbox

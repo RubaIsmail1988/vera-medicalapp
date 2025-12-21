@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 
 import '/models/hospital.dart';
 import '/services/hospital_service.dart';
+//import '/models/governorate.dart';
+import '/services/governorate_service.dart';
 import '../admin/hospital_form_screen.dart';
 
 class HospitalListScreen extends StatefulWidget {
@@ -12,27 +14,69 @@ class HospitalListScreen extends StatefulWidget {
 }
 
 class _HospitalListScreenState extends State<HospitalListScreen> {
-  final HospitalService _hospitalService = HospitalService();
+  final hospitalService = HospitalService();
+  final governorateService = GovernorateService();
 
-  late Future<List<Hospital>> _futureHospitals;
+  late Future<List<Hospital>> futureHospitals;
+
+  final searchController = TextEditingController();
+  String searchQuery = '';
+
+  Map<int, String> governorateNamesById = {};
+  bool loadingGovernorates = true;
 
   @override
   void initState() {
     super.initState();
-    _loadHospitals();
-  }
+    loadHospitals();
+    loadGovernorates();
 
-  void _loadHospitals() {
-    _futureHospitals = _hospitalService.fetchHospitals();
-  }
-
-  Future<void> _refresh() async {
-    setState(() {
-      _loadHospitals();
+    searchController.addListener(() {
+      setState(() {
+        searchQuery = searchController.text.trim();
+      });
     });
   }
 
-  Future<void> _deleteHospital(Hospital hospital) async {
+  @override
+  void dispose() {
+    searchController.dispose();
+    super.dispose();
+  }
+
+  void loadHospitals() {
+    futureHospitals = hospitalService.fetchHospitals();
+  }
+
+  Future<void> loadGovernorates() async {
+    setState(() {
+      loadingGovernorates = true;
+    });
+
+    try {
+      final items = await governorateService.fetchGovernorates();
+      if (!mounted) return;
+
+      setState(() {
+        governorateNamesById = {for (final g in items) g.id: g.name};
+        loadingGovernorates = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        loadingGovernorates = false;
+      });
+    }
+  }
+
+  Future<void> refresh() async {
+    setState(() {
+      loadHospitals();
+    });
+    await loadGovernorates();
+  }
+
+  Future<void> deleteHospital(Hospital hospital) async {
     final confirm = await showDialog<bool>(
       context: context,
       builder:
@@ -54,7 +98,7 @@ class _HospitalListScreenState extends State<HospitalListScreen> {
 
     if (confirm != true) return;
 
-    final success = await _hospitalService.deleteHospital(hospital.id!);
+    final success = await hospitalService.deleteHospital(hospital.id!);
 
     if (!mounted) return;
 
@@ -65,81 +109,153 @@ class _HospitalListScreenState extends State<HospitalListScreen> {
     );
 
     if (success) {
-      _refresh();
+      await refresh();
     }
   }
 
-  void _openForm({Hospital? hospital}) async {
-    final bool? saved = await Navigator.push(
+  Future<void> openForm({Hospital? hospital}) async {
+    final saved = await Navigator.push<bool>(
       context,
       MaterialPageRoute(builder: (_) => HospitalFormScreen(hospital: hospital)),
     );
 
-    if (saved == true) {
-      _refresh();
+    if (saved == true && mounted) {
+      await refresh();
     }
+  }
+
+  bool matchesSearch(Hospital hospital) {
+    final q = searchQuery.toLowerCase();
+    if (q.isEmpty) return true;
+
+    final name = hospital.name.toLowerCase();
+    final specialty = (hospital.specialty ?? '').toLowerCase();
+    final contact = (hospital.contactInfo ?? '').toLowerCase();
+    final address = (hospital.address ?? '').toLowerCase();
+    final govName =
+        (governorateNamesById[hospital.governorate] ?? '').toLowerCase();
+
+    return name.contains(q) ||
+        specialty.contains(q) ||
+        contact.contains(q) ||
+        address.contains(q) ||
+        govName.contains(q);
   }
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+
     return Scaffold(
       appBar: AppBar(title: const Text("إدارة المشافي")),
-      body: FutureBuilder<List<Hospital>>(
-        future: _futureHospitals,
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
+            child: TextField(
+              controller: searchController,
+              decoration: InputDecoration(
+                hintText: "بحث بالاسم / المحافظة / التخصص / العنوان...",
+                prefixIcon: const Icon(Icons.search),
+                suffixIcon:
+                    searchQuery.isEmpty
+                        ? null
+                        : IconButton(
+                          tooltip: "مسح البحث",
+                          onPressed: () => searchController.clear(),
+                          icon: const Icon(Icons.close),
+                        ),
+                filled: true,
+                fillColor: cs.surface.withValues(alpha: 0.6),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+              ),
+            ),
+          ),
 
-          if (snapshot.hasError) {
-            return const Center(child: Text("حدث خطأ أثناء تحميل المشافي."));
-          }
+          if (loadingGovernorates)
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 12),
+              child: LinearProgressIndicator(),
+            ),
 
-          final hospitals = snapshot.data ?? [];
+          Expanded(
+            child: FutureBuilder<List<Hospital>>(
+              future: futureHospitals,
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Center(child: CircularProgressIndicator());
+                }
 
-          if (hospitals.isEmpty) {
-            return const Center(child: Text("لا يوجد مشافي مسجلة."));
-          }
+                if (snapshot.hasError) {
+                  return const Center(
+                    child: Text("حدث خطأ أثناء تحميل المشافي."),
+                  );
+                }
 
-          return RefreshIndicator(
-            onRefresh: _refresh,
-            child: ListView.builder(
-              itemCount: hospitals.length,
-              itemBuilder: (context, index) {
-                final h = hospitals[index];
-                return Card(
-                  margin: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 6,
-                  ),
-                  child: ListTile(
-                    title: Text(h.name),
-                    subtitle: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text("المحافظة (ID): ${h.governorate}"),
-                        if (h.specialty != null &&
-                            h.specialty!.trim().isNotEmpty)
-                          Text("التخصص: ${h.specialty}"),
-                        if (h.contactInfo != null &&
-                            h.contactInfo!.trim().isNotEmpty)
-                          Text("الاتصال: ${h.contactInfo}"),
-                      ],
-                    ),
-                    onTap: () => _openForm(hospital: h),
-                    trailing: IconButton(
-                      icon: const Icon(Icons.delete, color: Colors.red),
-                      onPressed: () => _deleteHospital(h),
-                    ),
+                final hospitals = snapshot.data ?? [];
+                final visible = hospitals.where(matchesSearch).toList();
+
+                if (hospitals.isEmpty) {
+                  return const Center(child: Text("لا يوجد مشافي مسجلة."));
+                }
+
+                if (visible.isEmpty) {
+                  return const Center(
+                    child: Text("لا توجد نتائج مطابقة للبحث."),
+                  );
+                }
+
+                return RefreshIndicator(
+                  onRefresh: refresh,
+                  child: ListView.builder(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    itemCount: visible.length,
+                    itemBuilder: (context, index) {
+                      final h = visible[index];
+                      final govName = governorateNamesById[h.governorate];
+
+                      return Card(
+                        margin: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 6,
+                        ),
+                        child: ListTile(
+                          title: Text(h.name),
+                          subtitle: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text("المحافظة: ${govName ?? '—'}"),
+                              if (h.specialty != null &&
+                                  h.specialty!.trim().isNotEmpty)
+                                Text("التخصص: ${h.specialty}"),
+                              if (h.contactInfo != null &&
+                                  h.contactInfo!.trim().isNotEmpty)
+                                Text("الاتصال: ${h.contactInfo}"),
+                              if (h.address != null &&
+                                  h.address!.trim().isNotEmpty)
+                                Text("العنوان: ${h.address}"),
+                            ],
+                          ),
+                          onTap: () => openForm(hospital: h),
+                          trailing: IconButton(
+                            icon: const Icon(Icons.delete, color: Colors.red),
+                            onPressed: () => deleteHospital(h),
+                          ),
+                        ),
+                      );
+                    },
                   ),
                 );
               },
             ),
-          );
-        },
+          ),
+        ],
       ),
       floatingActionButton: FloatingActionButton(
-        onPressed: () => _openForm(),
+        heroTag: 'hospitalFab',
+        onPressed: () => openForm(),
         child: const Icon(Icons.add),
       ),
     );
