@@ -21,12 +21,11 @@ class GovernorateService {
     );
 
     if (res.statusCode != 200) {
-      throw Exception(
-        'Failed to load governorates: ${res.statusCode} ${res.body}',
-      );
+      // هذا سيساعدك تعرف هل هي 401/403 أم شيء آخر
+      throw Exception('Governorates HTTP ${res.statusCode}: ${res.body}');
     }
 
-    final List<dynamic> data = jsonDecode(res.body) as List<dynamic>;
+    final data = jsonDecode(res.body) as List<dynamic>;
     return data
         .map((e) => Governorate.fromJson(e as Map<String, dynamic>))
         .toList();

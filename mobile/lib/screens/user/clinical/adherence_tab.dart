@@ -113,12 +113,12 @@ class _AdherenceTabState extends State<AdherenceTab> {
   String _statusLabel(String raw) {
     final v = raw.trim().toLowerCase();
     if (v == "taken") return "تم تناول الجرعة";
-    if (v == "missed") return "تم تفويت الجرعة";
+    if (v == "skipped") return "تم تفويت الجرعة";
     return "غير معروف";
   }
 
   bool _isTaken(String raw) => raw.trim().toLowerCase() == "taken";
-  bool _isMissed(String raw) => raw.trim().toLowerCase() == "missed";
+  bool _isMissed(String raw) => raw.trim().toLowerCase() == "skipped";
 
   String _safeText(dynamic v) => (v?.toString() ?? "").trim();
 
@@ -648,7 +648,7 @@ class _AdherenceTabState extends State<AdherenceTab> {
                               child: Text("تم تناول الجرعة"),
                             ),
                             DropdownMenuItem(
-                              value: "missed",
+                              value: "skipped",
                               child: Text("تم تفويت الجرعة"),
                             ),
                           ],

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 
 import 'theme/app_theme.dart';
 
@@ -7,6 +8,8 @@ import 'screens/auth/login_screen.dart';
 import 'screens/auth/register_screen.dart';
 import 'screens/auth/waiting_activation_screen.dart';
 import 'screens/auth/forgot_password_screen.dart';
+import 'screens/auth/reset_password_verify_otp_screen.dart';
+import 'screens/auth/reset_password_new_password_screen.dart';
 
 // Shells
 import 'screens/user/user_shell_screen.dart';
@@ -15,13 +18,20 @@ import 'screens/admin/admin_shell_screen.dart';
 // System
 import 'screens/system/splash_screen.dart';
 
-// شاشات قديمة
-import 'screens/user/patient_home_screen.dart';
-import 'screens/user/doctor_home_screen.dart';
-import 'screens/admin/hospital_list_screen.dart';
-import 'screens/admin/lab_list_screen.dart';
-//phase c
+// User details (NEW ROUTES)
+import 'screens/user/patient_details_screen.dart';
+import 'screens/user/doctor_details_screen.dart';
+import 'screens/user/hospital_public_detail_screen.dart';
+import 'screens/user/lab_public_detail_screen.dart';
+import 'screens/user/account_deletion_status_screen.dart';
+import 'screens/user/clinical/order_details_screen.dart';
+
+// DoctorScheduling
 import 'screens/doctor/doctor_scheduling_settings_screen.dart';
+import 'screens/doctor/doctor_availability_screen.dart';
+import 'screens/doctor/doctor_visit_types_screen.dart';
+//
+import 'utils/ui_helpers.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -45,6 +55,282 @@ class MyApp extends StatefulWidget {
 class MyAppState extends State<MyApp> {
   ThemeMode themeMode = ThemeMode.dark;
 
+  late final GoRouter router = GoRouter(
+    initialLocation: '/',
+    routes: [
+      GoRoute(path: '/', builder: (context, state) => const SplashScreen()),
+
+      // ---------------- Auth ----------------
+      GoRoute(path: '/login', builder: (context, state) => const LoginScreen()),
+      GoRoute(
+        path: '/register',
+        builder: (context, state) => const RegisterScreen(),
+      ),
+      GoRoute(
+        path: '/waiting-activation',
+        builder: (context, state) => const WaitingActivationScreen(),
+      ),
+      GoRoute(
+        path: '/forgot-password',
+        builder: (context, state) => const ForgotPasswordScreen(),
+      ),
+      GoRoute(
+        path: '/forgot-password/verify',
+        builder: (context, state) {
+          final email = state.uri.queryParameters['email']?.trim() ?? '';
+          if (email.isEmpty) {
+            return const ForgotPasswordScreen();
+          }
+          return ResetPasswordVerifyOtpScreen(email: email);
+        },
+      ),
+      GoRoute(
+        path: '/forgot-password/new',
+        builder: (context, state) {
+          final email = state.uri.queryParameters['email']?.trim() ?? '';
+          final code = state.uri.queryParameters['code']?.trim() ?? '';
+          if (email.isEmpty || code.isEmpty) {
+            return const ForgotPasswordScreen();
+          }
+          return ResetPasswordNewPasswordScreen(email: email, code: code);
+        },
+      ),
+
+      // ---------------- Admin (web-safe) ----------------
+      GoRoute(
+        path: '/admin',
+        builder: (context, state) => const AdminShellScreen(initialIndex: 0),
+      ),
+      GoRoute(
+        path: '/admin/users',
+        builder: (context, state) => const AdminShellScreen(initialIndex: 1),
+      ),
+      GoRoute(
+        path: '/admin/hospitals',
+        builder: (context, state) => const AdminShellScreen(initialIndex: 2),
+      ),
+      GoRoute(
+        path: '/admin/labs',
+        builder: (context, state) => const AdminShellScreen(initialIndex: 3),
+      ),
+      GoRoute(
+        path: '/admin/requests',
+        builder: (context, state) => const AdminShellScreen(initialIndex: 4),
+      ),
+      GoRoute(
+        path: '/admin/profile',
+        builder: (context, state) => const AdminShellScreen(initialIndex: 5),
+      ),
+
+      // ---------------- App (User web-safe) ----------------
+      GoRoute(
+        path: '/app',
+        builder: (context, state) => const UserShellScreen(initialIndex: 0),
+        routes: [
+          // ---------------- Doctor Scheduling (Phase C) ----------------
+          GoRoute(
+            path: 'doctor/scheduling',
+            builder: (context, state) => const DoctorSchedulingSettingsScreen(),
+            routes: [
+              GoRoute(
+                path: 'availability',
+                builder: (context, state) => const DoctorAvailabilityScreen(),
+              ),
+              GoRoute(
+                path: 'visit-types',
+                builder: (context, state) => const DoctorVisitTypesScreen(),
+              ),
+            ],
+          ),
+
+          // ---------------- Unified Record ----------------
+          GoRoute(
+            path: 'record',
+            builder: (context, state) => const UserShellScreen(initialIndex: 1),
+            routes: [
+              // تفاصيل الطلب
+              GoRoute(
+                path: 'orders/:orderId',
+                builder: (context, state) {
+                  final raw = state.pathParameters['orderId'];
+                  final orderId = int.tryParse(raw ?? '');
+                  if (orderId == null) {
+                    return const Scaffold(
+                      body: Center(child: Text('Invalid order id')),
+                    );
+                  }
+
+                  // role من extra (مثل ما تعمل الآن)
+                  final extra = state.extra;
+                  final role =
+                      (extra is Map && extra['role'] != null)
+                          ? extra['role'].toString()
+                          : 'patient';
+
+                  // نقرأ patientId من query حتى نعرف أين نرجع للطبيب
+                  final patientIdRaw = state.uri.queryParameters['patientId'];
+                  final patientId = int.tryParse(patientIdRaw ?? '');
+
+                  return OrderDetailsScreen(
+                    role: role,
+                    orderId: orderId,
+                    doctorPatientId: (role == 'doctor') ? patientId : null,
+                  );
+                },
+              ),
+
+              // Tabs routes (UI فقط)
+              GoRoute(
+                path: 'prescripts',
+                builder:
+                    (context, state) => const UserShellScreen(initialIndex: 1),
+              ),
+              GoRoute(
+                path: 'adherence',
+                builder:
+                    (context, state) => const UserShellScreen(initialIndex: 1),
+              ),
+            ],
+          ),
+
+          // ---------------- Hospitals ----------------
+          GoRoute(
+            path: 'hospitals',
+            builder: (context, state) => const UserShellScreen(initialIndex: 2),
+            routes: [
+              GoRoute(
+                path: 'detail',
+                builder: (context, state) {
+                  final extra = state.extra;
+
+                  if (extra is! Map) {
+                    return const UserShellScreen(initialIndex: 2);
+                  }
+
+                  final name = (extra['name'] ?? '').toString().trim();
+                  final governorateRaw = extra['governorate'];
+
+                  final int governorate =
+                      governorateRaw is int
+                          ? governorateRaw
+                          : int.tryParse(governorateRaw?.toString() ?? '') ?? 0;
+
+                  if (name.isEmpty || governorate == 0) {
+                    return const UserShellScreen(initialIndex: 2);
+                  }
+
+                  return HospitalPublicDetailScreen(
+                    name: name,
+                    governorate: governorate,
+                    governorateName: extra['governorateName']?.toString(),
+                    address: extra['address']?.toString(),
+                    latitude:
+                        extra['latitude'] is double
+                            ? extra['latitude'] as double
+                            : double.tryParse(
+                              extra['latitude']?.toString() ?? '',
+                            ),
+                    longitude:
+                        extra['longitude'] is double
+                            ? extra['longitude'] as double
+                            : double.tryParse(
+                              extra['longitude']?.toString() ?? '',
+                            ),
+                    specialty: extra['specialty']?.toString(),
+                    contactInfo: extra['contactInfo']?.toString(),
+                  );
+                },
+              ),
+            ],
+          ),
+
+          // ---------------- Labs ----------------
+          GoRoute(
+            path: 'labs',
+            builder: (context, state) => const UserShellScreen(initialIndex: 3),
+            routes: [
+              GoRoute(
+                path: 'detail',
+                builder: (context, state) {
+                  final extra = state.extra as Map<String, dynamic>?;
+
+                  if (extra == null) {
+                    return const Scaffold(
+                      body: Center(child: Text('لا توجد بيانات لعرضها')),
+                    );
+                  }
+
+                  return LabPublicDetailScreen(
+                    name: extra['name'] as String,
+                    governorate: extra['governorate'] as int,
+                    address: extra['address'] as String?,
+                    latitude: extra['latitude'] as double?,
+                    longitude: extra['longitude'] as double?,
+                    specialty: extra['specialty'] as String?,
+                    contactInfo: extra['contactInfo'] as String?,
+                  );
+                },
+              ),
+            ],
+          ),
+
+          // ---------------- Account ----------------
+          GoRoute(
+            path: 'account',
+            builder: (context, state) => const UserShellScreen(initialIndex: 4),
+            routes: [
+              GoRoute(
+                path: 'patient-details',
+                builder: (context, state) {
+                  final extra = state.extra;
+                  if (extra is Map) {
+                    final token = (extra['token'] ?? '').toString();
+                    final dynamic rawUserId = extra['userId'];
+                    final int userId =
+                        rawUserId is int
+                            ? rawUserId
+                            : int.tryParse(rawUserId?.toString() ?? '') ?? 0;
+
+                    if (token.isNotEmpty && userId != 0) {
+                      return PatientDetailsScreen(token: token, userId: userId);
+                    }
+                  }
+
+                  return const UserShellScreen(initialIndex: 4);
+                },
+              ),
+              GoRoute(
+                path: 'doctor-details',
+                builder: (context, state) {
+                  final extra = state.extra;
+                  if (extra is Map) {
+                    final token = (extra['token'] ?? '').toString();
+                    final dynamic rawUserId = extra['userId'];
+                    final int userId =
+                        rawUserId is int
+                            ? rawUserId
+                            : int.tryParse(rawUserId?.toString() ?? '') ?? 0;
+
+                    if (token.isNotEmpty && userId != 0) {
+                      return DoctorDetailsScreen(token: token, userId: userId);
+                    }
+                  }
+
+                  return const UserShellScreen(initialIndex: 4);
+                },
+              ),
+              GoRoute(
+                path: 'deletion-status',
+                builder:
+                    (context, state) => const AccountDeletionStatusScreen(),
+              ),
+            ],
+          ),
+        ],
+      ),
+    ],
+  );
+
   void toggleTheme() {
     setState(() {
       themeMode =
@@ -54,72 +340,15 @@ class MyAppState extends State<MyApp> {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
+    return MaterialApp.router(
       debugShowCheckedModeBanner: false,
-
+      scaffoldMessengerKey: rootScaffoldMessengerKey,
       themeMode: themeMode,
-
-      // Animated theme transition
       themeAnimationDuration: const Duration(milliseconds: 350),
       themeAnimationCurve: Curves.easeInOut,
-
       theme: AppTheme.light(),
       darkTheme: AppTheme.dark(),
-
-      // Splash بدل StartScreen
-      home: const SplashScreen(),
-
-      routes: {
-        // Auth
-        '/login': (context) => const LoginScreen(),
-        '/register': (context) => const RegisterScreen(),
-        '/waiting-activation': (context) => const WaitingActivationScreen(),
-        '/forgot-password': (context) => const ForgotPasswordScreen(),
-
-        // Admin
-        '/admin-home': (context) => const AdminShellScreen(),
-
-        // User Shell
-        '/user-shell': (context) {
-          final args =
-              ModalRoute.of(context)!.settings.arguments
-                  as Map<String, dynamic>?;
-
-          final role = args?['role'] as String? ?? 'patient';
-          final userId = args?['userId'] as int?;
-          final token = args?['token'] as String?;
-
-          if (userId == null || token == null) {
-            return const LoginScreen();
-          }
-
-          return UserShellScreen(role: role, userId: userId, token: token);
-        },
-
-        // Legacy routes
-        '/patient-home': (context) {
-          final args =
-              ModalRoute.of(context)!.settings.arguments
-                  as Map<String, dynamic>;
-          return PatientHomeScreen(
-            userId: args['userId'] as int,
-            token: args['token'] as String,
-          );
-        },
-        '/doctor-home': (context) {
-          final args =
-              ModalRoute.of(context)!.settings.arguments
-                  as Map<String, dynamic>;
-          return DoctorHomeScreen(
-            userId: args['userId'] as int,
-            token: args['token'] as String,
-          );
-        },
-        '/doctor-scheduling-settings':
-            (context) => const DoctorSchedulingSettingsScreen(),
-        '/hospital-list': (context) => const HospitalListScreen(),
-        '/lab-list': (context) => const LabListScreen(),
-      },
+      routerConfig: router,
     );
   }
 }

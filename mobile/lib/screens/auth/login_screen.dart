@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../services/auth_service.dart';
+import '../../utils/ui_helpers.dart';
 import '../../widgets/app_logo.dart';
-import '../user/user_shell_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -22,19 +23,46 @@ class _LoginScreenState extends State<LoginScreen> {
   bool loading = false;
   bool obscurePassword = true;
 
-  void showSnackBar(String message) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(message)));
+  bool didApplyPrefill = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+
+    // تطبيق prefillEmail مرة واحدة فقط عند الرجوع من /register
+    if (didApplyPrefill) return;
+
+    final Object? extra = GoRouterState.of(context).extra;
+    if (extra is Map) {
+      final dynamic v = extra['prefillEmail'];
+      final String email = (v ?? '').toString().trim();
+      if (email.isNotEmpty) {
+        emailController.text = email;
+      }
+    }
+
+    didApplyPrefill = true;
+  }
+
+  String? emailValidator(String? value) {
+    final text = value?.trim() ?? '';
+    if (text.isEmpty) return 'البريد الإلكتروني مطلوب';
+    final emailRegex = RegExp(r'^[^@]+@[^@]+\.[^@]+');
+    if (!emailRegex.hasMatch(text)) return 'صيغة البريد الإلكتروني غير صحيحة';
+    return null;
+  }
+
+  String? passwordValidator(String? value) {
+    final text = value ?? '';
+    if (text.isEmpty) return 'كلمة المرور مطلوبة';
+    if (text.length < 4) return 'كلمة المرور قصيرة جداً';
+    return null;
   }
 
   Future<void> login() async {
     if (!formKey.currentState!.validate()) return;
 
-    setState(() {
-      loading = true;
-    });
+    setState(() => loading = true);
 
     final result = await authService.login(
       emailController.text.trim(),
@@ -43,23 +71,25 @@ class _LoginScreenState extends State<LoginScreen> {
 
     if (!mounted) return;
 
-    setState(() {
-      loading = false;
-    });
+    setState(() => loading = false);
 
     if (result == null) {
-      showSnackBar('البريد الإلكتروني أو كلمة المرور غير صحيحة');
+      showAppSnackBar(
+        context,
+        'البريد الإلكتروني أو كلمة المرور غير صحيحة',
+        type: AppSnackBarType.error,
+      );
       return;
     }
 
-    final Map<String, dynamic> data = result;
+    final data = result;
 
     if (data['error'] == 'not_active') {
-      Navigator.pushReplacementNamed(context, '/waiting-activation');
+      context.go('/waiting-activation');
       return;
     }
 
-    final String role = data['role']?.toString() ?? '';
+    final String role = (data['role'] ?? '').toString();
     final bool isActive = data['is_active'] == true;
 
     final dynamic rawUserId = data['user_id'];
@@ -68,39 +98,40 @@ class _LoginScreenState extends State<LoginScreen> {
             ? rawUserId
             : int.tryParse(rawUserId?.toString() ?? '') ?? 0;
 
-    final String accessToken = data['access_token']?.toString() ?? '';
+    final String accessToken = (data['access_token'] ?? '').toString();
 
     if (!isActive) {
-      Navigator.pushReplacementNamed(context, '/waiting-activation');
+      context.go('/waiting-activation');
       return;
     }
 
     if (accessToken.isEmpty || userId == 0 || role.isEmpty) {
-      showSnackBar('الاستجابة من الخادم غير مكتملة، حاول مرة أخرى');
+      showAppSnackBar(
+        context,
+        'الاستجابة من الخادم غير مكتملة، حاول مرة أخرى',
+        type: AppSnackBarType.warning,
+      );
       return;
     }
 
     await authService.fetchAndStoreCurrentUser();
-
     if (!mounted) return;
 
-    if (role == 'patient' || role == 'doctor') {
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(
-          builder:
-              (_) => UserShellScreen(
-                role: role,
-                userId: userId,
-                token: accessToken,
-              ),
-        ),
-      );
-    } else if (role == 'admin') {
-      Navigator.pushReplacementNamed(context, '/admin-home');
-    } else {
-      showSnackBar('دور مستخدم غير معروف: $role');
+    if (role == 'admin') {
+      context.go('/admin');
+      return;
     }
+
+    if (role == 'patient' || role == 'doctor') {
+      context.go('/app');
+      return;
+    }
+
+    showAppSnackBar(
+      context,
+      'دور مستخدم غير معروف: $role',
+      type: AppSnackBarType.error,
+    );
   }
 
   @override
@@ -112,96 +143,130 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+
     return Scaffold(
       appBar: AppBar(title: const Text('تسجيل الدخول')),
       body: Center(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(16),
-          child: Form(
-            key: formKey,
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const AppLogo(width: 220),
-                const SizedBox(height: 24),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 520),
+            child: Form(
+              key: formKey,
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const AppLogo(width: 220),
+                  const SizedBox(height: 18),
 
-                TextFormField(
-                  controller: emailController,
-                  decoration: const InputDecoration(
-                    labelText: 'البريد الإلكتروني',
-                  ),
-                  keyboardType: TextInputType.emailAddress,
-                  validator: (value) {
-                    if (value == null || value.trim().isEmpty) {
-                      return 'هذا الحقل مطلوب';
-                    }
-                    final trimmed = value.trim();
-                    if (!trimmed.contains('@') || !trimmed.contains('.')) {
-                      return 'صيغة بريد غير صحيحة';
-                    }
-                    return null;
-                  },
-                ),
-                const SizedBox(height: 16),
-
-                TextFormField(
-                  controller: passwordController,
-                  decoration: InputDecoration(
-                    labelText: 'كلمة المرور',
-                    suffixIcon: IconButton(
-                      icon: Icon(
-                        obscurePassword
-                            ? Icons.visibility_off
-                            : Icons.visibility,
-                      ),
-                      onPressed: () {
-                        setState(() {
-                          obscurePassword = !obscurePassword;
-                        });
-                      },
+                  Text(
+                    'مرحبًا بعودتك',
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.w800,
                     ),
                   ),
-                  obscureText: obscurePassword,
-                  validator: (value) {
-                    if (value == null || value.isEmpty) {
-                      return 'هذا الحقل مطلوب';
-                    }
-                    if (value.length < 4) {
-                      return 'كلمة المرور قصيرة جداً';
-                    }
-                    return null;
-                  },
-                ),
-                const SizedBox(height: 24),
+                  const SizedBox(height: 6),
+                  Text(
+                    'سجّل دخولك للمتابعة.',
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: cs.onSurface.withValues(alpha: 0.72),
+                    ),
+                  ),
 
-                SizedBox(
-                  width: double.infinity,
-                  child:
-                      loading
-                          ? const Center(child: CircularProgressIndicator())
-                          : ElevatedButton(
-                            onPressed: login,
-                            child: const Text('تسجيل الدخول'),
+                  const SizedBox(height: 16),
+
+                  Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        children: [
+                          TextFormField(
+                            controller: emailController,
+                            decoration: const InputDecoration(
+                              labelText: 'البريد الإلكتروني',
+                            ),
+                            keyboardType: TextInputType.emailAddress,
+                            validator: emailValidator,
+                            enabled: !loading,
+                            textInputAction: TextInputAction.next,
                           ),
-                ),
+                          const SizedBox(height: 16),
 
-                const SizedBox(height: 12),
+                          TextFormField(
+                            controller: passwordController,
+                            decoration: InputDecoration(
+                              labelText: 'كلمة المرور',
+                              suffixIcon: IconButton(
+                                tooltip: obscurePassword ? 'إظهار' : 'إخفاء',
+                                icon: Icon(
+                                  obscurePassword
+                                      ? Icons.visibility_off
+                                      : Icons.visibility,
+                                ),
+                                onPressed: () {
+                                  setState(
+                                    () => obscurePassword = !obscurePassword,
+                                  );
+                                },
+                              ),
+                            ),
+                            obscureText: obscurePassword,
+                            validator: passwordValidator,
+                            enabled: !loading,
+                            textInputAction: TextInputAction.done,
+                            onFieldSubmitted: (_) {
+                              if (!loading) {
+                                login();
+                              }
+                            },
+                          ),
+                          const SizedBox(height: 18),
 
-                TextButton(
-                  onPressed: () {
-                    Navigator.pushNamed(context, '/forgot-password');
-                  },
-                  child: const Text('نسيت كلمة المرور؟'),
-                ),
-                const SizedBox(height: 12),
+                          SizedBox(
+                            width: double.infinity,
+                            child: ElevatedButton(
+                              onPressed: loading ? null : login,
+                              child:
+                                  loading
+                                      ? const SizedBox(
+                                        width: 20,
+                                        height: 20,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
+                                      )
+                                      : const Text('تسجيل الدخول'),
+                            ),
+                          ),
 
-                TextButton(
-                  onPressed: () {
-                    Navigator.pushNamed(context, '/register');
-                  },
-                  child: const Text('إنشاء حساب جديد'),
-                ),
-              ],
+                          const SizedBox(height: 10),
+
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              TextButton(
+                                onPressed:
+                                    loading
+                                        ? null
+                                        : () => context.go('/forgot-password'),
+                                child: const Text('نسيت كلمة المرور؟'),
+                              ),
+                              TextButton(
+                                onPressed:
+                                    loading
+                                        ? null
+                                        : () => context.go('/register'),
+                                child: const Text('إنشاء حساب'),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ),

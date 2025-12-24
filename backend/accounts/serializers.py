@@ -24,6 +24,8 @@ User = get_user_model()
 # Users
 # ---------------------------------------------------------------------------
 
+
+
 class UserRegistrationSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True)
     governorate_name = serializers.CharField(source="governorate.name", read_only=True)
@@ -42,18 +44,20 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
         ]
 
     def create(self, validated_data):
-        role = validated_data.get("role", "patient")
+        role = validated_data.get("role") or "patient"
+
+     
         is_active = True if role == "patient" else False
 
         password = validated_data.pop("password")
 
-        # ملاحظة: validated_data يحتوي governorate كـ instance عادةً (FK)
         user = CustomUser.objects.create_user(
             password=password,
             is_active=is_active,
             **validated_data,
         )
         return user
+
 
 
 class DoctorDetailsSerializer(serializers.ModelSerializer):

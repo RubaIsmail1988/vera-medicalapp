@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 
-import '/models/hospital.dart';
 import '/models/governorate.dart';
-import '/services/hospital_service.dart';
+import '/models/hospital.dart';
 import '/services/governorate_service.dart';
+import '/services/hospital_service.dart';
+import '/utils/ui_helpers.dart';
 
 class HospitalFormScreen extends StatefulWidget {
   final Hospital? hospital;
@@ -19,12 +20,12 @@ class _HospitalFormScreenState extends State<HospitalFormScreen> {
   final hospitalService = HospitalService();
   final governorateService = GovernorateService();
 
-  late TextEditingController nameController;
-  late TextEditingController addressController;
-  late TextEditingController latitudeController;
-  late TextEditingController longitudeController;
-  late TextEditingController specialtyController;
-  late TextEditingController contactInfoController;
+  late final TextEditingController nameController;
+  late final TextEditingController addressController;
+  late final TextEditingController latitudeController;
+  late final TextEditingController longitudeController;
+  late final TextEditingController specialtyController;
+  late final TextEditingController contactInfoController;
 
   bool loading = false;
 
@@ -35,18 +36,19 @@ class _HospitalFormScreenState extends State<HospitalFormScreen> {
   @override
   void initState() {
     super.initState();
+
     final h = widget.hospital;
 
-    nameController = TextEditingController(text: h?.name ?? "");
-    addressController = TextEditingController(text: h?.address ?? "");
+    nameController = TextEditingController(text: h?.name ?? '');
+    addressController = TextEditingController(text: h?.address ?? '');
     latitudeController = TextEditingController(
-      text: h?.latitude?.toString() ?? "",
+      text: h?.latitude?.toString() ?? '',
     );
     longitudeController = TextEditingController(
-      text: h?.longitude?.toString() ?? "",
+      text: h?.longitude?.toString() ?? '',
     );
-    specialtyController = TextEditingController(text: h?.specialty ?? "");
-    contactInfoController = TextEditingController(text: h?.contactInfo ?? "");
+    specialtyController = TextEditingController(text: h?.specialty ?? '');
+    contactInfoController = TextEditingController(text: h?.contactInfo ?? '');
 
     selectedGovernorateId = h?.governorate;
 
@@ -54,16 +56,17 @@ class _HospitalFormScreenState extends State<HospitalFormScreen> {
   }
 
   Future<void> loadGovernorates() async {
-    setState(() {
-      loadingGovernorates = true;
-    });
+    if (!mounted) return;
+    setState(() => loadingGovernorates = true);
 
     try {
       final items = await governorateService.fetchGovernorates();
       if (!mounted) return;
 
+      items.sort((a, b) => a.name.compareTo(b.name));
+
       setState(() {
-        governorates = items..sort((a, b) => a.name.compareTo(b.name));
+        governorates = items;
         loadingGovernorates = false;
 
         // في وضع التعديل: إن لم تعد القيمة موجودة لأي سبب
@@ -74,16 +77,15 @@ class _HospitalFormScreenState extends State<HospitalFormScreen> {
           }
         }
       });
-    } catch (e) {
+    } catch (_) {
       if (!mounted) return;
+      setState(() => loadingGovernorates = false);
 
-      setState(() {
-        loadingGovernorates = false;
-      });
-
-      ScaffoldMessenger.of(
+      showAppSnackBar(
         context,
-      ).showSnackBar(SnackBar(content: Text("فشل تحميل المحافظات: $e")));
+        'فشل تحميل المحافظات.',
+        type: AppSnackBarType.error,
+      );
     }
   }
 
@@ -102,22 +104,21 @@ class _HospitalFormScreenState extends State<HospitalFormScreen> {
     if (!formKey.currentState!.validate()) return;
 
     if (selectedGovernorateId == null) {
-      ScaffoldMessenger.of(
+      showAppSnackBar(
         context,
-      ).showSnackBar(const SnackBar(content: Text("يرجى اختيار المحافظة.")));
+        'يرجى اختيار المحافظة.',
+        type: AppSnackBarType.warning,
+      );
       return;
     }
 
     setState(() => loading = true);
 
-    final double? lat =
-        latitudeController.text.trim().isEmpty
-            ? null
-            : double.tryParse(latitudeController.text.trim());
-    final double? lng =
-        longitudeController.text.trim().isEmpty
-            ? null
-            : double.tryParse(longitudeController.text.trim());
+    final String latRaw = latitudeController.text.trim();
+    final String lngRaw = longitudeController.text.trim();
+
+    final double? lat = latRaw.isEmpty ? null : double.tryParse(latRaw);
+    final double? lng = lngRaw.isEmpty ? null : double.tryParse(lngRaw);
 
     final hospital = Hospital(
       id: widget.hospital?.id,
@@ -140,7 +141,8 @@ class _HospitalFormScreenState extends State<HospitalFormScreen> {
     );
 
     try {
-      final isEdit = widget.hospital != null;
+      final bool isEdit = widget.hospital != null;
+
       final response =
           isEdit
               ? await hospitalService.updateHospital(hospital)
@@ -149,24 +151,25 @@ class _HospitalFormScreenState extends State<HospitalFormScreen> {
       if (!mounted) return;
 
       if (response.statusCode == 200 || response.statusCode == 201) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              isEdit ? "تم تحديث المشفى بنجاح" : "تم إنشاء المشفى بنجاح",
-            ),
-          ),
+        showAppSnackBar(
+          context,
+          isEdit ? 'تم تحديث المشفى بنجاح.' : 'تم إنشاء المشفى بنجاح.',
+          type: AppSnackBarType.success,
         );
         Navigator.pop(context, true);
-      } else {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text("فشل الحفظ: ${response.body}")));
+        return;
       }
-    } catch (e) {
+
+      final msg = hospitalService.extractErrorMessage(response);
+
+      showAppSnackBar(context, 'فشل الحفظ: $msg', type: AppSnackBarType.error);
+    } catch (_) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
+      showAppSnackBar(
         context,
-      ).showSnackBar(SnackBar(content: Text("حدث خطأ: $e")));
+        'حدث خطأ أثناء الحفظ.',
+        type: AppSnackBarType.error,
+      );
     } finally {
       if (mounted) {
         setState(() => loading = false);
@@ -179,7 +182,7 @@ class _HospitalFormScreenState extends State<HospitalFormScreen> {
     final bool isEdit = widget.hospital != null;
 
     return Scaffold(
-      appBar: AppBar(title: Text(isEdit ? "تعديل مشفى" : "إضافة مشفى جديد")),
+      appBar: AppBar(title: Text(isEdit ? 'تعديل مشفى' : 'إضافة مشفى جديد')),
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: Form(
@@ -188,49 +191,46 @@ class _HospitalFormScreenState extends State<HospitalFormScreen> {
             children: [
               TextFormField(
                 controller: nameController,
-                decoration: const InputDecoration(labelText: "اسم المشفى"),
+                decoration: const InputDecoration(labelText: 'اسم المشفى'),
                 validator:
-                    (v) => v == null || v.trim().isEmpty ? "الحقل مطلوب" : null,
+                    (v) => v == null || v.trim().isEmpty ? 'الحقل مطلوب' : null,
               ),
               const SizedBox(height: 12),
 
-              loadingGovernorates
-                  ? const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 8),
-                    child: LinearProgressIndicator(),
-                  )
-                  : DropdownButtonFormField<int>(
-                    value: selectedGovernorateId,
-                    items:
-                        governorates
-                            .map(
-                              (g) => DropdownMenuItem<int>(
-                                value: g.id,
-                                child: Text(g.name),
-                              ),
-                            )
-                            .toList(),
-                    onChanged: (v) {
-                      setState(() {
-                        selectedGovernorateId = v;
-                      });
-                    },
-                    decoration: const InputDecoration(labelText: "المحافظة"),
-                    validator: (v) => v == null ? "الحقل مطلوب" : null,
-                  ),
+              if (loadingGovernorates)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 8),
+                  child: LinearProgressIndicator(),
+                )
+              else
+                DropdownButtonFormField<int>(
+                  value: selectedGovernorateId,
+                  items:
+                      governorates
+                          .map(
+                            (g) => DropdownMenuItem<int>(
+                              value: g.id,
+                              child: Text(g.name),
+                            ),
+                          )
+                          .toList(),
+                  onChanged: (v) => setState(() => selectedGovernorateId = v),
+                  decoration: const InputDecoration(labelText: 'المحافظة'),
+                  validator: (v) => v == null ? 'الحقل مطلوب' : null,
+                ),
 
               const SizedBox(height: 12),
 
               TextFormField(
                 controller: addressController,
-                decoration: const InputDecoration(labelText: "العنوان"),
+                decoration: const InputDecoration(labelText: 'العنوان'),
               ),
               const SizedBox(height: 12),
 
               TextFormField(
                 controller: latitudeController,
                 decoration: const InputDecoration(
-                  labelText: "خط العرض (latitude)",
+                  labelText: 'خط العرض (latitude)',
                 ),
                 keyboardType: const TextInputType.numberWithOptions(
                   decimal: true,
@@ -241,7 +241,7 @@ class _HospitalFormScreenState extends State<HospitalFormScreen> {
               TextFormField(
                 controller: longitudeController,
                 decoration: const InputDecoration(
-                  labelText: "خط الطول (longitude)",
+                  labelText: 'خط الطول (longitude)',
                 ),
                 keyboardType: const TextInputType.numberWithOptions(
                   decimal: true,
@@ -251,22 +251,30 @@ class _HospitalFormScreenState extends State<HospitalFormScreen> {
 
               TextFormField(
                 controller: specialtyController,
-                decoration: const InputDecoration(labelText: "التخصص"),
+                decoration: const InputDecoration(labelText: 'التخصص'),
               ),
               const SizedBox(height: 12),
 
               TextFormField(
                 controller: contactInfoController,
-                decoration: const InputDecoration(labelText: "بيانات الاتصال"),
+                decoration: const InputDecoration(labelText: 'بيانات الاتصال'),
               ),
               const SizedBox(height: 20),
 
-              loading
-                  ? const Center(child: CircularProgressIndicator())
-                  : ElevatedButton(
-                    onPressed: submit,
-                    child: Text(isEdit ? "حفظ التعديلات" : "حفظ"),
-                  ),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: loading ? null : submit,
+                  child:
+                      loading
+                          ? const SizedBox(
+                            height: 20,
+                            width: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                          : Text(isEdit ? 'حفظ التعديلات' : 'حفظ'),
+                ),
+              ),
             ],
           ),
         ),

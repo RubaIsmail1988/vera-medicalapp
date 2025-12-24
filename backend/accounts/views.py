@@ -40,13 +40,15 @@ class UserRegistrationView(generics.CreateAPIView):
     serializer_class = UserRegistrationSerializer
     permission_classes = [AllowAny]
 
+
 class PatientRegistrationView(UserRegistrationView):
     def perform_create(self, serializer):
-        serializer.save(role='patient', is_active=True)
+        serializer.save(role="patient")
+
 
 class DoctorRegistrationView(UserRegistrationView):
     def perform_create(self, serializer):
-        serializer.save(role='doctor', is_active=False)
+        serializer.save(role="doctor")
 
 class UsersListView(ListAPIView):
     serializer_class = UserSerializer
@@ -596,7 +598,7 @@ class AppointmentTypeReadOnlyListView(ListAPIView):
 
 
 class GovernorateListView(generics.ListAPIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [AllowAny]
     serializer_class = GovernorateSerializer
 
     def get_queryset(self):

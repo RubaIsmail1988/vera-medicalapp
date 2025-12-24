@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '/services/auth_service.dart';
@@ -12,10 +13,14 @@ class OrderDetailsScreen extends StatefulWidget {
   final String role; // doctor | patient
   final int orderId;
 
+  // للطبيب: كي نرجع إلى /app/record?patientId=...
+  final int? doctorPatientId;
+
   const OrderDetailsScreen({
     super.key,
     required this.role,
     required this.orderId,
+    this.doctorPatientId,
   });
 
   @override
@@ -29,6 +34,9 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
   Map<String, dynamic>? order;
   List<Map<String, dynamic>> files = [];
 
+  bool get isDoctor => widget.role == "doctor";
+  bool get isPatient => widget.role == "patient";
+
   @override
   void initState() {
     super.initState();
@@ -36,10 +44,8 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     loadAll();
   }
 
-  bool get isDoctor => widget.role == "doctor";
-  bool get isPatient => widget.role == "patient";
-
   Future<void> loadAll() async {
+    if (!mounted) return;
     setState(() => loading = true);
 
     final orderRes = await clinicalService.getOrderDetails(widget.orderId);
@@ -60,6 +66,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
       showAppSnackBar(
         context,
         "فشل تحميل تفاصيل الطلب (${orderRes.statusCode}).",
+        type: AppSnackBarType.error,
       );
       return;
     }
@@ -82,7 +89,11 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     }
     if (filesRes.statusCode != 200) {
       setState(() => loading = false);
-      showAppSnackBar(context, "فشل تحميل الملفات (${filesRes.statusCode}).");
+      showAppSnackBar(
+        context,
+        "فشل تحميل الملفات (${filesRes.statusCode}).",
+        type: AppSnackBarType.error,
+      );
       return;
     }
 
@@ -92,6 +103,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
             ? decodedFiles.cast<Map<String, dynamic>>()
             : <Map<String, dynamic>>[];
 
+    if (!mounted) return;
     setState(() {
       order = orderJson;
       files = filesList;
@@ -115,7 +127,6 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     return Icons.insert_drive_file_outlined;
   }
 
-  /// Backend قد يرجع pending بدل pending_review - نطبّعها حسب سياسة Phase D.
   String _normalizedReviewStatus(String raw) {
     final v = raw.trim().toLowerCase();
     if (v == "pending" || v == "pending_review" || v == "pending-review") {
@@ -124,6 +135,13 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     if (v == "approved") return "approved";
     if (v == "rejected") return "rejected";
     return raw;
+  }
+
+  String _reviewStatusLabelAr(String normalized) {
+    if (normalized == "pending_review") return "قيد المراجعة";
+    if (normalized == "approved") return "مقبول";
+    if (normalized == "rejected") return "مرفوض";
+    return normalized;
   }
 
   String _resolveFileUrl(String urlOrPath) {
@@ -297,6 +315,17 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     showAppSnackBar(context, "فشل العملية (${res.statusCode}).");
   }
 
+  void _goBackSmart() {
+    // الطبيب: يرجع إلى /record?patientId=...
+    if (isDoctor && widget.doctorPatientId != null) {
+      context.go("/app/record?patientId=${widget.doctorPatientId}");
+      return;
+    }
+
+    // المريض: يرجع إلى /record
+    context.go("/app/record");
+  }
+
   // ----------- UI -----------
 
   @override
@@ -320,14 +349,18 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        // حسب طلبك: إخفاء رقم الطلب وكلمة "تفاصيل الطلب"
-        title: const Text("تغاصيل الطلب "),
+        title: const Text("تفاصيل الطلب"),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: _goBackSmart,
+        ),
         actions: [
           IconButton(
             onPressed: () async {
+              final ctx = context;
               await loadAll();
-              if (!mounted) return;
-              showAppSnackBar(this.context, "تم التحديث.");
+              if (!mounted || !ctx.mounted) return;
+              showAppSnackBar(ctx, "تم التحديث.");
             },
             icon: const Icon(Icons.refresh),
           ),
@@ -347,7 +380,6 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          // صف العنوان + اسم الطبيب أقصى اليمين
                           Row(
                             children: [
                               Expanded(
@@ -394,6 +426,8 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                     ),
                   ),
                   const SizedBox(height: 12),
+
+                  // Files
                   Card(
                     child: Column(
                       children: [
@@ -428,6 +462,10 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                               f["review_status"]?.toString() ?? "",
                             );
 
+                            final statusAr = _reviewStatusLabelAr(
+                              normalizedStatus,
+                            );
+
                             final doctorNote =
                                 f["doctor_note"]?.toString() ?? "";
 
@@ -445,22 +483,25 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                             return Column(
                               children: [
                                 ListTile(
-                                  // حسب طلبك: إخفاء الـ id ووضع أيقونة حسب نوع الطلب
                                   leading: CircleAvatar(child: Icon(orderIcon)),
                                   title: Text(
                                     filename.isNotEmpty ? filename : "ملف",
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
                                   ),
-                                  // حسب طلبك: إخفاء status: pending_review
-                                  subtitle:
-                                      doctorNote.trim().isNotEmpty
-                                          ? Text(
-                                            "ملاحظة الطبيب: $doctorNote",
-                                            maxLines: 2,
-                                            overflow: TextOverflow.ellipsis,
-                                          )
-                                          : null,
+                                  subtitle: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text("الحالة: $statusAr"),
+                                      if (doctorNote.trim().isNotEmpty)
+                                        Text(
+                                          "ملاحظة الطبيب: $doctorNote",
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                    ],
+                                  ),
                                 ),
                                 Padding(
                                   padding: const EdgeInsets.fromLTRB(
@@ -496,7 +537,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                                         OutlinedButton.icon(
                                           onPressed: () async {
                                             await showDialog<void>(
-                                              context: this.context,
+                                              context: context,
                                               builder: (ctx) {
                                                 return AlertDialog(
                                                   content: SizedBox(
@@ -561,10 +602,13 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                                           label: const Text("فتح / تحميل"),
                                         ),
                                       ],
+
                                       const SizedBox(height: 10),
 
-                                      // Review Policy (Doctor only) - بدون عرض status بالنص
-                                      if (isDoctor) ...[
+                                      // أزرار المراجعة تظهر فقط عند pending_review
+                                      if (isDoctor &&
+                                          normalizedStatus ==
+                                              "pending_review") ...[
                                         Row(
                                           children: [
                                             Expanded(

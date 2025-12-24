@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '/services/details_service.dart';
 import '/models/doctor_details.dart';
+import '/utils/ui_helpers.dart';
 import 'doctor_details_screen.dart';
 
 class DoctorDetailsFormScreen extends StatefulWidget {
@@ -20,95 +21,123 @@ class DoctorDetailsFormScreen extends StatefulWidget {
 }
 
 class _DoctorDetailsFormScreenState extends State<DoctorDetailsFormScreen> {
-  final _formKey = GlobalKey<FormState>();
+  final formKey = GlobalKey<FormState>();
 
-  final TextEditingController _specialty = TextEditingController();
-  final TextEditingController _experienceYears = TextEditingController();
-  final TextEditingController _notes = TextEditingController();
+  final TextEditingController specialtyController = TextEditingController();
+  final TextEditingController experienceYearsController =
+      TextEditingController();
+  final TextEditingController notesController = TextEditingController();
 
   bool loading = false;
 
   Future<void> submitDoctorDetails() async {
-    if (!_formKey.currentState!.validate()) return;
+    if (!formKey.currentState!.validate()) return;
 
     setState(() => loading = true);
 
     final request = DoctorDetailsRequest(
       userId: widget.userId,
-      specialty: _specialty.text.trim(),
-      experienceYears: int.tryParse(_experienceYears.text.trim()) ?? 0,
-      notes: _notes.text.trim().isEmpty ? null : _notes.text.trim(),
+      specialty: specialtyController.text.trim(),
+      experienceYears: int.tryParse(experienceYearsController.text.trim()) ?? 0,
+      notes:
+          notesController.text.trim().isEmpty
+              ? null
+              : notesController.text.trim(),
     );
 
-    final response = await DetailsService().createDoctorDetails(request);
+    try {
+      final response = await DetailsService().createDoctorDetails(request);
 
-    if (!mounted) return;
+      if (!mounted) return;
+      setState(() => loading = false);
 
-    setState(() => loading = false);
+      if (response.statusCode == 201 || response.statusCode == 200) {
+        showAppSnackBar(
+          context,
+          'تم حفظ تفاصيل الطبيب بنجاح.',
+          type: AppSnackBarType.success,
+        );
 
-    if (response.statusCode == 201 || response.statusCode == 200) {
-      // حفظ ناجح → نذهب لعرض تفاصيل الطبيب
-      Navigator.pushReplacement(
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder:
+                (_) => DoctorDetailsScreen(
+                  token: widget.token,
+                  userId: widget.userId,
+                ),
+          ),
+        );
+        return;
+      }
+
+      showAppSnackBar(
         context,
-        MaterialPageRoute(
-          builder:
-              (_) => DoctorDetailsScreen(
-                token: widget.token,
-                userId: widget.userId,
-              ),
-        ),
+        'فشل الحفظ: ${response.body}',
+        type: AppSnackBarType.error,
       );
-    } else {
-      ScaffoldMessenger.of(
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => loading = false);
+
+      showAppSnackBar(
         context,
-      ).showSnackBar(SnackBar(content: Text("Failed: ${response.body}")));
+        'حدث خطأ أثناء الحفظ: $e',
+        type: AppSnackBarType.error,
+      );
     }
+  }
+
+  @override
+  void dispose() {
+    specialtyController.dispose();
+    experienceYearsController.dispose();
+    notesController.dispose();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("Doctor Details")),
+      appBar: AppBar(title: const Text("إدخال تفاصيل الطبيب")),
       body: Padding(
-        padding: const EdgeInsets.all(16.0),
+        padding: const EdgeInsets.all(16),
         child: Form(
-          key: _formKey,
-          child: Column(
+          key: formKey,
+          child: ListView(
             children: [
               TextFormField(
-                controller: _specialty,
-                decoration: const InputDecoration(labelText: "Specialty"),
+                controller: specialtyController,
+                decoration: const InputDecoration(labelText: "التخصص"),
                 validator:
-                    (v) => v == null || v.isEmpty ? "Required field" : null,
+                    (v) => v == null || v.trim().isEmpty ? "الحقل مطلوب" : null,
               ),
-
-              const SizedBox(height: 15),
+              const SizedBox(height: 12),
 
               TextFormField(
-                controller: _experienceYears,
-                decoration: const InputDecoration(
-                  labelText: "Years of Experience",
-                ),
+                controller: experienceYearsController,
+                decoration: const InputDecoration(labelText: "سنوات الخبرة"),
                 keyboardType: TextInputType.number,
                 validator:
-                    (v) => v == null || v.isEmpty ? "Required field" : null,
+                    (v) => v == null || v.trim().isEmpty ? "الحقل مطلوب" : null,
               ),
-
-              const SizedBox(height: 15),
+              const SizedBox(height: 12),
 
               TextFormField(
-                controller: _notes,
-                decoration: const InputDecoration(labelText: "Notes"),
+                controller: notesController,
+                decoration: const InputDecoration(labelText: "ملاحظات"),
                 maxLines: 3,
               ),
-
-              const SizedBox(height: 25),
+              const SizedBox(height: 20),
 
               loading
-                  ? const CircularProgressIndicator()
-                  : ElevatedButton(
-                    onPressed: submitDoctorDetails,
-                    child: const Text("Save"),
+                  ? const Center(child: CircularProgressIndicator())
+                  : SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: submitDoctorDetails,
+                      child: const Text("حفظ"),
+                    ),
                   ),
             ],
           ),

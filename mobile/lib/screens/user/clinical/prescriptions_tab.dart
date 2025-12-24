@@ -61,11 +61,10 @@ class _PrescriptionsTabState extends State<PrescriptionsTab> {
               ? decoded.cast<Map<String, dynamic>>()
               : <Map<String, dynamic>>[];
 
-      // Doctor context: فلترة حسب المريض المختار
       final selectedPid = widget.selectedPatientId;
       List<Map<String, dynamic>> filtered = list;
 
-      if (widget.role == "doctor" && selectedPid != null) {
+      if (isDoctor && selectedPid != null) {
         filtered =
             list.where((p) {
               final pid = asInt(p["patient"]);
@@ -73,7 +72,6 @@ class _PrescriptionsTabState extends State<PrescriptionsTab> {
             }).toList();
       }
 
-      // Sort: newest first
       filtered.sort((a, b) {
         final aRaw = a["created_at"]?.toString() ?? "";
         final bRaw = b["created_at"]?.toString() ?? "";
@@ -111,9 +109,6 @@ class _PrescriptionsTabState extends State<PrescriptionsTab> {
     });
   }
 
-  // ---------------------------------------------------------------------------
-  // Formatting (Required): dd/MM/yyyy – HH:mm
-  // ---------------------------------------------------------------------------
   String formatDateTime(String raw) {
     final s = raw.trim();
     if (s.isEmpty) return "";
@@ -142,7 +137,7 @@ class _PrescriptionsTabState extends State<PrescriptionsTab> {
   }
 
   // ---------------------------------------------------------------------------
-  // Prescription Details (Dialog) - UI only
+  // Prescription Details (Dialog) - UI only (كما عندك)
   // ---------------------------------------------------------------------------
   Future<void> openPrescriptionDetails(
     int prescriptionId, {
@@ -280,7 +275,6 @@ class _PrescriptionsTabState extends State<PrescriptionsTab> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // مستطيل تاريخ الوصفة
                   Card(
                     margin: EdgeInsets.zero,
                     child: Padding(
@@ -295,7 +289,6 @@ class _PrescriptionsTabState extends State<PrescriptionsTab> {
                     ),
                   ),
                   const SizedBox(height: 10),
-
                   Expanded(
                     child:
                         items.isEmpty
@@ -307,9 +300,7 @@ class _PrescriptionsTabState extends State<PrescriptionsTab> {
                               itemBuilder: (_, i) => itemCard(items[i]),
                             ),
                   ),
-
                   const SizedBox(height: 10),
-
                   Card(
                     margin: EdgeInsets.zero,
                     child: Padding(
@@ -350,11 +341,15 @@ class _PrescriptionsTabState extends State<PrescriptionsTab> {
   }
 
   // ---------------------------------------------------------------------------
-
-  // ---------------------------------------------------------------------------
   Future<void> createPrescriptionFlow() async {
     if (!isDoctor) {
       showAppSnackBar(context, "هذه العملية متاحة للطبيب فقط.");
+      return;
+    }
+
+    final patientId = widget.selectedPatientId;
+    if (patientId == null || patientId <= 0) {
+      showAppSnackBar(context, "يرجى اختيار مريض أولًا قبل إنشاء وصفة.");
       return;
     }
 
@@ -368,7 +363,7 @@ class _PrescriptionsTabState extends State<PrescriptionsTab> {
 
     final response = await clinicalService.createPrescription(
       doctorId: widget.userId,
-      patientId: payload.patientId,
+      patientId: patientId,
       notes: payload.notes,
       items: payload.items,
     );
@@ -416,9 +411,7 @@ class _PrescriptionsTabState extends State<PrescriptionsTab> {
             child: SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
-                onPressed: () async {
-                  await createPrescriptionFlow();
-                },
+                onPressed: () async => createPrescriptionFlow(),
                 icon: const Icon(Icons.add),
                 label: const Text("إنشاء وصفة"),
               ),
@@ -435,9 +428,7 @@ class _PrescriptionsTabState extends State<PrescriptionsTab> {
               if (snapshot.hasError) {
                 final err = snapshot.error;
                 String message = "حدث خطأ.";
-                if (err is HttpException) {
-                  message = err.message;
-                }
+                if (err is HttpException) message = err.message;
 
                 return Center(
                   child: Padding(
@@ -489,9 +480,7 @@ class _PrescriptionsTabState extends State<PrescriptionsTab> {
               }
 
               return RefreshIndicator(
-                onRefresh: () async {
-                  await reload();
-                },
+                onRefresh: () async => reload(),
                 child: ListView.separated(
                   padding: const EdgeInsets.all(12),
                   itemCount: viewList.length,
@@ -573,19 +562,13 @@ class HttpException implements Exception {
 }
 
 class CreatePrescriptionPayload {
-  final int patientId;
   final String notes;
   final List<Map<String, dynamic>> items;
 
-  CreatePrescriptionPayload({
-    required this.patientId,
-    required this.notes,
-    required this.items,
-  });
+  CreatePrescriptionPayload({required this.notes, required this.items});
 }
 
-// ملاحظة: هذا الجزء كما هو عندك (CreatePrescriptionDialog + PrescriptionItemDialog)
-// لم أغيّره هنا لأنك لم تطلب تعديلات عليه ضمن هذا الطلب.
+// Dialog إنشاء الوصفة للطبيب: بدون patientId
 class CreatePrescriptionDialog extends StatefulWidget {
   const CreatePrescriptionDialog({super.key});
 
@@ -595,14 +578,11 @@ class CreatePrescriptionDialog extends StatefulWidget {
 }
 
 class CreatePrescriptionDialogState extends State<CreatePrescriptionDialog> {
-  final TextEditingController patientIdController = TextEditingController();
   final TextEditingController notesController = TextEditingController();
-
   final List<Map<String, dynamic>> items = [];
 
   @override
   void dispose() {
-    patientIdController.dispose();
     notesController.dispose();
     super.dispose();
   }
@@ -630,15 +610,6 @@ class CreatePrescriptionDialogState extends State<CreatePrescriptionDialog> {
         child: SingleChildScrollView(
           child: Column(
             children: [
-              TextField(
-                controller: patientIdController,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
-                  labelText: "Patient ID",
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 12),
               TextField(
                 controller: notesController,
                 maxLines: 2,
@@ -707,11 +678,6 @@ class CreatePrescriptionDialogState extends State<CreatePrescriptionDialog> {
         ),
         ElevatedButton(
           onPressed: () {
-            final pid = int.tryParse(patientIdController.text.trim());
-            if (pid == null || pid <= 0) {
-              showAppSnackBar(context, "Patient ID غير صالح.");
-              return;
-            }
             if (items.isEmpty) {
               showAppSnackBar(context, "أضف دواء واحد على الأقل.");
               return;
@@ -728,7 +694,6 @@ class CreatePrescriptionDialogState extends State<CreatePrescriptionDialog> {
             Navigator.pop(
               context,
               CreatePrescriptionPayload(
-                patientId: pid,
                 notes: notesController.text.trim(),
                 items: items,
               ),
@@ -741,6 +706,7 @@ class CreatePrescriptionDialogState extends State<CreatePrescriptionDialog> {
   }
 }
 
+// PrescriptionItemDialog: كما هو عندك (بدون تعديل)
 class PrescriptionItemDialog extends StatefulWidget {
   const PrescriptionItemDialog({super.key});
 
@@ -837,7 +803,6 @@ class PrescriptionItemDialogState extends State<PrescriptionItemDialog> {
                 ),
               ),
               const SizedBox(height: 10),
-
               Row(
                 children: [
                   Expanded(
@@ -890,7 +855,6 @@ class PrescriptionItemDialogState extends State<PrescriptionItemDialog> {
                 ),
               ],
               const SizedBox(height: 10),
-
               DropdownButtonFormField<String>(
                 value: frequencyPreset,
                 items:
@@ -925,7 +889,6 @@ class PrescriptionItemDialogState extends State<PrescriptionItemDialog> {
                 ),
               ],
               const SizedBox(height: 10),
-
               TextField(
                 controller: startDateController,
                 readOnly: true,
@@ -936,7 +899,6 @@ class PrescriptionItemDialogState extends State<PrescriptionItemDialog> {
                 onTap: () async => pickDate(startDateController),
               ),
               const SizedBox(height: 10),
-
               CheckboxListTile(
                 value: isPermanent,
                 onChanged: (v) {
@@ -956,7 +918,6 @@ class PrescriptionItemDialogState extends State<PrescriptionItemDialog> {
                 contentPadding: EdgeInsets.zero,
               ),
               const SizedBox(height: 6),
-
               TextField(
                 controller: endDateController,
                 readOnly: true,
@@ -971,7 +932,6 @@ class PrescriptionItemDialogState extends State<PrescriptionItemDialog> {
                 },
               ),
               const SizedBox(height: 10),
-
               TextField(
                 controller: instructionsController,
                 maxLines: 2,
@@ -1007,9 +967,7 @@ class PrescriptionItemDialogState extends State<PrescriptionItemDialog> {
             String unitToUse = dosageUnit;
             if (dosageUnit == "other") {
               final other = otherUnitController.text.trim();
-              if (other.isNotEmpty) {
-                unitToUse = other;
-              }
+              if (other.isNotEmpty) unitToUse = other;
             }
 
             final dosage = doseVal.isNotEmpty ? "$doseVal $unitToUse" : "";

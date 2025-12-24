@@ -1,16 +1,16 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 
 import '/services/auth_service.dart';
 import '/services/clinical_service.dart';
 import '/utils/ui_helpers.dart';
-import 'order_details_screen.dart';
 
 class OrdersTab extends StatefulWidget {
   final String role;
   final int userId;
-  final int? selectedPatientId; // Phase D-2 (doctor context)
+  final int? selectedPatientId; // doctor context
 
   const OrdersTab({
     super.key,
@@ -27,6 +27,8 @@ class _OrdersTabState extends State<OrdersTab> {
   late final ClinicalService clinicalService;
   Future<List<Map<String, dynamic>>>? ordersFuture;
 
+  bool get isDoctor => widget.role == "doctor";
+
   @override
   void initState() {
     super.initState();
@@ -41,8 +43,6 @@ class _OrdersTabState extends State<OrdersTab> {
       reload();
     }
   }
-
-  bool get isDoctor => widget.role == "doctor";
 
   int? _asInt(dynamic v) {
     if (v == null) return null;
@@ -70,8 +70,16 @@ class _OrdersTabState extends State<OrdersTab> {
   IconData _categoryIcon(String raw) {
     final v = raw.trim().toLowerCase();
     if (v == "lab_test") return Icons.science_outlined;
-    if (v == "medical_imaging") return Icons.image_outlined;
+    if (v == "medical_imaging") return Icons.medical_services_outlined;
     return Icons.description_outlined;
+  }
+
+  String _statusLabel(String raw) {
+    final v = raw.trim().toLowerCase();
+    if (v == "open") return "مفتوح";
+    if (v == "fulfilled") return "مكتمل";
+    if (v == "cancelled") return "ملغي";
+    return raw.isEmpty ? "open" : raw;
   }
 
   Future<List<Map<String, dynamic>>> fetchOrders() async {
@@ -96,7 +104,7 @@ class _OrdersTabState extends State<OrdersTab> {
             }).toList();
       }
 
-      // ترتيب الأحدث أولًا
+      // الأحدث أولًا
       filtered.sort((a, b) {
         final da = _parseDate((a["created_at"] ?? "").toString());
         final db = _parseDate((b["created_at"] ?? "").toString());
@@ -127,6 +135,7 @@ class _OrdersTabState extends State<OrdersTab> {
   }
 
   Future<void> reload() async {
+    if (!mounted) return;
     setState(() {
       ordersFuture = fetchOrders();
     });
@@ -138,9 +147,15 @@ class _OrdersTabState extends State<OrdersTab> {
       return;
     }
 
+    final selectedPid = widget.selectedPatientId;
+    if (selectedPid == null || selectedPid <= 0) {
+      showAppSnackBar(context, "اختر مريضًا أولاً لإنشاء طلب.");
+      return;
+    }
+
     final payload = await showDialog<_CreateOrderPayload>(
       context: context,
-      builder: (_) => const _CreateOrderDialog(),
+      builder: (ctx) => const _CreateOrderDialog(),
     );
 
     if (!mounted) return;
@@ -148,7 +163,7 @@ class _OrdersTabState extends State<OrdersTab> {
 
     final response = await clinicalService.createOrder(
       doctorId: widget.userId,
-      patientId: payload.patientId,
+      patientId: selectedPid, // مهم: لا نطلب إدخاله في UI
       orderCategory: payload.orderCategory,
       title: payload.title,
       details: payload.details,
@@ -181,10 +196,35 @@ class _OrdersTabState extends State<OrdersTab> {
       showAppSnackBar(
         context,
         detail ?? "فشل إنشاء الطلب (${response.statusCode}).",
+        type: AppSnackBarType.error,
       );
     } catch (_) {
-      showAppSnackBar(context, "فشل إنشاء الطلب (${response.statusCode}).");
+      showAppSnackBar(
+        context,
+        "فشل إنشاء الطلب (${response.statusCode}).",
+        type: AppSnackBarType.error,
+      );
     }
+  }
+
+  void _openOrderDetails(int orderId) {
+    final pid = widget.selectedPatientId;
+
+    if (isDoctor) {
+      // الطبيب: نثبت patientId بالـ query حتى زر الرجوع يرجع لنفس المريض
+      if (pid == null || pid <= 0) {
+        showAppSnackBar(context, "اختر مريضًا أولًا.");
+        return;
+      }
+      context.go(
+        "/app/record/orders/$orderId?patientId=$pid",
+        extra: {"role": widget.role},
+      );
+      return;
+    }
+
+    // المريض: بدون query
+    context.go("/app/record/orders/$orderId", extra: {"role": widget.role});
   }
 
   @override
@@ -197,7 +237,7 @@ class _OrdersTabState extends State<OrdersTab> {
             child: SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
-                onPressed: () async => createOrderFlow(),
+                onPressed: () => createOrderFlow(),
                 icon: const Icon(Icons.add),
                 label: const Text("إنشاء طلب"),
               ),
@@ -230,10 +270,8 @@ class _OrdersTabState extends State<OrdersTab> {
                           onPressed: () async {
                             await reload();
                             if (!mounted) return;
-                            showAppSnackBar(
-                              this.context,
-                              "تمت إعادة المحاولة.",
-                            );
+                            // ignore: use_build_context_synchronously
+                            showAppSnackBar(context, "تمت إعادة المحاولة.");
                           },
                           icon: const Icon(Icons.refresh),
                           label: const Text("إعادة المحاولة"),
@@ -261,12 +299,18 @@ class _OrdersTabState extends State<OrdersTab> {
                     final oid = _asInt(o["id"]);
                     final title = o["title"]?.toString() ?? "طلب بدون عنوان";
                     final doctorName =
-                        o["doctor_display_name"]?.toString() ?? "";
-                    final createdAtRaw = o["created_at"]?.toString() ?? "";
+                        (o["doctor_display_name"]?.toString() ?? "").trim();
+
+                    final createdAtRaw =
+                        (o["created_at"]?.toString() ?? "").trim();
                     final createdAt =
                         createdAtRaw.isNotEmpty
                             ? _formatDateShort(createdAtRaw)
                             : "";
+
+                    final statusRaw =
+                        (o["status"]?.toString() ?? "open").trim();
+                    final statusLabel = _statusLabel(statusRaw);
 
                     return Card(
                       child: ListTile(
@@ -277,9 +321,21 @@ class _OrdersTabState extends State<OrdersTab> {
                             ),
                           ),
                         ),
-                        title: Row(
+                        title: Text(
+                          title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        subtitle: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Expanded(child: Text(title)),
+                            if (createdAt.isNotEmpty) Text(createdAt),
+                            Text("الحالة: $statusLabel"),
+                          ],
+                        ),
+                        trailing: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
                             if (doctorName.isNotEmpty)
                               Text(
                                 "د. $doctorName",
@@ -287,26 +343,18 @@ class _OrdersTabState extends State<OrdersTab> {
                                   fontSize: 12,
                                   fontWeight: FontWeight.w500,
                                 ),
+                                overflow: TextOverflow.ellipsis,
                               ),
+                            const SizedBox(height: 4),
+                            const Icon(Icons.chevron_right),
                           ],
                         ),
-                        subtitle: createdAt.isNotEmpty ? Text(createdAt) : null,
-                        trailing: const Icon(Icons.chevron_right),
                         onTap: () {
                           if (oid == null) {
-                            showAppSnackBar(this.context, "Invalid order id.");
+                            showAppSnackBar(context, "Invalid order id.");
                             return;
                           }
-                          Navigator.push(
-                            this.context,
-                            MaterialPageRoute(
-                              builder:
-                                  (_) => OrderDetailsScreen(
-                                    role: widget.role,
-                                    orderId: oid,
-                                  ),
-                            ),
-                          );
+                          _openOrderDetails(oid);
                         },
                       ),
                     );
@@ -332,13 +380,11 @@ class _HttpException implements Exception {
 }
 
 class _CreateOrderPayload {
-  final int patientId;
   final String orderCategory;
   final String title;
   final String details;
 
   _CreateOrderPayload({
-    required this.patientId,
     required this.orderCategory,
     required this.title,
     required this.details,
@@ -353,7 +399,6 @@ class _CreateOrderDialog extends StatefulWidget {
 }
 
 class _CreateOrderDialogState extends State<_CreateOrderDialog> {
-  final TextEditingController patientIdController = TextEditingController();
   final TextEditingController titleController = TextEditingController();
   final TextEditingController detailsController = TextEditingController();
 
@@ -361,7 +406,6 @@ class _CreateOrderDialogState extends State<_CreateOrderDialog> {
 
   @override
   void dispose() {
-    patientIdController.dispose();
     titleController.dispose();
     detailsController.dispose();
     super.dispose();
@@ -376,15 +420,6 @@ class _CreateOrderDialogState extends State<_CreateOrderDialog> {
         child: SingleChildScrollView(
           child: Column(
             children: [
-              TextField(
-                controller: patientIdController,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
-                  labelText: "Patient ID",
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 12),
               DropdownButtonFormField<String>(
                 value: orderCategory,
                 decoration: const InputDecoration(
@@ -410,7 +445,7 @@ class _CreateOrderDialogState extends State<_CreateOrderDialog> {
               TextField(
                 controller: titleController,
                 decoration: const InputDecoration(
-                  labelText: "Title",
+                  labelText: "العنوان",
                   border: OutlineInputBorder(),
                 ),
               ),
@@ -419,7 +454,7 @@ class _CreateOrderDialogState extends State<_CreateOrderDialog> {
                 controller: detailsController,
                 maxLines: 2,
                 decoration: const InputDecoration(
-                  labelText: "Instructions / Conditions (اختياري)",
+                  labelText: "تعليمات/شروط (اختياري)",
                   border: OutlineInputBorder(),
                 ),
               ),
@@ -434,22 +469,15 @@ class _CreateOrderDialogState extends State<_CreateOrderDialog> {
         ),
         ElevatedButton(
           onPressed: () {
-            final pid = int.tryParse(patientIdController.text.trim());
-            if (pid == null || pid <= 0) {
-              showAppSnackBar(context, "Patient ID غير صالح.");
-              return;
-            }
-
             final title = titleController.text.trim();
             if (title.isEmpty) {
-              showAppSnackBar(context, "Title مطلوب.");
+              showAppSnackBar(context, "العنوان مطلوب.");
               return;
             }
 
             Navigator.pop(
               context,
               _CreateOrderPayload(
-                patientId: pid,
                 orderCategory: orderCategory,
                 title: title,
                 details: detailsController.text.trim(),

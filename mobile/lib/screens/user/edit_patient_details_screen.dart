@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
+
 import '/services/details_service.dart';
 import '/models/patient_details.dart';
+import '/utils/ui_helpers.dart';
 
 class EditPatientDetailsScreen extends StatefulWidget {
-  final String token;
+  final String
+  token; // غير مستخدم مباشرة (DetailsService يعتمد على التوكن المخزن)
   final int userId;
 
   final String dateOfBirth;
@@ -29,12 +32,12 @@ class EditPatientDetailsScreen extends StatefulWidget {
 }
 
 class _EditPatientDetailsScreenState extends State<EditPatientDetailsScreen> {
-  final _formKey = GlobalKey<FormState>();
+  final formKey = GlobalKey<FormState>();
 
-  late TextEditingController dobController;
-  late TextEditingController heightController;
-  late TextEditingController weightController;
-  late TextEditingController notesController;
+  late final TextEditingController dobController;
+  late final TextEditingController heightController;
+  late final TextEditingController weightController;
+  late final TextEditingController notesController;
 
   bool loading = false;
   double? bmi;
@@ -42,127 +45,176 @@ class _EditPatientDetailsScreenState extends State<EditPatientDetailsScreen> {
   @override
   void initState() {
     super.initState();
+
     dobController = TextEditingController(text: widget.dateOfBirth);
     heightController = TextEditingController(
-      text: widget.height?.toString() ?? "",
+      text: widget.height?.toString() ?? '',
     );
     weightController = TextEditingController(
-      text: widget.weight?.toString() ?? "",
+      text: widget.weight?.toString() ?? '',
     );
-    notesController = TextEditingController(text: widget.healthNotes ?? "");
+    notesController = TextEditingController(text: widget.healthNotes ?? '');
     bmi = widget.bmi;
+
+    // تحديث BMI عند تغير الطول/الوزن بدون استدعاء داخل build
+    heightController.addListener(_recalcBmi);
+    weightController.addListener(_recalcBmi);
+
+    // حساب أولي (مرة واحدة)
+    _recalcBmi();
   }
 
-  void calculateBMI() {
-    final h = double.tryParse(heightController.text);
-    final w = double.tryParse(weightController.text);
+  @override
+  void dispose() {
+    dobController.dispose();
+    heightController.dispose();
+    weightController.dispose();
+    notesController.dispose();
+    super.dispose();
+  }
 
-    if (h != null && w != null && h > 0) {
-      bmi = w / ((h / 100) * (h / 100));
-      setState(() {});
-    }
+  void _recalcBmi() {
+    final h = double.tryParse(heightController.text.trim());
+    final w = double.tryParse(weightController.text.trim());
+
+    final nextBmi =
+        (h != null && w != null && h > 0)
+            ? (w / ((h / 100) * (h / 100)))
+            : null;
+
+    if (nextBmi == bmi) return;
+    if (!mounted) return;
+    setState(() => bmi = nextBmi);
   }
 
   Future<void> submitUpdate() async {
-    if (!_formKey.currentState!.validate()) return;
+    if (!formKey.currentState!.validate()) return;
+    if (loading) return;
 
     setState(() => loading = true);
 
     final request = PatientDetailsRequest(
       userId: widget.userId,
-      dateOfBirth: dobController.text,
-      height: double.tryParse(heightController.text),
-      weight: double.tryParse(weightController.text),
+      dateOfBirth: dobController.text.trim(),
+      height: double.tryParse(heightController.text.trim()),
+      weight: double.tryParse(weightController.text.trim()),
       bmi: bmi,
       healthNotes: notesController.text.trim(),
     );
 
-    final response = await DetailsService().updatePatientDetails(request);
+    try {
+      final response = await DetailsService().updatePatientDetails(request);
 
-    setState(() => loading = false);
-
-    if (response.statusCode == 200) {
       if (!mounted) return;
+      setState(() => loading = false);
 
-      ScaffoldMessenger.of(
+      if (response.statusCode == 200) {
+        showAppSnackBar(
+          context,
+          'تم تحديث البيانات بنجاح',
+          type: AppSnackBarType.success,
+        );
+        Navigator.pop(context, true);
+        return;
+      }
+
+      showAppSnackBar(
         context,
-      ).showSnackBar(const SnackBar(content: Text("تم تحديث البيانات بنجاح")));
-
-      Navigator.pop(context, true); // يرجع إلى صفحة التفاصيل
-    } else {
+        'فشل التحديث: ${response.body}',
+        type: AppSnackBarType.error,
+      );
+    } catch (e) {
       if (!mounted) return;
+      setState(() => loading = false);
 
-      ScaffoldMessenger.of(
+      showAppSnackBar(
         context,
-      ).showSnackBar(SnackBar(content: Text("فشل التحديث: ${response.body}")));
+        'تعذّر الاتصال بالخادم. حاول لاحقاً.',
+        type: AppSnackBarType.error,
+      );
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    calculateBMI();
+    final cs = Theme.of(context).colorScheme;
 
     return Scaffold(
-      appBar: AppBar(title: const Text("تعديل بيانات المريض")),
+      appBar: AppBar(title: const Text('تعديل بيانات المريض')),
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: Form(
-          key: _formKey,
+          key: formKey,
           child: ListView(
             children: [
               TextFormField(
                 controller: dobController,
                 decoration: const InputDecoration(
-                  labelText: "تاريخ الميلاد (YYYY-MM-DD)",
+                  labelText: 'تاريخ الميلاد (YYYY-MM-DD)',
                 ),
-                validator: (v) => v == null || v.isEmpty ? "الحقل مطلوب" : null,
+                validator:
+                    (v) =>
+                        (v == null || v.trim().isEmpty) ? 'الحقل مطلوب' : null,
               ),
               const SizedBox(height: 15),
 
               TextFormField(
                 controller: heightController,
-                decoration: const InputDecoration(labelText: "الطول (سم)"),
+                decoration: const InputDecoration(labelText: 'الطول (سم)'),
                 keyboardType: TextInputType.number,
-                onChanged: (_) => calculateBMI(),
-                validator: (v) => v == null || v.isEmpty ? "الحقل مطلوب" : null,
+                validator:
+                    (v) =>
+                        (v == null || v.trim().isEmpty) ? 'الحقل مطلوب' : null,
               ),
               const SizedBox(height: 15),
 
               TextFormField(
                 controller: weightController,
-                decoration: const InputDecoration(labelText: "الوزن (كغ)"),
+                decoration: const InputDecoration(labelText: 'الوزن (كغ)'),
                 keyboardType: TextInputType.number,
-                onChanged: (_) => calculateBMI(),
-                validator: (v) => v == null || v.isEmpty ? "الحقل مطلوب" : null,
+                validator:
+                    (v) =>
+                        (v == null || v.trim().isEmpty) ? 'الحقل مطلوب' : null,
               ),
               const SizedBox(height: 15),
 
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  border: Border.all(color: Colors.grey),
-                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: cs.outlineVariant),
+                  borderRadius: BorderRadius.circular(12),
+                  color: cs.surfaceContainerHighest,
                 ),
                 child: Text(
-                  "BMI: ${bmi?.toStringAsFixed(2) ?? "--"}",
-                  style: const TextStyle(fontSize: 18),
+                  'BMI: ${bmi?.toStringAsFixed(2) ?? '--'}',
+                  style: Theme.of(
+                    context,
+                  ).textTheme.titleMedium?.copyWith(color: cs.onSurface),
                 ),
               ),
               const SizedBox(height: 15),
 
               TextFormField(
                 controller: notesController,
-                decoration: const InputDecoration(labelText: "ملاحظات صحية"),
+                decoration: const InputDecoration(labelText: 'ملاحظات صحية'),
                 maxLines: 4,
               ),
               const SizedBox(height: 25),
 
-              loading
-                  ? const Center(child: CircularProgressIndicator())
-                  : ElevatedButton(
-                    onPressed: submitUpdate,
-                    child: const Text("حفظ التعديلات"),
-                  ),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: loading ? null : submitUpdate,
+                  child:
+                      loading
+                          ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                          : const Text('حفظ التعديلات'),
+                ),
+              ),
             ],
           ),
         ),
