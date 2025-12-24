@@ -298,12 +298,11 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
   // UI building blocks (reduce repetition)
   // ---------------------------------------------------------------------------
 
-  Widget _headerTile({required String subtitleText}) {
+  Widget _headerTile({required String titleText}) {
     return Material(
       child: ListTile(
         leading: const Icon(Icons.folder_shared),
-        title: const Text("الإضبارة الطبية الموحدة"),
-        subtitle: Text(subtitleText),
+        title: Text(titleText),
       ),
     );
   }
@@ -404,7 +403,7 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
     if (isDoctor && selectedPatientId == null) {
       return Column(
         children: [
-          _headerTile(subtitleText: "الدور: $roleLabel | الطبيب: $doctorLabel"),
+          _headerTile(titleText: "الدور: $roleLabel | الطبيب: $doctorLabel"),
           Expanded(
             child:
                 loadingPatients
@@ -538,7 +537,7 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
 
     return Column(
       children: [
-        _headerTile(subtitleText: subtitleText),
+        _headerTile(titleText: subtitleText),
         TabBar(
           controller: tabController,
           isScrollable: true,
