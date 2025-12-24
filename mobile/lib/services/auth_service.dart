@@ -80,12 +80,21 @@ class AuthService {
       final role = data['role'];
       final userId = data['user_id'];
       final isActive = data['is_active'] ?? data['isActivated'] ?? true;
+
       final access = data['access'] ?? data['access_token'] ?? data['token'];
       final refresh = data['refresh'];
 
-      if (access is String && refresh is String) {
-        await saveTokens(access, refresh);
+      //  حفظ access دائمًا إذا كان موجودًا، وحفظ refresh فقط إذا كان موجودًا
+      final prefs = await SharedPreferences.getInstance();
+
+      if (access is String && access.isNotEmpty) {
+        await prefs.setString("access_token", access);
       }
+
+      if (refresh is String && refresh.isNotEmpty) {
+        await prefs.setString("refresh_token", refresh);
+      }
+
       if (role is String && userId is int) {
         await saveUserInfo(role, userId);
       }
@@ -151,12 +160,12 @@ class AuthService {
     }
   }
 
-  Future<void> saveAuthData(String token, String role, bool isActivated) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('access_token', token);
-    await prefs.setString('user_role', role);
-    await prefs.setBool('is_activated', isActivated);
-  }
+  //Future<void> saveAuthData(String token, String role, bool isActivated) async {
+  //  final prefs = await SharedPreferences.getInstance();
+  //  await prefs.setString('access_token', token);
+  // await prefs.setString('user_role', role);
+  // await prefs.setBool('is_activated', isActivated);
+  // }
 
   // ---------------- تحديث التوكن ----------------
 
@@ -190,8 +199,46 @@ class AuthService {
     String method, {
     Map<String, dynamic>? body,
   }) async {
+    Future<http.Response> send(String token) async {
+      final url = buildAccountsUri(endpoint);
+
+      final headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "Authorization": "Bearer $token",
+      };
+
+      switch (method.toUpperCase()) {
+        case "GET":
+          return http.get(url, headers: headers);
+        case "POST":
+          return http.post(
+            url,
+            headers: headers,
+            body: body != null ? jsonEncode(body) : null,
+          );
+        case "PUT":
+          return http.put(
+            url,
+            headers: headers,
+            body: body != null ? jsonEncode(body) : null,
+          );
+        case "PATCH":
+          return http.patch(
+            url,
+            headers: headers,
+            body: body != null ? jsonEncode(body) : null,
+          );
+        case "DELETE":
+          return http.delete(url, headers: headers);
+        default:
+          throw Exception("Invalid HTTP method");
+      }
+    }
+
     String? token = await getAccessToken();
 
+    // إذا لا يوجد توكن أصلًا → جرّب refresh
     if (token == null) {
       await refreshToken();
       token = await getAccessToken();
@@ -201,34 +248,18 @@ class AuthService {
       return http.Response('Unauthorized', 401);
     }
 
-    final url = buildAccountsUri(endpoint);
+    final first = await send(token);
 
-    final headers = {
-      "Content-Type": "application/json",
-      "Accept": "application/json",
-      "Authorization": "Bearer $token",
-    };
-
-    switch (method.toUpperCase()) {
-      case "GET":
-        return http.get(url, headers: headers);
-      case "POST":
-        return http.post(
-          url,
-          headers: headers,
-          body: body != null ? jsonEncode(body) : null,
-        );
-      case "PUT":
-        return http.put(
-          url,
-          headers: headers,
-          body: body != null ? jsonEncode(body) : null,
-        );
-      case "DELETE":
-        return http.delete(url, headers: headers);
-      default:
-        throw Exception("Invalid HTTP method");
+    if (first.statusCode == 401) {
+      await refreshToken();
+      final newToken = await getAccessToken();
+      if (newToken == null) {
+        return first;
+      }
+      return send(newToken);
     }
+
+    return first;
   }
 
   /// جلب بيانات المستخدم الحالي من /me/ وتخزينها محلياً

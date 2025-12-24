@@ -5,59 +5,90 @@ import 'auth_service.dart';
 import '../models/lab.dart';
 
 class LabService {
-  final AuthService _authService = AuthService();
+  final AuthService authService = AuthService();
 
-  // جلب جميع المخابر
-  Future<List<Lab>> fetchLabs() async {
-    final response = await _authService.authorizedRequest("/labs/", "GET");
+  String extractErrorMessage(http.Response response) {
+    final raw = response.body.toString().trim();
+    if (raw.isEmpty) return 'HTTP ${response.statusCode}';
 
-    if (response.statusCode == 200) {
-      final List<dynamic> data = jsonDecode(response.body);
-      return data.map((e) => Lab.fromJson(e)).toList();
+    try {
+      final decoded = jsonDecode(raw);
+
+      if (decoded is Map) {
+        // شائع في DRF: {"detail": "..."} أو {"email":["..."]} أو {"non_field_errors":["..."]}
+        final detail = decoded['detail'];
+        if (detail != null && detail.toString().trim().isNotEmpty) {
+          return detail.toString();
+        }
+
+        for (final entry in decoded.entries) {
+          final v = entry.value;
+          if (v is List && v.isNotEmpty) {
+            return v.first.toString();
+          }
+          if (v != null && v.toString().trim().isNotEmpty) {
+            return v.toString();
+          }
+        }
+      }
+
+      if (decoded is List && decoded.isNotEmpty) {
+        return decoded.first.toString();
+      }
+    } catch (_) {
+      // body ليس JSON
     }
 
-    throw Exception("Failed to load labs: ${response.statusCode}");
+    // fallback: قصّ النص لتجنّب سبام
+    final short = raw.length > 180 ? '${raw.substring(0, 180)}…' : raw;
+    return short;
   }
 
-  // جلب مخبر واحد
-  Future<Lab> getLab(int id) async {
-    final response = await _authService.authorizedRequest("/labs/$id/", "GET");
+  Future<List<Lab>> fetchLabs() async {
+    final response = await authService.authorizedRequest('/labs/', 'GET');
 
     if (response.statusCode == 200) {
-      final Map<String, dynamic> data = jsonDecode(response.body);
+      final List<dynamic> data = jsonDecode(response.body) as List<dynamic>;
+      return data.map((e) => Lab.fromJson(e as Map<String, dynamic>)).toList();
+    }
+
+    throw Exception('Failed to load labs: ${extractErrorMessage(response)}');
+  }
+
+  Future<Lab> getLab(int id) async {
+    final response = await authService.authorizedRequest('/labs/$id/', 'GET');
+
+    if (response.statusCode == 200) {
+      final Map<String, dynamic> data =
+          jsonDecode(response.body) as Map<String, dynamic>;
       return Lab.fromJson(data);
     }
 
-    throw Exception(
-      "Failed to load labs: ${response.statusCode} ${response.body}",
-    );
+    throw Exception('Failed to load lab: ${extractErrorMessage(response)}');
   }
 
-  // إنشاء مخبر
-  Future<http.Response> createLab(Lab lab) async {
-    return _authService.authorizedRequest("/labs/", "POST", body: lab.toJson());
+  Future<http.Response> createLab(Lab lab) {
+    return authService.authorizedRequest('/labs/', 'POST', body: lab.toJson());
   }
 
-  // تحديث مخبر
-  Future<http.Response> updateLab(Lab lab) async {
-    if (lab.id == null) {
-      throw Exception("Lab ID is required for update");
+  Future<http.Response> updateLab(Lab lab) {
+    final labId = lab.id;
+    if (labId == null) {
+      throw Exception('Lab ID is required for update');
     }
 
-    return _authService.authorizedRequest(
-      "/labs/${lab.id}/",
-      "PUT",
+    return authService.authorizedRequest(
+      '/labs/$labId/',
+      'PUT',
       body: lab.toJson(),
     );
   }
 
-  // حذف مخبر
   Future<bool> deleteLab(int id) async {
-    final response = await _authService.authorizedRequest(
-      "/labs/$id/",
-      "DELETE",
+    final response = await authService.authorizedRequest(
+      '/labs/$id/',
+      'DELETE',
     );
-
     return response.statusCode == 200 || response.statusCode == 204;
   }
 }

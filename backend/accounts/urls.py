@@ -42,8 +42,21 @@ from .views import (
 
     # CurrentUser:
     CurrentUserView,
+
+    GovernorateListView,
 )
-from .views import PasswordResetRequestView, PasswordResetVerifyView, PasswordResetConfirmView
+from .views import (
+    PasswordResetRequestView,
+    PasswordResetVerifyView,
+    PasswordResetConfirmView,
+    AppointmentTypeListCreateView,
+    AppointmentTypeRetrieveUpdateDestroyView,
+    DoctorAppointmentTypeListCreateView,
+    DoctorAppointmentTypeRetrieveUpdateDestroyView,
+    DoctorAvailabilityListCreateView,
+    DoctorAvailabilityRetrieveUpdateDestroyView,
+    AppointmentTypeReadOnlyListView,
+)
 
 
 urlpatterns = [
@@ -135,5 +148,18 @@ urlpatterns = [
     path("password-reset/verify/", PasswordResetVerifyView.as_view(), name="password-reset-verify"),
     path("password-reset/confirm/", PasswordResetConfirmView.as_view(), name="password-reset-confirm"),
 
+    # -------------------------------------------------------------------------
+    # Phase C - Scheduling Configuration
+    # -------------------------------------------------------------------------
+    path("appointment-types/", AppointmentTypeListCreateView.as_view(), name="appointment-types-list-create"),
+    path("appointment-types/<int:pk>/", AppointmentTypeRetrieveUpdateDestroyView.as_view(), name="appointment-types-detail"),
 
+    path("doctor-appointment-types/", DoctorAppointmentTypeListCreateView.as_view(), name="doctor-appointment-types-list-create"),
+    path("doctor-appointment-types/<int:pk>/", DoctorAppointmentTypeRetrieveUpdateDestroyView.as_view(), name="doctor-appointment-types-detail"),
+
+    path("doctor-availabilities/", DoctorAvailabilityListCreateView.as_view(), name="doctor-availabilities-list-create"),
+    path("doctor-availabilities/<int:pk>/", DoctorAvailabilityRetrieveUpdateDestroyView.as_view(), name="doctor-availabilities-detail"),
+    path("appointment-types-read/", AppointmentTypeReadOnlyListView.as_view(), name="appointment-types-read",),
+    # ...
+    path("governorates/", GovernorateListView.as_view(), name="governorate-list"),
 ]

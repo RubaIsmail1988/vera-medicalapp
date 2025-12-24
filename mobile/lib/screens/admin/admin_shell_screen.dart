@@ -1,35 +1,65 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../../main.dart'; // لإتاحة toggleTheme()
+import '../../main.dart';
+import '../../services/auth_service.dart';
 
 import 'admin_home_screen.dart';
-import 'user_list_screen.dart';
 import 'deletion_requests_screen.dart';
-import '../admin/hospital_list_screen.dart';
-import '../admin/lab_list_screen.dart';
-import '/services/auth_service.dart';
+import 'hospital_list_screen.dart';
+import 'lab_list_screen.dart';
+import 'user_list_screen.dart';
 
 class AdminShellScreen extends StatefulWidget {
-  const AdminShellScreen({super.key});
+  const AdminShellScreen({super.key, required this.initialIndex});
+
+  final int initialIndex;
 
   @override
   State<AdminShellScreen> createState() => _AdminShellScreenState();
 }
 
 class _AdminShellScreenState extends State<AdminShellScreen> {
-  int currentIndex = 0;
+  late int currentIndex;
 
   String? userName;
   String? userEmail;
   String? userRole;
   bool? isActive;
-  bool loadingUserInfo = true;
+
+  static const List<String> tabPaths = <String>[
+    '/admin',
+    '/admin/users',
+    '/admin/hospitals',
+    '/admin/labs',
+    '/admin/requests',
+    '/admin/profile',
+  ];
 
   @override
   void initState() {
     super.initState();
+    currentIndex = widget.initialIndex;
     loadUserInfo();
+  }
+
+  @override
+  void didUpdateWidget(covariant AdminShellScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+
+    if (oldWidget.initialIndex != widget.initialIndex) {
+      setState(() => currentIndex = widget.initialIndex);
+    }
+  }
+
+  void goToTab(int index) {
+    if (index < 0 || index >= tabPaths.length) return;
+
+    setState(() => currentIndex = index);
+
+    // مهم للويب: تحديث URL
+    context.go(tabPaths[index]);
   }
 
   Future<void> loadUserInfo() async {
@@ -47,40 +77,20 @@ class _AdminShellScreenState extends State<AdminShellScreen> {
       userEmail = savedEmail;
       userRole = savedRole;
       isActive = savedIsActive;
-      loadingUserInfo = false;
     });
   }
 
-  Future<void> logout(BuildContext context) async {
+  Future<void> logout() async {
     final authService = AuthService();
     await authService.logout();
 
-    if (!context.mounted) return;
-
-    Navigator.pushNamedAndRemoveUntil(context, '/login', (route) => false);
-  }
-
-  Widget buildDashboardTab() {
-    return const AdminHomeScreen();
-  }
-
-  Widget buildUsersTab() {
-    return const UserListScreen();
-  }
-
-  Widget buildHospitalsTab() {
-    return const HospitalListScreen();
-  }
-
-  Widget buildLabsTab() {
-    return const LabListScreen();
-  }
-
-  Widget buildDeletionRequestsTab() {
-    return const DeletionRequestsScreen();
+    if (!mounted) return;
+    context.go('/login');
   }
 
   Widget buildProfileTab(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+
     final roleLabel =
         (userRole ?? 'admin') == 'admin' ? 'أدمن' : (userRole ?? 'admin');
 
@@ -102,59 +112,77 @@ class _AdminShellScreenState extends State<AdminShellScreen> {
 
     return Center(
       child: SingleChildScrollView(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.admin_panel_settings, size: 80),
-            const SizedBox(height: 16),
-            Text(displayName, style: Theme.of(context).textTheme.titleLarge),
-            const SizedBox(height: 4),
-            Text(
-              'الدور: $roleLabel',
-              style: Theme.of(context).textTheme.bodyMedium,
-            ),
-            const SizedBox(height: 4),
-            if (userEmail != null && userEmail!.trim().isNotEmpty)
-              Text(userEmail!, style: Theme.of(context).textTheme.bodySmall),
-            const SizedBox(height: 8),
-            Text(
-              activationText,
-              style: TextStyle(fontSize: 14, color: activationColor),
-            ),
-
-            const SizedBox(height: 24),
-
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                onPressed: () => logout(context),
-                icon: const Icon(Icons.logout),
-                label: const Text('تسجيل الخروج'),
+        padding: const EdgeInsets.all(16),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 520),
+          child: Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.admin_panel_settings, size: 76, color: cs.primary),
+                  const SizedBox(height: 12),
+                  Text(
+                    displayName,
+                    style: Theme.of(context).textTheme.titleLarge,
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'الدور: $roleLabel',
+                    style: Theme.of(context).textTheme.bodyMedium,
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 4),
+                  if (userEmail != null && userEmail!.trim().isNotEmpty)
+                    Text(
+                      userEmail!,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: cs.onSurface.withValues(alpha: 0.75),
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  const SizedBox(height: 10),
+                  Text(
+                    activationText,
+                    style: TextStyle(fontSize: 14, color: activationColor),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 18),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: logout,
+                      icon: const Icon(Icons.logout),
+                      label: const Text('تسجيل الخروج'),
+                    ),
+                  ),
+                ],
               ),
             ),
-          ],
+          ),
         ),
       ),
     );
   }
 
-  Widget buildBody(BuildContext context) {
+  String appBarTitle() {
     switch (currentIndex) {
       case 0:
-        return buildDashboardTab();
+        return 'لوحة التحكم';
       case 1:
-        return buildUsersTab();
+        return 'المستخدمون';
       case 2:
-        return buildHospitalsTab();
+        return 'المشافي';
       case 3:
-        return buildLabsTab();
+        return 'المخابر';
       case 4:
-        return buildDeletionRequestsTab();
+        return 'طلبات الحذف';
       case 5:
-        return buildProfileTab(context);
+        return 'الملف الشخصي';
       default:
-        return buildDashboardTab();
+        return 'لوحة التحكم';
     }
   }
 
@@ -162,23 +190,18 @@ class _AdminShellScreenState extends State<AdminShellScreen> {
   Widget build(BuildContext context) {
     final themeMode = MyApp.of(context).themeMode;
 
+    final pages = <Widget>[
+      AdminHomeScreen(onNavigateToTab: (index) => goToTab(index)),
+      UserListScreen(onOpenDeletionRequests: () => goToTab(4)),
+      const HospitalListScreen(),
+      const LabListScreen(),
+      const DeletionRequestsScreen(),
+      buildProfileTab(context),
+    ];
+
     return Scaffold(
       appBar: AppBar(
-        title: Text(
-          currentIndex == 0
-              ? 'Dashboard'
-              : currentIndex == 1
-              ? 'Users'
-              : currentIndex == 2
-              ? 'Hospitals'
-              : currentIndex == 3
-              ? 'Labs'
-              : currentIndex == 4
-              ? 'طلبات الحذف'
-              : 'Profile',
-        ),
-
-        // زر تبديل الثيم يظهر فقط في Dashboard
+        title: Text(appBarTitle()),
         actions:
             currentIndex == 0
                 ? [
@@ -188,40 +211,35 @@ class _AdminShellScreenState extends State<AdminShellScreen> {
                           ? Icons.brightness_6
                           : Icons.brightness_6_outlined,
                     ),
-                    onPressed: () {
-                      MyApp.of(context).toggleTheme();
-                    },
+                    onPressed: () => MyApp.of(context).toggleTheme(),
                   ),
                 ]
                 : null,
       ),
-
-      body: buildBody(context),
-
+      body: IndexedStack(index: currentIndex, children: pages),
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: currentIndex,
-        onTap: (index) {
-          setState(() {
-            currentIndex = index;
-          });
-        },
+        onTap: goToTab,
         type: BottomNavigationBarType.fixed,
         items: const [
           BottomNavigationBarItem(
             icon: Icon(Icons.dashboard),
-            label: 'Dashboard',
+            label: 'لوحة التحكم',
           ),
-          BottomNavigationBarItem(icon: Icon(Icons.group), label: 'Users'),
+          BottomNavigationBarItem(icon: Icon(Icons.group), label: 'المستخدمون'),
           BottomNavigationBarItem(
             icon: Icon(Icons.local_hospital),
-            label: 'Hospitals',
+            label: 'المشافي',
           ),
-          BottomNavigationBarItem(icon: Icon(Icons.science), label: 'Labs'),
+          BottomNavigationBarItem(icon: Icon(Icons.science), label: 'المخابر'),
           BottomNavigationBarItem(
             icon: Icon(Icons.delete_forever),
-            label: 'Requests ',
+            label: 'طلبات الحذف',
           ),
-          BottomNavigationBarItem(icon: Icon(Icons.person), label: 'Profile'),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.person),
+            label: 'الملف الشخصي',
+          ),
         ],
       ),
     );

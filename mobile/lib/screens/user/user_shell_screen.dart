@@ -1,107 +1,185 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../../main.dart'; // لاستدعاء MyApp.of(context)
+import '../../main.dart';
+import '/services/auth_service.dart';
+
 import 'patient_home_screen.dart';
 import 'doctor_home_screen.dart';
 import 'hospital_public_list_screen.dart';
 import 'lab_public_list_screen.dart';
-import 'patient_details_entry_point.dart';
-import 'doctor_details_entry_point.dart';
-import '/services/auth_service.dart';
+import 'unified_record_screen.dart';
 
 class UserShellScreen extends StatefulWidget {
-  final String role;
-  final int userId;
-  final String token;
+  const UserShellScreen({super.key, required this.initialIndex});
 
-  const UserShellScreen({
-    super.key,
-    required this.role,
-    required this.userId,
-    required this.token,
-  });
+  final int initialIndex;
 
   @override
   State<UserShellScreen> createState() => _UserShellScreenState();
 }
 
 class _UserShellScreenState extends State<UserShellScreen> {
-  int currentIndex = 0;
+  late int currentIndex;
 
+  // Session from prefs
+  String role = 'patient';
+  int userId = 0;
+  String token = '';
+
+  // Profile
   String? userName;
   String? userEmail;
   String? userRole;
   bool? isActive;
-  bool loadingUserInfo = true;
+
+  bool loading = true;
+
+  static const List<String> tabPaths = <String>[
+    '/app',
+    '/app/record',
+    '/app/hospitals',
+    '/app/labs',
+    '/app/account',
+  ];
 
   @override
   void initState() {
     super.initState();
-    loadUserInfo();
+    currentIndex = widget.initialIndex;
+    loadSession();
   }
 
-  Future<void> loadUserInfo() async {
+  @override
+  void didUpdateWidget(covariant UserShellScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+
+    // مزامنة الحالة إذا دخلنا عن طريق URL مباشرة (Refresh أو deep link)
+    if (oldWidget.initialIndex != widget.initialIndex) {
+      if (!mounted) return;
+      setState(() => currentIndex = widget.initialIndex);
+    }
+  }
+
+  Future<void> loadSession() async {
     final prefs = await SharedPreferences.getInstance();
 
-    final savedName = prefs.getString("currentUserName");
-    final savedEmail = prefs.getString("currentUserEmail");
-    final savedRole = prefs.getString("currentUserRole");
-    final savedIsActive = prefs.getBool("user_is_active");
+    final savedToken = prefs.getString('access_token') ?? '';
+    final savedRole = prefs.getString('user_role') ?? 'patient';
+    final savedUserId = prefs.getInt('user_id') ?? 0;
+
+    final savedName = prefs.getString('currentUserName');
+    final savedEmail = prefs.getString('currentUserEmail');
+    final savedBackendRole = prefs.getString('currentUserRole');
+    final savedIsActive = prefs.getBool('user_is_active');
 
     if (!mounted) return;
 
     setState(() {
+      token = savedToken;
+      role = savedRole;
+      userId = savedUserId;
+
       userName = savedName;
       userEmail = savedEmail;
-      userRole = savedRole;
+      userRole = savedBackendRole;
       isActive = savedIsActive;
-      loadingUserInfo = false;
+
+      loading = false;
     });
+
+    // إذا الجلسة غير صحيحة → login
+    final invalidSession =
+        token.isEmpty || userId == 0 || (role != 'patient' && role != 'doctor');
+
+    if (invalidSession) {
+      if (!mounted) return;
+      context.go('/login');
+      return;
+    }
+
+    // الطبيب غير مفعّل → waiting activation (حسب منطقك)
+    if (role == 'doctor' && isActive == false) {
+      if (!mounted) return;
+      context.go('/waiting-activation');
+      return;
+    }
   }
 
-  Future<void> logout(BuildContext context) async {
+  Future<void> logout() async {
     final authService = AuthService();
     await authService.logout();
 
-    if (!context.mounted) return;
+    if (!mounted) return;
+    context.go('/login');
+  }
 
-    Navigator.pushNamedAndRemoveUntil(context, "/login", (route) => false);
+  void goToTab(int index) {
+    if (index < 0 || index >= tabPaths.length) return;
+
+    if (!mounted) return;
+    setState(() => currentIndex = index);
+
+    // Web-safe: تحديث URL
+    context.go(tabPaths[index]);
   }
 
   Widget buildHomeTab() {
-    if (widget.role == "doctor") {
-      return DoctorHomeScreen(userId: widget.userId, token: widget.token);
-    } else {
-      return PatientHomeScreen(userId: widget.userId, token: widget.token);
+    if (role == 'doctor') {
+      return DoctorHomeScreen(userId: userId, token: token);
+    }
+    return PatientHomeScreen(userId: userId, token: token);
+  }
+
+  void openDetails(String roleFromBackend) {
+    if (!mounted) return;
+
+    // حماية: لا نفتح تفاصيل إذا الجلسة غير جاهزة
+    if (token.isEmpty || userId == 0) return;
+
+    final extra = {'token': token, 'userId': userId};
+
+    if (roleFromBackend == 'patient') {
+      context.go('/app/account/patient-details', extra: extra);
+      return;
+    }
+    if (roleFromBackend == 'doctor') {
+      context.go('/app/account/doctor-details', extra: extra);
+      return;
     }
   }
 
   Widget buildAccountTab(BuildContext context) {
-    final roleFromBackend = userRole ?? widget.role;
+    final roleFromBackend = userRole ?? role;
 
     final roleLabel =
-        roleFromBackend == "doctor"
-            ? "طبيب"
-            : roleFromBackend == "patient"
-            ? "مريض"
+        roleFromBackend == 'doctor'
+            ? 'طبيب'
+            : roleFromBackend == 'patient'
+            ? 'مريض'
             : roleFromBackend;
 
     final displayName =
         (userName != null && userName!.trim().isNotEmpty)
             ? userName!
-            : "مستخدم";
+            : 'مستخدم';
 
-    String activationText = "الحالة: غير معروفة";
+    String activationText = 'الحالة: غير معروفة';
     Color activationColor = Colors.grey;
 
     if (isActive == true) {
-      activationText = "الحالة: مفعّل";
+      activationText = 'الحالة: مفعّل';
       activationColor = Colors.green;
     } else if (isActive == false) {
-      activationText = "الحالة: غير مفعّل";
+      activationText = 'الحالة: غير مفعّل';
       activationColor = Colors.orange;
     }
+
+    final bool canOpenDetails =
+        token.isNotEmpty &&
+        userId != 0 &&
+        (roleFromBackend != 'doctor' || isActive == true);
 
     return Center(
       child: SingleChildScrollView(
@@ -114,7 +192,7 @@ class _UserShellScreenState extends State<UserShellScreen> {
             Text(displayName, style: Theme.of(context).textTheme.titleLarge),
             const SizedBox(height: 4),
             Text(
-              "الدور: $roleLabel",
+              'الدور: $roleLabel',
               style: Theme.of(context).textTheme.bodyMedium,
             ),
             const SizedBox(height: 4),
@@ -127,48 +205,23 @@ class _UserShellScreenState extends State<UserShellScreen> {
             ),
             const SizedBox(height: 24),
 
-            // زر عرض / تعديل البيانات
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
-                onPressed: () {
-                  if (roleFromBackend == "patient") {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder:
-                            (_) => PatientDetailsEntryPoint(
-                              token: widget.token,
-                              userId: widget.userId,
-                            ),
-                      ),
-                    );
-                  } else if (roleFromBackend == "doctor") {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder:
-                            (_) => DoctorDetailsEntryPoint(
-                              token: widget.token,
-                              userId: widget.userId,
-                            ),
-                      ),
-                    );
-                  }
-                },
-                child: const Text("عرض / تعديل البيانات"),
+                onPressed:
+                    canOpenDetails ? () => openDetails(roleFromBackend) : null,
+                child: const Text('عرض / تعديل البيانات'),
               ),
             ),
 
             const SizedBox(height: 16),
 
-            // زر تسجيل الخروج
             SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
-                onPressed: () => logout(context),
+                onPressed: logout,
                 icon: const Icon(Icons.logout),
-                label: const Text("تسجيل الخروج"),
+                label: const Text('تسجيل الخروج'),
               ),
             ),
           ],
@@ -182,13 +235,34 @@ class _UserShellScreenState extends State<UserShellScreen> {
       case 0:
         return buildHomeTab();
       case 1:
-        return const HospitalPublicListScreen();
+        return UnifiedRecordScreen(role: role, userId: userId);
       case 2:
-        return const LabPublicListScreen();
+        return const HospitalPublicListScreen();
       case 3:
+        return const LabPublicListScreen();
+      case 4:
         return buildAccountTab(context);
       default:
         return buildHomeTab();
+    }
+  }
+
+  String appBarTitle() {
+    switch (currentIndex) {
+      case 0:
+        return role == 'doctor'
+            ? 'الصفحة الرئيسية - الطبيب'
+            : 'الصفحة الرئيسية - المريض';
+      case 1:
+        return 'الإضبارة الطبية';
+      case 2:
+        return 'المشافي';
+      case 3:
+        return 'المخابر';
+      case 4:
+        return 'الحساب';
+      default:
+        return 'Vera Smart Health';
     }
   }
 
@@ -196,21 +270,13 @@ class _UserShellScreenState extends State<UserShellScreen> {
   Widget build(BuildContext context) {
     final themeMode = MyApp.of(context).themeMode;
 
+    if (loading) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+
     return Scaffold(
       appBar: AppBar(
-        title: Text(
-          currentIndex == 0
-              ? (widget.role == "doctor"
-                  ? "الصفحة الرئيسية - الطبيب"
-                  : "الصفحة الرئيسية - المريض")
-              : currentIndex == 1
-              ? "المشافي"
-              : currentIndex == 2
-              ? "المخابر"
-              : "الحساب",
-        ),
-
-        // زر تبديل الثيم يظهر فقط في Dashboard (التبويب 0)
+        title: Text(appBarTitle()),
         actions:
             currentIndex == 0
                 ? [
@@ -220,32 +286,28 @@ class _UserShellScreenState extends State<UserShellScreen> {
                           ? Icons.brightness_6
                           : Icons.brightness_6_outlined,
                     ),
-                    onPressed: () {
-                      MyApp.of(context).toggleTheme();
-                    },
+                    onPressed: () => MyApp.of(context).toggleTheme(),
                   ),
                 ]
                 : null,
       ),
-
       body: buildBody(context),
-
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: currentIndex,
-        onTap: (index) {
-          setState(() {
-            currentIndex = index;
-          });
-        },
+        onTap: goToTab,
         type: BottomNavigationBarType.fixed,
         items: const [
-          BottomNavigationBarItem(icon: Icon(Icons.home), label: "الرئيسية"),
+          BottomNavigationBarItem(icon: Icon(Icons.home), label: 'الرئيسية'),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.folder_shared),
+            label: 'الإضبارة',
+          ),
           BottomNavigationBarItem(
             icon: Icon(Icons.local_hospital),
-            label: "المشافي",
+            label: 'المشافي',
           ),
-          BottomNavigationBarItem(icon: Icon(Icons.science), label: "المخابر"),
-          BottomNavigationBarItem(icon: Icon(Icons.person), label: "الحساب"),
+          BottomNavigationBarItem(icon: Icon(Icons.science), label: 'المخابر'),
+          BottomNavigationBarItem(icon: Icon(Icons.person), label: 'الحساب'),
         ],
       ),
     );

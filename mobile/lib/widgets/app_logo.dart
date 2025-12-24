@@ -13,12 +13,12 @@ class AppLogo extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: cs.surface,
+        color: cs.surface, // ينسجم مع الثيم (فاتح/غامق)
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: cs.outlineVariant.withValues(alpha: 0.4)),
       ),
       child: Image.asset(
-        'assets/images/logo_black.png',
+        'assets/images/logo_black.png', // صورة واحدة فقط
         width: width,
         height: height,
         fit: BoxFit.contain,

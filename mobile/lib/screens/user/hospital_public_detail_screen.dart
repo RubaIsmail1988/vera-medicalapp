@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 class HospitalPublicDetailScreen extends StatelessWidget {
   final String name;
   final int governorate;
+  final String? governorateName;
   final String? address;
   final double? latitude;
   final double? longitude;
@@ -13,6 +14,7 @@ class HospitalPublicDetailScreen extends StatelessWidget {
     super.key,
     required this.name,
     required this.governorate,
+    this.governorateName,
     this.address,
     this.latitude,
     this.longitude,
@@ -23,6 +25,7 @@ class HospitalPublicDetailScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
 
     return Scaffold(
       appBar: AppBar(title: const Text('تفاصيل المشفى')),
@@ -30,56 +33,89 @@ class HospitalPublicDetailScreen extends StatelessWidget {
         padding: const EdgeInsets.all(24),
         child: ListView(
           children: [
+            // الاسم
             Text(
               name,
-              style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
+              style: textTheme.headlineSmall?.copyWith(
+                fontWeight: FontWeight.w700,
+                color: cs.onSurface,
+              ),
             ),
             const SizedBox(height: 16),
 
+            // المحافظة
             Text(
-              'المحافظة (ID): $governorate',
-              style: const TextStyle(fontSize: 16),
+              'المحافظة: ${governorateName ?? governorate}',
+              style: textTheme.bodyLarge?.copyWith(color: cs.onSurface),
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 16),
 
             if (address != null && address!.trim().isNotEmpty) ...[
-              const Text(
-                'العنوان:',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+              Text(
+                'العنوان',
+                style: textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.w600,
+                  color: cs.onSurface,
+                ),
               ),
-              Text(address!, style: const TextStyle(fontSize: 14)),
-              const SizedBox(height: 12),
+              const SizedBox(height: 4),
+              Text(
+                address!,
+                style: textTheme.bodyMedium?.copyWith(
+                  color: cs.onSurface.withValues(alpha: 0.85),
+                ),
+              ),
+              const SizedBox(height: 16),
             ],
 
             if (specialty != null && specialty!.trim().isNotEmpty) ...[
-              const Text(
-                'التخصص:',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+              Text(
+                'التخصص',
+                style: textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.w600,
+                  color: cs.onSurface,
+                ),
               ),
-              Text(specialty!, style: const TextStyle(fontSize: 14)),
-              const SizedBox(height: 12),
+              const SizedBox(height: 4),
+              Text(
+                specialty!,
+                style: textTheme.bodyMedium?.copyWith(
+                  color: cs.onSurface.withValues(alpha: 0.85),
+                ),
+              ),
+              const SizedBox(height: 16),
             ],
 
             if (contactInfo != null && contactInfo!.trim().isNotEmpty) ...[
-              const Text(
-                'وسائل التواصل:',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+              Text(
+                'وسائل التواصل',
+                style: textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.w600,
+                  color: cs.onSurface,
+                ),
               ),
+              const SizedBox(height: 4),
               Text(
                 contactInfo!,
-                style: TextStyle(fontSize: 14, color: cs.primary),
+                style: textTheme.bodyMedium?.copyWith(color: cs.primary),
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 16),
             ],
 
             if (latitude != null && longitude != null) ...[
-              const Text(
-                'الإحداثيات (تقريبية):',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-              ),
               Text(
-                'Lat: $latitude, Lng: $longitude',
-                style: const TextStyle(fontSize: 14),
+                'الإحداثيات التقريبية',
+                style: textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.w600,
+                  color: cs.onSurface,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Lat: $latitude , Lng: $longitude',
+                style: textTheme.bodyMedium?.copyWith(
+                  color: cs.onSurface.withValues(alpha: 0.7),
+                ),
               ),
             ],
           ],

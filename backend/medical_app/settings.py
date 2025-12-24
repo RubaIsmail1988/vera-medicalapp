@@ -38,6 +38,7 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'accounts',
+    'clinical',
     'rest_framework',
     'corsheaders',
 ]
@@ -171,3 +172,6 @@ EMAIL_HOST_USER = "ruba.hikmat.ismail@gmail.com"
 EMAIL_HOST_PASSWORD = "ijoi mofb xmsk vsmv"
 
 DEFAULT_FROM_EMAIL = "Vera Smart Health <ruba.hikmat.ismail@gmail.com>"
+
+MEDIA_URL = '/media/'
+MEDIA_ROOT = BASE_DIR / 'media'

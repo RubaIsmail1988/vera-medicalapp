@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
+
 import '/services/password_reset_service.dart';
-import 'reset_password_verify_otp_screen.dart';
+import '/utils/ui_helpers.dart';
 
 class ForgotPasswordScreen extends StatefulWidget {
   const ForgotPasswordScreen({super.key});
@@ -15,45 +17,64 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
 
   bool loading = false;
 
-  void showSnackBar(String message) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(message)));
+  String normalizeEmail(String input) => input.trim().toLowerCase();
+
+  String? emailValidator(String? value) {
+    final text = (value ?? '').trim();
+    if (text.isEmpty) return 'البريد الإلكتروني مطلوب';
+
+    // تحقق بسيط وعملي للبريد
+    final emailRegex = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$');
+    if (!emailRegex.hasMatch(text)) return 'صيغة البريد الإلكتروني غير صحيحة';
+
+    return null;
   }
 
   Future<void> submit() async {
+    if (loading) return;
     if (!formKey.currentState!.validate()) return;
 
-    setState(() {
-      loading = true;
-    });
+    setState(() => loading = true);
 
-    final email = emailController.text.trim().toLowerCase();
+    final email = normalizeEmail(emailController.text);
     final service = PasswordResetService();
 
-    final ok = await service.requestOtp(email: email);
+    bool ok = false;
+    try {
+      ok = await service.requestOtp(email: email);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => loading = false);
 
-    if (!mounted) return;
-
-    setState(() {
-      loading = false;
-    });
-
-    if (!ok) {
-      showSnackBar('تعذّر إرسال الرمز. حاول مرة أخرى.');
+      showAppSnackBar(
+        context,
+        'تعذّر إرسال الرمز. تحقق من الاتصال ثم حاول مرة أخرى.',
+        type: AppSnackBarType.error,
+      );
       return;
     }
 
-    // ملاحظة أمنية: حتى لو البريد غير موجود، نتابع بنفس الرسالة
-    showSnackBar('إذا كان البريد صحيحًا، سيصلك رمز التحقق خلال لحظات.');
+    if (!mounted) return;
+    setState(() => loading = false);
 
-    Navigator.pushReplacement(
+    if (!ok) {
+      showAppSnackBar(
+        context,
+        'تعذّر إرسال الرمز. حاول مرة أخرى.',
+        type: AppSnackBarType.error,
+      );
+      return;
+    }
+
+    showAppSnackBar(
       context,
-      MaterialPageRoute(
-        builder: (_) => ResetPasswordVerifyOtpScreen(email: email),
-      ),
+      'إذا كان البريد صحيحًا، سيصلك رمز التحقق خلال لحظات.',
+      type: AppSnackBarType.success,
     );
+
+    final encodedEmail = Uri.encodeComponent(email);
+    if (!mounted) return;
+    context.go('/forgot-password/verify?email=$encodedEmail');
   }
 
   @override
@@ -71,59 +92,77 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
       body: Center(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(16),
-          child: Form(
-            key: formKey,
-            child: Column(
-              children: [
-                Icon(Icons.lock_reset, size: 72, color: cs.primary),
-                const SizedBox(height: 16),
-                Text(
-                  'أدخل بريدك الإلكتروني لإرسال رمز التحقق (OTP).',
-                  textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.bodyLarge,
-                ),
-                const SizedBox(height: 24),
-
-                TextFormField(
-                  controller: emailController,
-                  keyboardType: TextInputType.emailAddress,
-                  decoration: const InputDecoration(
-                    labelText: 'البريد الإلكتروني',
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 520),
+            child: Form(
+              key: formKey,
+              child: Column(
+                children: [
+                  Icon(Icons.lock_reset, size: 72, color: cs.primary),
+                  const SizedBox(height: 12),
+                  Text(
+                    'استعادة كلمة المرور',
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
-                  validator: (value) {
-                    final text = value?.trim() ?? '';
-                    if (text.isEmpty) return 'هذا الحقل مطلوب';
-                    if (!text.contains('@') || !text.contains('.')) {
-                      return 'صيغة بريد غير صحيحة';
-                    }
-                    return null;
-                  },
-                ),
-
-                const SizedBox(height: 24),
-
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton(
-                    onPressed: loading ? null : submit,
-                    child:
-                        loading
-                            ? const SizedBox(
-                              height: 20,
-                              width: 20,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                            : const Text('إرسال الرمز'),
+                  const SizedBox(height: 6),
+                  Text(
+                    'أدخل بريدك الإلكتروني لإرسال رمز التحقق (OTP).',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: cs.onSurface.withValues(alpha: 0.75),
+                    ),
                   ),
-                ),
+                  const SizedBox(height: 16),
 
-                const SizedBox(height: 12),
+                  Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        children: [
+                          TextFormField(
+                            controller: emailController,
+                            keyboardType: TextInputType.emailAddress,
+                            decoration: const InputDecoration(
+                              labelText: 'البريد الإلكتروني',
+                            ),
+                            validator: emailValidator,
+                            enabled: !loading,
+                            textInputAction: TextInputAction.done,
+                            onFieldSubmitted: (_) => submit(),
+                          ),
+                          const SizedBox(height: 18),
 
-                TextButton(
-                  onPressed: loading ? null : () => Navigator.pop(context),
-                  child: const Text('العودة لتسجيل الدخول'),
-                ),
-              ],
+                          SizedBox(
+                            width: double.infinity,
+                            child: ElevatedButton(
+                              onPressed: loading ? null : submit,
+                              child:
+                                  loading
+                                      ? const SizedBox(
+                                        height: 20,
+                                        width: 20,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
+                                      )
+                                      : const Text('إرسال الرمز'),
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+
+                          TextButton(
+                            onPressed:
+                                loading ? null : () => context.go('/login'),
+                            child: const Text('العودة لتسجيل الدخول'),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ),

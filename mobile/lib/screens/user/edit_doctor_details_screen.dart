@@ -2,10 +2,11 @@ import 'package:flutter/material.dart';
 
 import '/services/details_service.dart';
 import '/models/doctor_details.dart';
+import '/utils/ui_helpers.dart';
 
 class EditDoctorDetailsScreen extends StatefulWidget {
-  final String
-  token; // لن نستخدمه مباشرة لأن DetailsService يستعمل التوكن المخزن
+  // لن نستخدمه مباشرة إذا DetailsService يستعمل التوكن المخزن
+  final String token;
   final int userId;
 
   final String specialty;
@@ -27,114 +28,121 @@ class EditDoctorDetailsScreen extends StatefulWidget {
 }
 
 class _EditDoctorDetailsScreenState extends State<EditDoctorDetailsScreen> {
-  final _formKey = GlobalKey<FormState>();
+  final formKey = GlobalKey<FormState>();
 
-  late TextEditingController _specialtyController;
-  late TextEditingController _experienceController;
-  late TextEditingController _notesController;
+  late final TextEditingController specialtyController;
+  late final TextEditingController experienceController;
+  late final TextEditingController notesController;
 
   bool loading = false;
 
   @override
   void initState() {
     super.initState();
-    _specialtyController = TextEditingController(text: widget.specialty);
-    _experienceController = TextEditingController(
+    specialtyController = TextEditingController(text: widget.specialty);
+    experienceController = TextEditingController(
       text: widget.experienceYears.toString(),
     );
-    _notesController = TextEditingController(text: widget.notes ?? "");
+    notesController = TextEditingController(text: widget.notes ?? '');
   }
 
   @override
   void dispose() {
-    _specialtyController.dispose();
-    _experienceController.dispose();
-    _notesController.dispose();
+    specialtyController.dispose();
+    experienceController.dispose();
+    notesController.dispose();
     super.dispose();
   }
 
-  Future<void> _submitUpdate() async {
-    if (!_formKey.currentState!.validate()) return;
+  Future<void> submitUpdate() async {
+    if (!formKey.currentState!.validate()) return;
+    if (loading) return;
 
     setState(() => loading = true);
 
-    final int expYears = int.tryParse(_experienceController.text.trim()) ?? 0;
+    final expYears = int.tryParse(experienceController.text.trim()) ?? 0;
 
     final request = DoctorDetailsRequest(
       userId: widget.userId,
-      specialty: _specialtyController.text.trim(),
+      specialty: specialtyController.text.trim(),
       experienceYears: expYears,
       notes:
-          _notesController.text.trim().isEmpty
+          notesController.text.trim().isEmpty
               ? null
-              : _notesController.text.trim(),
+              : notesController.text.trim(),
     );
 
     final response = await DetailsService().updateDoctorDetails(request);
 
+    if (!mounted) return;
     setState(() => loading = false);
 
-    if (!mounted) return;
-
     if (response.statusCode == 200) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("تم تحديث بيانات الطبيب بنجاح")),
+      showAppSnackBar(
+        context,
+        'تم تحديث بيانات الطبيب بنجاح',
+        type: AppSnackBarType.success,
       );
       Navigator.pop(context, true); // نرجع إلى صفحة التفاصيل مع إشارة نجاح
-    } else {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text("فشل التحديث: ${response.body}")));
+      return;
     }
+
+    showAppSnackBar(
+      context,
+      'فشل التحديث: ${response.body}',
+      type: AppSnackBarType.error,
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("تعديل بيانات الطبيب")),
+      appBar: AppBar(title: const Text('تعديل بيانات الطبيب')),
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: Form(
-          key: _formKey,
+          key: formKey,
           child: ListView(
             children: [
               TextFormField(
-                controller: _specialtyController,
-                decoration: const InputDecoration(labelText: "التخصص"),
+                controller: specialtyController,
+                decoration: const InputDecoration(labelText: 'التخصص'),
                 validator:
-                    (v) => v == null || v.trim().isEmpty ? "الحقل مطلوب" : null,
+                    (v) => v == null || v.trim().isEmpty ? 'الحقل مطلوب' : null,
               ),
               const SizedBox(height: 15),
-
               TextFormField(
-                controller: _experienceController,
-                decoration: const InputDecoration(labelText: "سنوات الخبرة"),
+                controller: experienceController,
+                decoration: const InputDecoration(labelText: 'سنوات الخبرة'),
                 keyboardType: TextInputType.number,
                 validator: (v) {
-                  if (v == null || v.trim().isEmpty) {
-                    return "الحقل مطلوب";
-                  }
-                  if (int.tryParse(v.trim()) == null) {
-                    return "يرجى إدخال رقم صحيح";
-                  }
+                  final text = v?.trim() ?? '';
+                  if (text.isEmpty) return 'الحقل مطلوب';
+                  if (int.tryParse(text) == null) return 'يرجى إدخال رقم صحيح';
                   return null;
                 },
               ),
               const SizedBox(height: 15),
-
               TextFormField(
-                controller: _notesController,
-                decoration: const InputDecoration(labelText: "ملاحظات"),
+                controller: notesController,
+                decoration: const InputDecoration(labelText: 'ملاحظات'),
                 maxLines: 3,
               ),
               const SizedBox(height: 25),
-
-              loading
-                  ? const Center(child: CircularProgressIndicator())
-                  : ElevatedButton(
-                    onPressed: _submitUpdate,
-                    child: const Text("حفظ التعديلات"),
-                  ),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: loading ? null : submitUpdate,
+                  child:
+                      loading
+                          ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                          : const Text('حفظ التعديلات'),
+                ),
+              ),
             ],
           ),
         ),

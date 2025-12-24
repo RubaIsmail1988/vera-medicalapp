@@ -1,7 +1,7 @@
 
 from rest_framework import generics, status
 from rest_framework.response import Response
-from rest_framework.permissions import AllowAny, IsAdminUser
+from rest_framework.permissions import AllowAny, IsAuthenticated, IsAdminUser
 from rest_framework_simplejwt.views import TokenObtainPairView
 from .serializers import (
     UserRegistrationSerializer,
@@ -14,8 +14,12 @@ from .serializers import (
     AccountDeletionRequestCreateSerializer,
     AccountDeletionRequestListSerializer,
     CurrentUserSerializer,
+    AppointmentTypeSerializer,
+    DoctorAppointmentTypeSerializer,
+    DoctorAvailabilitySerializer,
+    GovernorateSerializer,
 )
-from .models import CustomUser, PatientDetails, DoctorDetails, Hospital, Lab, AccountDeletionRequest
+from .models import CustomUser, PatientDetails, DoctorDetails, Hospital, Lab, AccountDeletionRequest,AppointmentType, DoctorAppointmentType, DoctorAvailability, Governorate 
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -24,8 +28,9 @@ from rest_framework.generics import ListAPIView
 from django.contrib.auth import get_user_model
 from rest_framework.permissions import IsAuthenticated, IsAdminUser
 from django.utils import timezone
-from .permissions import IsOwnerOrAdmin
-
+from .permissions import IsOwnerOrAdmin, IsDoctorOwnerOrAdmin
+from rest_framework.exceptions import PermissionDenied, ValidationError
+from django.db import IntegrityError, transaction
 
 User = get_user_model()
 
@@ -35,13 +40,15 @@ class UserRegistrationView(generics.CreateAPIView):
     serializer_class = UserRegistrationSerializer
     permission_classes = [AllowAny]
 
+
 class PatientRegistrationView(UserRegistrationView):
     def perform_create(self, serializer):
-        serializer.save(role='patient', is_active=True)
+        serializer.save(role="patient")
+
 
 class DoctorRegistrationView(UserRegistrationView):
     def perform_create(self, serializer):
-        serializer.save(role='doctor', is_active=False)
+        serializer.save(role="doctor")
 
 class UsersListView(ListAPIView):
     serializer_class = UserSerializer
@@ -484,3 +491,115 @@ class PasswordResetConfirmView(APIView):
         otp.save()
 
         return Response({"success": True}, status=status.HTTP_200_OK)
+
+# -----------------------------
+# Phase C - Appointment Types (Admin only)
+# -----------------------------
+class AppointmentTypeListCreateView(generics.ListCreateAPIView):
+    queryset = AppointmentType.objects.all()
+    serializer_class = AppointmentTypeSerializer
+    permission_classes = [IsAdminUser]
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        context["request"] = self.request
+        return context
+
+
+class AppointmentTypeRetrieveUpdateDestroyView(generics.RetrieveUpdateDestroyAPIView):
+    queryset = AppointmentType.objects.all()
+    serializer_class = AppointmentTypeSerializer
+    permission_classes = [IsAdminUser]
+
+
+# -----------------------------
+# Phase C - DoctorAppointmentType
+# Doctor manages own, admin can see all
+# -----------------------------
+class DoctorAppointmentTypeListCreateView(generics.ListCreateAPIView):
+    serializer_class = DoctorAppointmentTypeSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        user = self.request.user
+        if getattr(user, "role", None) == "admin" or user.is_staff or user.is_superuser:
+            return DoctorAppointmentType.objects.all()
+        if getattr(user, "role", None) == "doctor":
+            return DoctorAppointmentType.objects.filter(doctor=user)
+        return DoctorAppointmentType.objects.none()
+
+    def perform_create(self, serializer):
+        user = self.request.user
+        if getattr(user, "role", None) != "doctor":
+            raise PermissionDenied("Only doctors can create DoctorAppointmentType.")
+
+        try:
+            with transaction.atomic():
+                serializer.save(doctor=user)
+        except IntegrityError:
+            # هذا يحصل عند محاولة إدخال نفس (doctor, appointment_type) مرة ثانية
+            raise ValidationError({
+                "appointment_type": "This appointment type is already configured for this doctor."
+            })
+
+class DoctorAppointmentTypeRetrieveUpdateDestroyView(generics.RetrieveUpdateDestroyAPIView):
+    serializer_class = DoctorAppointmentTypeSerializer
+    permission_classes = [IsAuthenticated, IsDoctorOwnerOrAdmin]
+
+    def get_queryset(self):
+        # مهم: نقيّد queryset حتى لا يستطيع المستخدم الوصول لسجلات غيره
+        user = self.request.user
+        if getattr(user, "role", None) == "admin" or user.is_staff or user.is_superuser:
+            return DoctorAppointmentType.objects.all()
+        if getattr(user, "role", None) == "doctor":
+            return DoctorAppointmentType.objects.filter(doctor=user)
+        return DoctorAppointmentType.objects.none()
+
+
+# -----------------------------
+# Phase C - DoctorAvailability
+# Doctor manages own, admin can see all
+# -----------------------------
+class DoctorAvailabilityListCreateView(generics.ListCreateAPIView):
+    serializer_class = DoctorAvailabilitySerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        user = self.request.user
+        if getattr(user, "role", None) == "admin" or user.is_staff or user.is_superuser:
+            return DoctorAvailability.objects.all()
+        if getattr(user, "role", None) == "doctor":
+            return DoctorAvailability.objects.filter(doctor=user)
+        return DoctorAvailability.objects.none()
+
+    def perform_create(self, serializer):
+        user = self.request.user
+        if getattr(user, "role", None) != "doctor":
+            raise PermissionDenied("Only doctors can create DoctorAvailability.")
+        serializer.save(doctor=user)
+
+
+class DoctorAvailabilityRetrieveUpdateDestroyView(generics.RetrieveUpdateDestroyAPIView):
+    serializer_class = DoctorAvailabilitySerializer
+    permission_classes = [IsAuthenticated, IsDoctorOwnerOrAdmin]
+
+    def get_queryset(self):
+        user = self.request.user
+        if getattr(user, "role", None) == "admin" or user.is_staff or user.is_superuser:
+            return DoctorAvailability.objects.all()
+        if getattr(user, "role", None) == "doctor":
+            return DoctorAvailability.objects.filter(doctor=user)
+        return DoctorAvailability.objects.none()
+
+
+class AppointmentTypeReadOnlyListView(ListAPIView):
+    queryset = AppointmentType.objects.all()
+    serializer_class = AppointmentTypeSerializer
+    permission_classes = [IsAuthenticated]
+
+
+class GovernorateListView(generics.ListAPIView):
+    permission_classes = [AllowAny]
+    serializer_class = GovernorateSerializer
+
+    def get_queryset(self):
+        return Governorate.objects.all().order_by("name")

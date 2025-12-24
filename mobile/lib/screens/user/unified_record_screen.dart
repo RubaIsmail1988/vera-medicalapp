@@ -1,0 +1,593 @@
+import 'dart:convert';
+
+import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+import '/services/auth_service.dart';
+import '/services/clinical_service.dart';
+import '/utils/ui_helpers.dart';
+
+import 'clinical/orders_tab.dart';
+import 'clinical/files_tab.dart';
+import 'clinical/prescriptions_tab.dart';
+import 'clinical/adherence_tab.dart';
+
+class UnifiedRecordScreen extends StatefulWidget {
+  final String role; // doctor | patient
+  final int userId;
+
+  const UnifiedRecordScreen({
+    super.key,
+    required this.role,
+    required this.userId,
+  });
+
+  @override
+  State<UnifiedRecordScreen> createState() => _UnifiedRecordScreenState();
+}
+
+class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
+    with SingleTickerProviderStateMixin {
+  static const int tabOrders = 0;
+  //static const int tabFiles = 1;
+  static const int tabPrescripts = 2;
+  static const int tabAdherence = 3;
+
+  late final TabController tabController;
+  late final ClinicalService clinicalService;
+
+  // Header
+  String currentUserName = "";
+
+  // Doctor selection
+  int? selectedPatientId;
+  String? selectedPatientName;
+
+  // Patients source
+  bool loadingPatients = false;
+  String? patientsErrorMessage;
+  List<_PatientOption> patientOptions = [];
+
+  // PatientId captured from URL (doctor only)
+  int? pendingPatientIdFromUrl;
+
+  bool didApplyInitialTabFromUrl = false;
+
+  bool get isDoctor => widget.role == "doctor";
+  bool get isPatient => widget.role == "patient";
+
+  String get roleLabel {
+    if (widget.role == "doctor") return "طبيب";
+    if (widget.role == "patient") return "مريض";
+    return widget.role;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+
+    tabController = TabController(length: 4, vsync: this);
+    tabController.addListener(_onTabChanged);
+
+    clinicalService = ClinicalService(authService: AuthService());
+
+    _loadCurrentUserNameFromPrefs();
+
+    _capturePatientIdFromUrlIfAny();
+    _applyInitialTabFromUrlIfNeeded();
+
+    if (isDoctor) {
+      loadingPatients = true;
+      patientsErrorMessage = null;
+      _loadDoctorPatientsFromOrders();
+    }
+  }
+
+  @override
+  void dispose() {
+    tabController.removeListener(_onTabChanged);
+    tabController.dispose();
+    super.dispose();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Shared helpers
+  // ---------------------------------------------------------------------------
+
+  int? _asInt(dynamic v) {
+    if (v == null) return null;
+    if (v is int) return v;
+    return int.tryParse(v.toString());
+  }
+
+  Future<void> _loadCurrentUserNameFromPrefs() async {
+    final prefs = await SharedPreferences.getInstance();
+    final name = (prefs.getString("currentUserName") ?? "").trim();
+
+    if (!mounted) return;
+    setState(() {
+      currentUserName = name;
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // URL helpers (web hash-safe) + routing tab behavior
+  // ---------------------------------------------------------------------------
+
+  String _readHashPathOrPath() {
+    // Hash routing: "#/app/record/adherence?patientId=31"
+    final frag = Uri.base.fragment;
+    if (frag.trim().isNotEmpty) {
+      final qIndex = frag.indexOf("?");
+      return qIndex == -1 ? frag : frag.substring(0, qIndex);
+    }
+
+    // Non-hash
+    final p = Uri.base.path;
+    return p.isNotEmpty ? p : "/app/record";
+  }
+
+  int? _readPatientIdFromUrl() {
+    // Normal: /app/record?patientId=12
+    final direct = Uri.base.queryParameters["patientId"];
+    final pid1 = int.tryParse(direct ?? "");
+    if (pid1 != null && pid1 > 0) return pid1;
+
+    // Hash: #/app/record?patientId=12
+    final frag = Uri.base.fragment;
+    final qIndex = frag.indexOf("?");
+    if (qIndex == -1) return null;
+
+    final fragQuery = frag.substring(qIndex + 1);
+    final fake = Uri.parse("http://dummy/?$fragQuery");
+    final pid2 = int.tryParse(fake.queryParameters["patientId"] ?? "");
+    if (pid2 != null && pid2 > 0) return pid2;
+
+    return null;
+  }
+
+  void _capturePatientIdFromUrlIfAny() {
+    if (!isDoctor) return;
+    pendingPatientIdFromUrl = _readPatientIdFromUrl();
+  }
+
+  void _applyPendingPatientSelectionIfPossible() {
+    if (!isDoctor) return;
+
+    // already selected -> clear pending
+    if (selectedPatientId != null) {
+      pendingPatientIdFromUrl = null;
+      return;
+    }
+
+    final pid = pendingPatientIdFromUrl;
+    if (pid == null) return;
+
+    // wait until options loaded
+    if (loadingPatients) return;
+    if (patientOptions.isEmpty) return;
+
+    final match = patientOptions.where((p) => p.id == pid).toList();
+    if (match.isEmpty) return;
+
+    pendingPatientIdFromUrl = null;
+
+    if (!mounted) return;
+    setState(() {
+      selectedPatientId = pid;
+      selectedPatientName = match.first.name;
+    });
+  }
+
+  void _applyInitialTabFromUrlIfNeeded() {
+    if (didApplyInitialTabFromUrl) return;
+    didApplyInitialTabFromUrl = true;
+
+    final path = _readHashPathOrPath();
+
+    int target = tabOrders;
+    if (path.endsWith("/prescripts")) target = tabPrescripts;
+    if (path.endsWith("/adherence")) target = tabAdherence;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (tabController.index != target) {
+        tabController.animateTo(target);
+      }
+    });
+  }
+
+  String _buildRecordLocationForTab(int index) {
+    final pid = isDoctor ? selectedPatientId : null;
+    final hasPid = pid != null && pid > 0;
+
+    String base;
+    if (index == tabPrescripts) {
+      base = "/app/record/prescripts";
+    } else if (index == tabAdherence) {
+      base = "/app/record/adherence";
+    } else {
+      base = "/app/record";
+    }
+
+    if (hasPid) return "$base?patientId=$pid";
+    return base;
+  }
+
+  void _safeGo(String location) {
+    try {
+      if (!mounted) return;
+      GoRouter.of(context).go(location);
+    } catch (_) {
+      // تجاهل في وضع التطوير لتجنب وميض/إزعاج
+    }
+  }
+
+  void _onTabChanged() {
+    if (tabController.indexIsChanging) return;
+    if (isDoctor && selectedPatientId == null) return;
+
+    final location = _buildRecordLocationForTab(tabController.index);
+    _safeGo(location);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Load patients (doctor)
+  // ---------------------------------------------------------------------------
+
+  Future<void> _loadDoctorPatientsFromOrders() async {
+    final res = await clinicalService.listOrders();
+    if (!mounted) return;
+
+    if (res.statusCode != 200) {
+      final msg =
+          (res.statusCode == 401)
+              ? "انتهت الجلسة، يرجى تسجيل الدخول مجددًا."
+              : (res.statusCode == 403)
+              ? "لا تملك الصلاحية لعرض المرضى."
+              : "تعذر تحميل المرضى (${res.statusCode}).";
+
+      setState(() {
+        loadingPatients = false;
+        patientsErrorMessage = msg;
+      });
+
+      showAppSnackBar(context, msg, type: AppSnackBarType.error);
+      return;
+    }
+
+    final decoded = jsonDecode(res.body);
+    final List<Map<String, dynamic>> list =
+        decoded is List
+            ? decoded.cast<Map<String, dynamic>>()
+            : <Map<String, dynamic>>[];
+
+    // Build unique patients from orders: patient(id) + patient_display_name(label)
+    final Map<int, String> byId = {};
+
+    for (final o in list) {
+      final pid = _asInt(o["patient"]);
+      if (pid == null || pid <= 0) continue;
+
+      final name = (o["patient_display_name"]?.toString() ?? "").trim();
+      if (name.isNotEmpty) {
+        byId[pid] = name;
+      } else {
+        byId.putIfAbsent(pid, () => "مريض");
+      }
+    }
+
+    final options =
+        byId.entries
+            .map((e) => _PatientOption(id: e.key, name: e.value))
+            .toList()
+          ..sort((a, b) => a.name.compareTo(b.name));
+
+    if (!mounted) return;
+    setState(() {
+      patientOptions = options;
+      loadingPatients = false;
+      patientsErrorMessage = null;
+    });
+
+    _applyPendingPatientSelectionIfPossible();
+  }
+
+  // ---------------------------------------------------------------------------
+  // UI building blocks (reduce repetition)
+  // ---------------------------------------------------------------------------
+
+  Widget _headerTile({required String subtitleText}) {
+    return Material(
+      child: ListTile(
+        leading: const Icon(Icons.folder_shared),
+        title: const Text("الإضبارة الطبية الموحدة"),
+        subtitle: Text(subtitleText),
+      ),
+    );
+  }
+
+  Widget _stateCard({
+    required IconData icon,
+    required String title,
+    required String message,
+    required AppSnackBarType tone,
+    Widget? action,
+  }) {
+    final scheme = Theme.of(context).colorScheme;
+
+    Color bg;
+    Color fg;
+
+    switch (tone) {
+      case AppSnackBarType.success:
+        bg = scheme.primaryContainer;
+        fg = scheme.onPrimaryContainer;
+        break;
+      case AppSnackBarType.warning:
+        bg = scheme.tertiaryContainer;
+        fg = scheme.onTertiaryContainer;
+        break;
+      case AppSnackBarType.error:
+        bg = scheme.errorContainer;
+        fg = scheme.onErrorContainer;
+        break;
+      case AppSnackBarType.info:
+        bg = scheme.surfaceContainerHighest;
+        fg = scheme.onSurface;
+        break;
+    }
+
+    return Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(16),
+        child: Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircleAvatar(
+                  radius: 26,
+                  backgroundColor: bg,
+                  child: Icon(icon, color: fg),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  title,
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  message,
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.bodyMedium,
+                ),
+                if (action != null) ...[const SizedBox(height: 12), action],
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _primaryButton({
+    required String label,
+    required VoidCallback? onPressed,
+    IconData? icon,
+  }) {
+    return SizedBox(
+      width: double.infinity,
+      child: ElevatedButton.icon(
+        onPressed: onPressed,
+        icon: Icon(icon ?? Icons.check_circle_outline),
+        label: Text(label),
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Build
+  // ---------------------------------------------------------------------------
+
+  @override
+  Widget build(BuildContext context) {
+    _applyPendingPatientSelectionIfPossible();
+
+    final doctorLabel =
+        currentUserName.isNotEmpty ? "د. $currentUserName" : "د. -";
+
+    // Doctor must select patient first
+    if (isDoctor && selectedPatientId == null) {
+      return Column(
+        children: [
+          _headerTile(subtitleText: "الدور: $roleLabel | الطبيب: $doctorLabel"),
+          Expanded(
+            child:
+                loadingPatients
+                    ? _stateCard(
+                      icon: Icons.hourglass_top,
+                      title: "جاري التحميل",
+                      message: "يتم تحميل قائمة المرضى المرتبطين بطلباتك…",
+                      tone: AppSnackBarType.info,
+                      action: const Padding(
+                        padding: EdgeInsets.only(top: 4),
+                        child: CircularProgressIndicator(),
+                      ),
+                    )
+                    : (patientsErrorMessage != null)
+                    ? _stateCard(
+                      icon: Icons.error_outline,
+                      title: "تعذر تحميل المرضى",
+                      message: patientsErrorMessage!,
+                      tone: AppSnackBarType.error,
+                      action: _primaryButton(
+                        label: "إعادة المحاولة",
+                        icon: Icons.refresh,
+                        onPressed: () {
+                          setState(() {
+                            loadingPatients = true;
+                            patientsErrorMessage = null;
+                          });
+                          _loadDoctorPatientsFromOrders();
+                        },
+                      ),
+                    )
+                    : (patientOptions.isEmpty)
+                    ? _stateCard(
+                      icon: Icons.people_outline,
+                      title: "لا يوجد مرضى متاحون",
+                      message:
+                          "لا توجد طلبات مرتبطة بمرضى حتى الآن.\nعند إنشاء طلب لمريض ستظهر القائمة هنا تلقائيًا.",
+                      tone: AppSnackBarType.warning,
+                    )
+                    : Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        children: [
+                          Card(
+                            child: Padding(
+                              padding: const EdgeInsets.all(12),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    "اختر مريضًا لعرض الإضبارة",
+                                    style:
+                                        Theme.of(context).textTheme.titleMedium,
+                                  ),
+                                  const SizedBox(height: 12),
+                                  DropdownButtonFormField<int>(
+                                    isExpanded: true,
+                                    decoration: const InputDecoration(
+                                      labelText: "المريض",
+                                      border: OutlineInputBorder(),
+                                    ),
+                                    items:
+                                        patientOptions
+                                            .map(
+                                              (p) => DropdownMenuItem<int>(
+                                                value: p.id,
+                                                child: Text(
+                                                  p.name,
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                ),
+                                              ),
+                                            )
+                                            .toList(),
+                                    onChanged: (v) {
+                                      if (v == null) return;
+
+                                      final match =
+                                          patientOptions
+                                              .where((x) => x.id == v)
+                                              .toList();
+                                      final name =
+                                          match.isNotEmpty
+                                              ? match.first.name
+                                              : "مريض";
+
+                                      setState(() {
+                                        selectedPatientId = v;
+                                        selectedPatientName = name;
+                                      });
+
+                                      final location =
+                                          _buildRecordLocationForTab(
+                                            tabController.index,
+                                          );
+                                      _safeGo(location);
+
+                                      showAppSnackBar(
+                                        context,
+                                        "تم اختيار المريض: $name",
+                                        type: AppSnackBarType.success,
+                                      );
+                                    },
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          _stateCard(
+                            icon: Icons.info_outline,
+                            title: "ملاحظة",
+                            message:
+                                "سيتم استخدام هذا الاختيار لعرض الطلبات والملفات والوصفات والالتزام الدوائي.",
+                            tone: AppSnackBarType.info,
+                          ),
+                        ],
+                      ),
+                    ),
+          ),
+        ],
+      );
+    }
+
+    final int? patientContextId = isDoctor ? selectedPatientId : widget.userId;
+
+    final subtitleText =
+        isPatient
+            ? "المريض: ${currentUserName.isNotEmpty ? currentUserName : "-"}"
+            : "الطبيب: $doctorLabel | المريض: ${(selectedPatientName?.trim().isNotEmpty ?? false) ? selectedPatientName!.trim() : "-"}";
+
+    return Column(
+      children: [
+        _headerTile(subtitleText: subtitleText),
+        TabBar(
+          controller: tabController,
+          isScrollable: true,
+          tabs: const [
+            Tab(text: "الطلبات"),
+            Tab(text: "الملفات"),
+            Tab(text: "الوصفات"),
+            Tab(text: "الالتزام"),
+          ],
+        ),
+        Expanded(
+          child: TabBarView(
+            controller: tabController,
+            children: [
+              OrdersTab(
+                key: ValueKey<String>("orders-$patientContextId"),
+                role: widget.role,
+                userId: widget.userId,
+                selectedPatientId: patientContextId,
+              ),
+              FilesTab(
+                key: ValueKey<String>("files-$patientContextId"),
+                role: widget.role,
+                userId: widget.userId,
+                selectedPatientId: patientContextId,
+              ),
+              PrescriptionsTab(
+                key: ValueKey<String>("prescriptions-$patientContextId"),
+                role: widget.role,
+                userId: widget.userId,
+                selectedPatientId: patientContextId,
+              ),
+              AdherenceTab(
+                key: ValueKey<String>("adherence-$patientContextId"),
+                role: widget.role,
+                userId: widget.userId,
+                selectedPatientId: patientContextId,
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _PatientOption {
+  final int id;
+  final String name;
+
+  const _PatientOption({required this.id, required this.name});
+}

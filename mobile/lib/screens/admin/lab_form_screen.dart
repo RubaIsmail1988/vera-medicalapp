@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 
+import '/models/governorate.dart';
 import '/models/lab.dart';
+import '/services/governorate_service.dart';
 import '/services/lab_service.dart';
+import '/utils/ui_helpers.dart';
 
 class LabFormScreen extends StatefulWidget {
   final Lab? lab;
@@ -13,115 +16,158 @@ class LabFormScreen extends StatefulWidget {
 }
 
 class _LabFormScreenState extends State<LabFormScreen> {
-  final _formKey = GlobalKey<FormState>();
-  final LabService _labService = LabService();
+  final formKey = GlobalKey<FormState>();
+  final labService = LabService();
+  final governorateService = GovernorateService();
 
-  late TextEditingController _nameController;
-  late TextEditingController _governorateController;
-  late TextEditingController _addressController;
-  late TextEditingController _latitudeController;
-  late TextEditingController _longitudeController;
-  late TextEditingController _specialtyController;
-  late TextEditingController _contactInfoController;
+  late final TextEditingController nameController;
+  late final TextEditingController addressController;
+  late final TextEditingController latitudeController;
+  late final TextEditingController longitudeController;
+  late final TextEditingController specialtyController;
+  late final TextEditingController contactInfoController;
 
   bool loading = false;
+
+  List<Governorate> governorates = [];
+  int? selectedGovernorateId;
+  bool loadingGovernorates = true;
 
   @override
   void initState() {
     super.initState();
-    final l = widget.lab;
+    final lab = widget.lab;
 
-    _nameController = TextEditingController(text: l?.name ?? "");
-    _governorateController = TextEditingController(
-      text: l?.governorate.toString() ?? "",
+    nameController = TextEditingController(text: lab?.name ?? '');
+    addressController = TextEditingController(text: lab?.address ?? '');
+    latitudeController = TextEditingController(
+      text: lab?.latitude?.toString() ?? '',
     );
-    _addressController = TextEditingController(text: l?.address ?? "");
-    _latitudeController = TextEditingController(
-      text: l?.latitude?.toString() ?? "",
+    longitudeController = TextEditingController(
+      text: lab?.longitude?.toString() ?? '',
     );
-    _longitudeController = TextEditingController(
-      text: l?.longitude?.toString() ?? "",
-    );
-    _specialtyController = TextEditingController(text: l?.specialty ?? "");
-    _contactInfoController = TextEditingController(text: l?.contactInfo ?? "");
+    specialtyController = TextEditingController(text: lab?.specialty ?? '');
+    contactInfoController = TextEditingController(text: lab?.contactInfo ?? '');
+
+    selectedGovernorateId = lab?.governorate;
+
+    loadGovernorates();
+  }
+
+  Future<void> loadGovernorates() async {
+    if (!mounted) return;
+    setState(() => loadingGovernorates = true);
+
+    try {
+      final items = await governorateService.fetchGovernorates();
+      if (!mounted) return;
+
+      items.sort((a, b) => a.name.compareTo(b.name));
+
+      setState(() {
+        governorates = items;
+        loadingGovernorates = false;
+
+        // في وضع التعديل: إن لم تعد القيمة موجودة لأي سبب
+        if (selectedGovernorateId != null) {
+          final exists = governorates.any((g) => g.id == selectedGovernorateId);
+          if (!exists) {
+            selectedGovernorateId = null;
+          }
+        }
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => loadingGovernorates = false);
+
+      showAppSnackBar(
+        context,
+        'فشل تحميل المحافظات.',
+        type: AppSnackBarType.error,
+      );
+    }
   }
 
   @override
   void dispose() {
-    _nameController.dispose();
-    _governorateController.dispose();
-    _addressController.dispose();
-    _latitudeController.dispose();
-    _longitudeController.dispose();
-    _specialtyController.dispose();
-    _contactInfoController.dispose();
+    nameController.dispose();
+    addressController.dispose();
+    latitudeController.dispose();
+    longitudeController.dispose();
+    specialtyController.dispose();
+    contactInfoController.dispose();
     super.dispose();
   }
 
-  Future<void> _submit() async {
-    if (!_formKey.currentState!.validate()) return;
+  Future<void> submit() async {
+    if (!formKey.currentState!.validate()) return;
+
+    if (selectedGovernorateId == null) {
+      showAppSnackBar(
+        context,
+        'يرجى اختيار المحافظة.',
+        type: AppSnackBarType.warning,
+      );
+      return;
+    }
 
     setState(() => loading = true);
 
-    final int governorateId =
-        int.tryParse(_governorateController.text.trim()) ?? 0;
-
-    final double? lat =
-        _latitudeController.text.trim().isEmpty
-            ? null
-            : double.tryParse(_latitudeController.text.trim());
-
-    final double? lng =
-        _longitudeController.text.trim().isEmpty
-            ? null
-            : double.tryParse(_longitudeController.text.trim());
-
-    final lab = Lab(
-      id: widget.lab?.id,
-      name: _nameController.text.trim(),
-      governorate: governorateId,
-      address:
-          _addressController.text.trim().isEmpty
-              ? null
-              : _addressController.text.trim(),
-      latitude: lat,
-      longitude: lng,
-      specialty:
-          _specialtyController.text.trim().isEmpty
-              ? null
-              : _specialtyController.text.trim(),
-      contactInfo:
-          _contactInfoController.text.trim().isEmpty
-              ? null
-              : _contactInfoController.text.trim(),
-    );
-
     try {
+      final latText = latitudeController.text.trim();
+      final lngText = longitudeController.text.trim();
+
+      final double? lat = latText.isEmpty ? null : double.tryParse(latText);
+      final double? lng = lngText.isEmpty ? null : double.tryParse(lngText);
+
+      final lab = Lab(
+        id: widget.lab?.id,
+        name: nameController.text.trim(),
+        governorate: selectedGovernorateId!,
+        address:
+            addressController.text.trim().isEmpty
+                ? null
+                : addressController.text.trim(),
+        latitude: lat,
+        longitude: lng,
+        specialty:
+            specialtyController.text.trim().isEmpty
+                ? null
+                : specialtyController.text.trim(),
+        contactInfo:
+            contactInfoController.text.trim().isEmpty
+                ? null
+                : contactInfoController.text.trim(),
+      );
+
       final isEdit = widget.lab != null;
+
       final response =
           isEdit
-              ? await _labService.updateLab(lab)
-              : await _labService.createLab(lab);
+              ? await labService.updateLab(lab)
+              : await labService.createLab(lab);
 
       if (!mounted) return;
 
       if (response.statusCode == 200 || response.statusCode == 201) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(isEdit ? "تم تحديث المخبر" : "تم إنشاء المخبر"),
-          ),
+        showAppSnackBar(
+          context,
+          isEdit ? 'تم تحديث المخبر بنجاح.' : 'تم إنشاء المخبر بنجاح.',
+          type: AppSnackBarType.success,
         );
         Navigator.pop(context, true);
-      } else {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text("فشل الحفظ: ${response.body}")));
+        return;
       }
-    } catch (e) {
+
+      final msg = labService.extractErrorMessage(response);
+      showAppSnackBar(context, 'فشل الحفظ: $msg', type: AppSnackBarType.error);
+    } catch (_) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
+      showAppSnackBar(
         context,
-      ).showSnackBar(SnackBar(content: Text("خطأ: $e")));
+        'حدث خطأ أثناء الحفظ.',
+        type: AppSnackBarType.error,
+      );
     } finally {
       if (mounted) {
         setState(() => loading = false);
@@ -134,39 +180,56 @@ class _LabFormScreenState extends State<LabFormScreen> {
     final isEdit = widget.lab != null;
 
     return Scaffold(
-      appBar: AppBar(title: Text(isEdit ? "تعديل مخبر" : "إضافة مخبر")),
+      appBar: AppBar(title: Text(isEdit ? 'تعديل مخبر' : 'إضافة مخبر')),
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: Form(
-          key: _formKey,
+          key: formKey,
           child: ListView(
             children: [
               TextFormField(
-                controller: _nameController,
-                decoration: const InputDecoration(labelText: "اسم المخبر"),
+                controller: nameController,
+                decoration: const InputDecoration(labelText: 'اسم المخبر'),
                 validator:
-                    (v) => v == null || v.trim().isEmpty ? "الحقل مطلوب" : null,
+                    (v) => v == null || v.trim().isEmpty ? 'الحقل مطلوب' : null,
+              ),
+              const SizedBox(height: 12),
+
+              if (loadingGovernorates)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 8),
+                  child: LinearProgressIndicator(),
+                )
+              else
+                DropdownButtonFormField<int>(
+                  value: selectedGovernorateId,
+                  items:
+                      governorates
+                          .map(
+                            (g) => DropdownMenuItem<int>(
+                              value: g.id,
+                              child: Text(g.name),
+                            ),
+                          )
+                          .toList(),
+                  onChanged: (v) => setState(() => selectedGovernorateId = v),
+                  decoration: const InputDecoration(labelText: 'المحافظة'),
+                  validator: (v) => v == null ? 'الحقل مطلوب' : null,
+                ),
+
+              const SizedBox(height: 12),
+
+              TextFormField(
+                controller: addressController,
+                decoration: const InputDecoration(labelText: 'العنوان'),
               ),
               const SizedBox(height: 12),
 
               TextFormField(
-                controller: _governorateController,
-                decoration: const InputDecoration(labelText: "المحافظة (ID)"),
-                keyboardType: TextInputType.number,
-                validator:
-                    (v) => v == null || v.trim().isEmpty ? "الحقل مطلوب" : null,
-              ),
-              const SizedBox(height: 12),
-
-              TextFormField(
-                controller: _addressController,
-                decoration: const InputDecoration(labelText: "العنوان"),
-              ),
-              const SizedBox(height: 12),
-
-              TextFormField(
-                controller: _latitudeController,
-                decoration: const InputDecoration(labelText: "Latitude"),
+                controller: latitudeController,
+                decoration: const InputDecoration(
+                  labelText: 'خط العرض (Latitude)',
+                ),
                 keyboardType: const TextInputType.numberWithOptions(
                   decimal: true,
                 ),
@@ -174,8 +237,10 @@ class _LabFormScreenState extends State<LabFormScreen> {
               const SizedBox(height: 12),
 
               TextFormField(
-                controller: _longitudeController,
-                decoration: const InputDecoration(labelText: "Longitude"),
+                controller: longitudeController,
+                decoration: const InputDecoration(
+                  labelText: 'خط الطول (Longitude)',
+                ),
                 keyboardType: const TextInputType.numberWithOptions(
                   decimal: true,
                 ),
@@ -183,23 +248,31 @@ class _LabFormScreenState extends State<LabFormScreen> {
               const SizedBox(height: 12),
 
               TextFormField(
-                controller: _specialtyController,
-                decoration: const InputDecoration(labelText: "الاختصاص"),
+                controller: specialtyController,
+                decoration: const InputDecoration(labelText: 'الاختصاص'),
               ),
               const SizedBox(height: 12),
 
               TextFormField(
-                controller: _contactInfoController,
-                decoration: const InputDecoration(labelText: "معلومات الاتصال"),
+                controller: contactInfoController,
+                decoration: const InputDecoration(labelText: 'معلومات الاتصال'),
               ),
-              const SizedBox(height: 24),
+              const SizedBox(height: 20),
 
-              loading
-                  ? const Center(child: CircularProgressIndicator())
-                  : ElevatedButton(
-                    onPressed: _submit,
-                    child: Text(isEdit ? "حفظ التعديلات" : "حفظ"),
-                  ),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: loading ? null : submit,
+                  child:
+                      loading
+                          ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                          : Text(isEdit ? 'حفظ التعديلات' : 'حفظ'),
+                ),
+              ),
             ],
           ),
         ),

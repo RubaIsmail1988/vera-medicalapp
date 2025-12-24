@@ -1,18 +1,14 @@
 import 'package:flutter/material.dart';
 
 class AppColors {
-  // لون الهوية (من ضربات القلب في اللوغو)
   static const Color brandTeal = Color(0xFF26A69A);
 
-  // أسود/رمادي داكن للخلفيات الداكنة
   static const Color darkBackground = Color(0xFF050608);
   static const Color darkSurface = Color(0xFF111316);
 
-  // خلفيات فاتحة
   static const Color lightBackground = Color(0xFFF5F7FA);
   static const Color lightSurface = Colors.white;
 
-  // نصوص عامة
   static const Color lightText = Color(0xFF111111);
   static const Color darkText = Colors.white;
 }
@@ -21,27 +17,22 @@ class AppTheme {
   static final ColorScheme lightColorScheme = ColorScheme.fromSeed(
     seedColor: AppColors.brandTeal,
     brightness: Brightness.light,
-    primary: AppColors.brandTeal,
-    secondary: AppColors.brandTeal,
-    surface: AppColors.lightSurface, // لا نستخدم background هنا
   );
 
   static final ColorScheme darkColorScheme = ColorScheme.fromSeed(
     seedColor: AppColors.brandTeal,
     brightness: Brightness.dark,
-    primary: AppColors.brandTeal,
-    secondary: AppColors.brandTeal,
-    surface: AppColors.darkSurface,
   );
 
   static ThemeData light() {
     final scheme = lightColorScheme;
+    final cardColor = scheme.primary.withValues(alpha: 0.12);
+
     return ThemeData(
       useMaterial3: true,
       brightness: Brightness.light,
       colorScheme: scheme,
-      scaffoldBackgroundColor: AppColors.lightBackground,
-
+      scaffoldBackgroundColor: scheme.surfaceContainerLowest,
       appBarTheme: AppBarTheme(
         backgroundColor: scheme.surface,
         foregroundColor: scheme.onSurface,
@@ -54,7 +45,6 @@ class AppTheme {
         ),
         iconTheme: IconThemeData(color: scheme.onSurface),
       ),
-
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ButtonStyle(
           backgroundColor: WidgetStatePropertyAll<Color>(scheme.primary),
@@ -70,7 +60,6 @@ class AppTheme {
           ),
         ),
       ),
-
       textButtonTheme: TextButtonThemeData(
         style: ButtonStyle(
           foregroundColor: WidgetStatePropertyAll<Color>(scheme.primary),
@@ -79,17 +68,16 @@ class AppTheme {
           ),
         ),
       ),
-
       cardTheme: CardTheme(
-        color: scheme.surface,
-        elevation: 2,
+        color: cardColor,
+        elevation: 0,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       ),
 
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: scheme.surface,
+        fillColor: scheme.surfaceContainerLowest,
         labelStyle: TextStyle(color: scheme.onSurface.withValues(alpha: 0.7)),
         hintStyle: TextStyle(color: scheme.onSurface.withValues(alpha: 0.6)),
         floatingLabelStyle: TextStyle(
@@ -98,7 +86,7 @@ class AppTheme {
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide(color: scheme.outline),
+          borderSide: BorderSide(color: scheme.outlineVariant),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
@@ -118,23 +106,21 @@ class AppTheme {
         ),
       ),
 
-      textTheme: const TextTheme(
-        bodyMedium: TextStyle(fontSize: 14, color: AppColors.lightText),
-        bodyLarge: TextStyle(fontSize: 16, color: AppColors.lightText),
+      textTheme: TextTheme(
+        bodyMedium: TextStyle(fontSize: 14, color: scheme.onSurface),
+        bodyLarge: TextStyle(fontSize: 16, color: scheme.onSurface),
         titleMedium: TextStyle(
           fontSize: 16,
           fontWeight: FontWeight.w600,
-          color: AppColors.lightText,
+          color: scheme.onSurface,
         ),
         titleLarge: TextStyle(
           fontSize: 20,
           fontWeight: FontWeight.w700,
-          color: AppColors.lightText,
+          color: scheme.onSurface,
         ),
       ),
-
       iconTheme: IconThemeData(color: scheme.onSurface),
-
       textSelectionTheme: TextSelectionThemeData(
         cursorColor: scheme.primary,
         selectionColor: scheme.primary.withValues(alpha: 0.4),
@@ -145,12 +131,13 @@ class AppTheme {
 
   static ThemeData dark() {
     final scheme = darkColorScheme;
+    final cardColor = scheme.primary.withValues(alpha: 0.22);
+
     return ThemeData(
       useMaterial3: true,
       brightness: Brightness.dark,
       colorScheme: scheme,
-      scaffoldBackgroundColor: AppColors.darkBackground,
-
+      scaffoldBackgroundColor: scheme.surfaceContainerLowest,
       appBarTheme: AppBarTheme(
         backgroundColor: scheme.surface,
         foregroundColor: scheme.onSurface,
@@ -163,7 +150,6 @@ class AppTheme {
         ),
         iconTheme: IconThemeData(color: scheme.onSurface),
       ),
-
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ButtonStyle(
           backgroundColor: WidgetStatePropertyAll<Color>(scheme.primary),
@@ -179,7 +165,6 @@ class AppTheme {
           ),
         ),
       ),
-
       textButtonTheme: TextButtonThemeData(
         style: ButtonStyle(
           foregroundColor: WidgetStatePropertyAll<Color>(scheme.primary),
@@ -188,17 +173,16 @@ class AppTheme {
           ),
         ),
       ),
-
       cardTheme: CardTheme(
-        color: scheme.surface,
-        elevation: 2,
+        color: cardColor,
+        elevation: 0,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       ),
 
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: scheme.surface,
+        fillColor: scheme.surfaceContainerHigh,
         labelStyle: TextStyle(color: scheme.onSurface.withValues(alpha: 0.7)),
         hintStyle: TextStyle(color: scheme.onSurface.withValues(alpha: 0.6)),
         floatingLabelStyle: TextStyle(
@@ -207,7 +191,7 @@ class AppTheme {
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide(color: scheme.outline),
+          borderSide: BorderSide(color: scheme.outlineVariant),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
@@ -227,23 +211,21 @@ class AppTheme {
         ),
       ),
 
-      textTheme: const TextTheme(
-        bodyMedium: TextStyle(fontSize: 14, color: AppColors.darkText),
-        bodyLarge: TextStyle(fontSize: 16, color: AppColors.darkText),
+      textTheme: TextTheme(
+        bodyMedium: TextStyle(fontSize: 14, color: scheme.onSurface),
+        bodyLarge: TextStyle(fontSize: 16, color: scheme.onSurface),
         titleMedium: TextStyle(
           fontSize: 16,
           fontWeight: FontWeight.w600,
-          color: AppColors.darkText,
+          color: scheme.onSurface,
         ),
         titleLarge: TextStyle(
           fontSize: 20,
           fontWeight: FontWeight.w700,
-          color: AppColors.darkText,
+          color: scheme.onSurface,
         ),
       ),
-
       iconTheme: IconThemeData(color: scheme.onSurface),
-
       textSelectionTheme: TextSelectionThemeData(
         cursorColor: scheme.primary,
         selectionColor: scheme.primary.withValues(alpha: 0.4),
