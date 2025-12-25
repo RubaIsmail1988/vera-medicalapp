@@ -242,7 +242,7 @@ class ClinicalService {
 
   Future<http.Response> createAdherence({
     required int prescriptionItemId,
-    required String status, // taken | missed (حسب الباك عندك)
+    required String status, // taken | skipped (حسب الباك عندك)
     required DateTime takenAt,
     String? note, // اختياري (يرسل فقط إن كان غير فارغ)
   }) {
