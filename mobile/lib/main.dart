@@ -38,6 +38,10 @@ void main() {
   runApp(const MyApp());
 }
 
+/* -------------------------------------------------------------------------- */
+/*                                   MyApp                                    */
+/* -------------------------------------------------------------------------- */
+
 class MyApp extends StatefulWidget {
   const MyApp({super.key});
 
@@ -50,13 +54,6 @@ class MyApp extends StatefulWidget {
 
 class MyAppState extends State<MyApp> {
   ThemeMode themeMode = ThemeMode.dark;
-
-  Page<void> _shellPage(GoRouterState state, int index) {
-    return NoTransitionPage<void>(
-      key: state.pageKey,
-      child: UserShellScreen(initialIndex: index),
-    );
-  }
 
   late final GoRouter router = GoRouter(
     initialLocation: '/',
@@ -97,7 +94,7 @@ class MyAppState extends State<MyApp> {
         },
       ),
 
-      // ---------------- Admin ----------------
+      // ---------------- Admin (web-safe) ----------------
       GoRoute(
         path: '/admin',
         builder: (context, state) => const AdminShellScreen(initialIndex: 0),
@@ -123,12 +120,12 @@ class MyAppState extends State<MyApp> {
         builder: (context, state) => const AdminShellScreen(initialIndex: 5),
       ),
 
-      // ---------------- App (User) ----------------
+      // ---------------- App (User web-safe) ----------------
       GoRoute(
         path: '/app',
-        pageBuilder: (context, state) => _shellPage(state, 0),
+        builder: (context, state) => const UserShellScreen(initialIndex: 0),
         routes: [
-          // Doctor Scheduling (Phase C)
+          // ---------------- Doctor Scheduling (Phase C) ----------------
           GoRoute(
             path: 'doctor/scheduling',
             builder: (context, state) => const DoctorSchedulingSettingsScreen(),
@@ -182,25 +179,26 @@ class MyAppState extends State<MyApp> {
                 },
               ),
 
-              // Tabs routes (UI فقط) — route لكل تبويب
+              // Tabs routes (UI فقط)
               GoRoute(
                 path: 'files',
                 builder:
-                    (context, state) => UserShellScreen(
-                      key: ValueKey<String>(state.uri.path),
-                      initialIndex: 1,
-                    ),
+                    (context, state) => const UserShellScreen(initialIndex: 1),
               ),
               GoRoute(
                 path: 'prescripts',
                 builder:
-                    (context, state) => UserShellScreen(
-                      key: ValueKey<String>(state.uri.path),
-                      initialIndex: 1,
-                    ),
+                    (context, state) => const UserShellScreen(initialIndex: 1),
               ),
               GoRoute(
                 path: 'adherence',
+                builder:
+                    (context, state) => const UserShellScreen(initialIndex: 1),
+              ),
+
+              // ---------------- NEW: Health Profile Tab ----------------
+              GoRoute(
+                path: 'health-profile',
                 builder:
                     (context, state) => UserShellScreen(
                       key: ValueKey<String>(state.uri.path),
@@ -210,21 +208,23 @@ class MyAppState extends State<MyApp> {
             ],
           ),
 
-          // Hospitals
+          // ---------------- Hospitals ----------------
           GoRoute(
             path: 'hospitals',
-            pageBuilder: (context, state) => _shellPage(state, 2),
+            builder: (context, state) => const UserShellScreen(initialIndex: 2),
             routes: [
               GoRoute(
                 path: 'detail',
                 builder: (context, state) {
                   final extra = state.extra;
+
                   if (extra is! Map) {
                     return const UserShellScreen(initialIndex: 2);
                   }
 
                   final name = (extra['name'] ?? '').toString().trim();
                   final governorateRaw = extra['governorate'];
+
                   final int governorate =
                       governorateRaw is int
                           ? governorateRaw
@@ -259,15 +259,16 @@ class MyAppState extends State<MyApp> {
             ],
           ),
 
-          // Labs
+          // ---------------- Labs ----------------
           GoRoute(
             path: 'labs',
-            pageBuilder: (context, state) => _shellPage(state, 3),
+            builder: (context, state) => const UserShellScreen(initialIndex: 3),
             routes: [
               GoRoute(
                 path: 'detail',
                 builder: (context, state) {
                   final extra = state.extra as Map<String, dynamic>?;
+
                   if (extra == null) {
                     return const Scaffold(
                       body: Center(child: Text('لا توجد بيانات لعرضها')),
@@ -288,10 +289,10 @@ class MyAppState extends State<MyApp> {
             ],
           ),
 
-          // Account
+          // ---------------- Account ----------------
           GoRoute(
             path: 'account',
-            pageBuilder: (context, state) => _shellPage(state, 4),
+            builder: (context, state) => const UserShellScreen(initialIndex: 4),
             routes: [
               GoRoute(
                 path: 'patient-details',
@@ -299,7 +300,7 @@ class MyAppState extends State<MyApp> {
                   final extra = state.extra;
                   if (extra is Map) {
                     final token = (extra['token'] ?? '').toString();
-                    final rawUserId = extra['userId'];
+                    final dynamic rawUserId = extra['userId'];
                     final int userId =
                         rawUserId is int
                             ? rawUserId
@@ -318,7 +319,7 @@ class MyAppState extends State<MyApp> {
                   final extra = state.extra;
                   if (extra is Map) {
                     final token = (extra['token'] ?? '').toString();
-                    final rawUserId = extra['userId'];
+                    final dynamic rawUserId = extra['userId'];
                     final int userId =
                         rawUserId is int
                             ? rawUserId

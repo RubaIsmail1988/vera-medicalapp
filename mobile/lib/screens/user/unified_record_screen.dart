@@ -12,6 +12,7 @@ import 'clinical/orders_tab.dart';
 import 'clinical/files_tab.dart';
 import 'clinical/prescriptions_tab.dart';
 import 'clinical/adherence_tab.dart';
+import 'clinical/health_profile_tab.dart';
 
 class UnifiedRecordScreen extends StatefulWidget {
   final String role; // doctor | patient
@@ -32,12 +33,12 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
   static const int tabOrders = 0;
 
   // Single source of truth: tab index <-> route
-  // (When you add a new tab later: add 1 path here + increase TabBar/TabBarView children)
   static const List<String> _recordTabPaths = <String>[
     "/app/record",
     "/app/record/files",
     "/app/record/prescripts",
     "/app/record/adherence",
+    "/app/record/health-profile", // NEW
   ];
 
   late final TabController tabController;
@@ -58,10 +59,6 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
   // PatientId captured from URL (doctor only)
   int? pendingPatientIdFromUrl;
 
-  // ---- Routing sync guards (avoid flicker/double nav) ----
-  String _lastSeenPath = "";
-  bool _suppressTabListener = false;
-
   bool get isDoctor => widget.role == "doctor";
   bool get isPatient => widget.role == "patient";
 
@@ -76,14 +73,11 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
     super.initState();
 
     final initialIndex = _initialTabIndexFromUrl();
-
     tabController = TabController(
       length: _recordTabPaths.length,
       initialIndex: initialIndex,
       vsync: this,
     );
-
-    tabController.addListener(_handleTabIndexChanged);
 
     clinicalService = ClinicalService(authService: AuthService());
 
@@ -99,29 +93,7 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
   }
 
   @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-
-    // Sync TabController with URL changes (back/forward, deep links)
-    final currentPath = _readHashPathOrPath();
-    if (currentPath == _lastSeenPath) return;
-
-    _lastSeenPath = currentPath;
-
-    final expectedIndex = _initialTabIndexFromUrl();
-
-    if (tabController.indexIsChanging) return;
-    if (tabController.index == expectedIndex) return;
-
-    _suppressTabListener = true;
-    tabController.index =
-        expectedIndex; // direct set (no animate) -> no flicker
-    _suppressTabListener = false;
-  }
-
-  @override
   void dispose() {
-    tabController.removeListener(_handleTabIndexChanged);
     tabController.dispose();
     super.dispose();
   }
@@ -203,7 +175,6 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
   void _applyPendingPatientSelectionIfPossible() {
     if (!isDoctor) return;
 
-    // already selected -> clear pending
     if (selectedPatientId != null) {
       pendingPatientIdFromUrl = null;
       return;
@@ -212,7 +183,6 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
     final pid = pendingPatientIdFromUrl;
     if (pid == null) return;
 
-    // wait until options loaded
     if (loadingPatients) return;
     if (patientOptions.isEmpty) return;
 
@@ -239,37 +209,6 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
 
     if (hasPid) return "$base?patientId=$pid";
     return base;
-  }
-
-  // ---------------------------------------------------------------------------
-  // Core fix: navigate ONLY after tab transition is stable
-  // ---------------------------------------------------------------------------
-
-  void _handleTabIndexChanged() {
-    if (_suppressTabListener) return;
-
-    // Wait until tab settles; this prevents the "orders needs two clicks" bug.
-    if (tabController.indexIsChanging) return;
-
-    // Doctor guard
-    if (isDoctor && selectedPatientId == null) return;
-
-    final target = _buildRecordLocationForTab(tabController.index);
-    final targetPath = target.split("?").first;
-    final currentPath = _readHashPathOrPath();
-
-    // Guard: do not navigate to same path
-    if (currentPath == targetPath || currentPath.endsWith(targetPath)) return;
-
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-
-      // Re-check current path at execution time
-      final nowPath = _readHashPathOrPath();
-      if (nowPath == targetPath || nowPath.endsWith(targetPath)) return;
-
-      context.go(target);
-    });
   }
 
   // ---------------------------------------------------------------------------
@@ -303,7 +242,6 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
             ? decoded.cast<Map<String, dynamic>>()
             : <Map<String, dynamic>>[];
 
-    // Build unique patients from orders: patient(id) + patient_display_name(label)
     final Map<int, String> byId = {};
 
     for (final o in list) {
@@ -535,18 +473,11 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
                                         selectedPatientName = name;
                                       });
 
-                                      // Navigate to the current tab route with patientId
-                                      final location =
-                                          _buildRecordLocationForTab(
-                                            tabController.index,
-                                          );
-
-                                      // Avoid route flicker: go after frame
-                                      WidgetsBinding.instance
-                                          .addPostFrameCallback((_) {
-                                            if (!mounted) return;
-                                            context.go(location);
-                                          });
+                                      context.go(
+                                        _buildRecordLocationForTab(
+                                          tabController.index,
+                                        ),
+                                      );
 
                                       showAppSnackBar(
                                         context,
@@ -564,7 +495,7 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
                             icon: Icons.info_outline,
                             title: "ملاحظة",
                             message:
-                                "سيتم استخدام هذا الاختيار لعرض الطلبات والملفات والوصفات والالتزام الدوائي.",
+                                "سيتم استخدام هذا الاختيار لعرض الطلبات والملفات والوصفات والالتزام الدوائي والملف الصحي.",
                             tone: AppSnackBarType.info,
                           ),
                         ],
@@ -597,22 +528,14 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
               );
               return;
             }
-
-            final target = _buildRecordLocationForTab(index);
-
-            final currentPath = _readHashPathOrPath();
-            final targetPath = target.split('?').first;
-
-            if (currentPath == targetPath) return;
-
-            context.go(target);
+            context.go(_buildRecordLocationForTab(index));
           },
-
           tabs: const [
             Tab(text: "الطلبات"),
             Tab(text: "الملفات"),
             Tab(text: "الوصفات"),
             Tab(text: "الالتزام"),
+            Tab(text: "الملف الصحي"), // NEW
           ],
         ),
         Expanded(
@@ -639,6 +562,12 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
               ),
               AdherenceTab(
                 key: ValueKey<String>("adherence-$patientContextId"),
+                role: widget.role,
+                userId: widget.userId,
+                selectedPatientId: patientContextId,
+              ),
+              HealthProfileTab(
+                key: ValueKey<String>("health-profile-$patientContextId"),
                 role: widget.role,
                 userId: widget.userId,
                 selectedPatientId: patientContextId,

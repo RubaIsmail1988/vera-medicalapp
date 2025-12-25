@@ -195,7 +195,80 @@ patient_display_name
 
 القرار نهائي ولا يمكن تغييره.
 
-9) الإشعارات (ملاحظة تصميمية فقط)
+9)Unified Record Tabs Architecture (Mobile-first, Web-safe)
+
+Context
+تبويبات الإضبارة الطبية داخل /app/record يجب أن تكون:
+
+قابلة للتوسعة
+
+Web-safe
+
+بدون flicker أو double-click
+
+بدون إعادة بناء منطق التوجيه عند كل تبويب جديد
+
+Decision
+
+كل تبويب داخل الإضبارة يمتلك Route مستقل تحت:
+
+/app/record/<tab>
+
+
+في main.dart:
+
+أي Route تابع للإضبارة يبني UserShellScreen
+
+بدون const
+
+مع:
+
+key: ValueKey<String>(state.uri.path)
+
+
+داخل UnifiedRecordScreen:
+
+قائمة مركزية واحدة (index ↔ path) هي مصدر الحقيقة الوحيد
+
+إضافة تبويب جديد تعني:
+
+إضافة path واحد
+
+زيادة TabController.length
+
+إضافة Tab + Widget فقط
+
+ممنوع:
+
+TabController listeners
+
+addPostFrameCallback
+
+أي معالجة flicker أو تصحيح index بعد البناء
+
+التوجيه بين تبويبات الإضبارة:
+
+يتم حصريًا عبر TabBar.onTap
+
+باستخدام context.go(...)
+
+بدون أي توجيه إضافي داخل listeners
+
+سياق الطبيب:
+
+patientId يُحافظ عليه تلقائيًا عند التنقل
+
+Guard يمنع التوجيه قبل اختيار مريض
+
+Status
+
+معتمد
+
+طُبّق فعليًا
+
+يُستخدم كأساس لأي تبويب جديد داخل الإضبارة
+
+10) الإشعارات (ملاحظة تصميمية فقط)
 
 لا يوجد نظام إشعارات حاليًا.
 
@@ -207,7 +280,7 @@ patient_display_name
 
 هذه ملاحظة تصميمية فقط، بدون تنفيذ حالي.
 
-10) مراجعة الكود
+11) مراجعة الكود
 
 قائمة مراجعة الكود الرسمية موجودة في:
 
