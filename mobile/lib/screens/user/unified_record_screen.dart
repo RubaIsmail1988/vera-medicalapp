@@ -30,9 +30,15 @@ class UnifiedRecordScreen extends StatefulWidget {
 class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
     with SingleTickerProviderStateMixin {
   static const int tabOrders = 0;
-  //static const int tabFiles = 1;
-  static const int tabPrescripts = 2;
-  static const int tabAdherence = 3;
+
+  // Single source of truth: tab index <-> route
+  // (When you add a new tab later: add 1 path here + increase TabBar/TabBarView children)
+  static const List<String> _recordTabPaths = <String>[
+    "/app/record",
+    "/app/record/files",
+    "/app/record/prescripts",
+    "/app/record/adherence",
+  ];
 
   late final TabController tabController;
   late final ClinicalService clinicalService;
@@ -52,7 +58,9 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
   // PatientId captured from URL (doctor only)
   int? pendingPatientIdFromUrl;
 
-  bool didApplyInitialTabFromUrl = false;
+  // ---- Routing sync guards (avoid flicker/double nav) ----
+  String _lastSeenPath = "";
+  bool _suppressTabListener = false;
 
   bool get isDoctor => widget.role == "doctor";
   bool get isPatient => widget.role == "patient";
@@ -67,15 +75,21 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
   void initState() {
     super.initState();
 
-    tabController = TabController(length: 4, vsync: this);
-    tabController.addListener(_onTabChanged);
+    final initialIndex = _initialTabIndexFromUrl();
+
+    tabController = TabController(
+      length: _recordTabPaths.length,
+      initialIndex: initialIndex,
+      vsync: this,
+    );
+
+    tabController.addListener(_handleTabIndexChanged);
 
     clinicalService = ClinicalService(authService: AuthService());
 
     _loadCurrentUserNameFromPrefs();
 
     _capturePatientIdFromUrlIfAny();
-    _applyInitialTabFromUrlIfNeeded();
 
     if (isDoctor) {
       loadingPatients = true;
@@ -85,8 +99,29 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+
+    // Sync TabController with URL changes (back/forward, deep links)
+    final currentPath = _readHashPathOrPath();
+    if (currentPath == _lastSeenPath) return;
+
+    _lastSeenPath = currentPath;
+
+    final expectedIndex = _initialTabIndexFromUrl();
+
+    if (tabController.indexIsChanging) return;
+    if (tabController.index == expectedIndex) return;
+
+    _suppressTabListener = true;
+    tabController.index =
+        expectedIndex; // direct set (no animate) -> no flicker
+    _suppressTabListener = false;
+  }
+
+  @override
   void dispose() {
-    tabController.removeListener(_onTabChanged);
+    tabController.removeListener(_handleTabIndexChanged);
     tabController.dispose();
     super.dispose();
   }
@@ -112,7 +147,7 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
   }
 
   // ---------------------------------------------------------------------------
-  // URL helpers (web hash-safe) + routing tab behavior
+  // URL helpers (web hash-safe)
   // ---------------------------------------------------------------------------
 
   String _readHashPathOrPath() {
@@ -126,6 +161,19 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
     // Non-hash
     final p = Uri.base.path;
     return p.isNotEmpty ? p : "/app/record";
+  }
+
+  int _initialTabIndexFromUrl() {
+    final path = _readHashPathOrPath();
+
+    for (int i = 0; i < _recordTabPaths.length; i++) {
+      final candidate = _recordTabPaths[i];
+      if (path == candidate || path.endsWith(candidate)) {
+        return i;
+      }
+    }
+
+    return tabOrders;
   }
 
   int? _readPatientIdFromUrl() {
@@ -180,56 +228,48 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
     });
   }
 
-  void _applyInitialTabFromUrlIfNeeded() {
-    if (didApplyInitialTabFromUrl) return;
-    didApplyInitialTabFromUrl = true;
-
-    final path = _readHashPathOrPath();
-
-    int target = tabOrders;
-    if (path.endsWith("/prescripts")) target = tabPrescripts;
-    if (path.endsWith("/adherence")) target = tabAdherence;
-
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      if (tabController.index != target) {
-        tabController.animateTo(target);
-      }
-    });
-  }
-
   String _buildRecordLocationForTab(int index) {
+    final safeIndex =
+        (index >= 0 && index < _recordTabPaths.length) ? index : tabOrders;
+
+    final base = _recordTabPaths[safeIndex];
+
     final pid = isDoctor ? selectedPatientId : null;
     final hasPid = pid != null && pid > 0;
-
-    String base;
-    if (index == tabPrescripts) {
-      base = "/app/record/prescripts";
-    } else if (index == tabAdherence) {
-      base = "/app/record/adherence";
-    } else {
-      base = "/app/record";
-    }
 
     if (hasPid) return "$base?patientId=$pid";
     return base;
   }
 
-  void _safeGo(String location) {
-    try {
-      if (!mounted) return;
-      GoRouter.of(context).go(location);
-    } catch (_) {
-      // تجاهل في وضع التطوير لتجنب وميض/إزعاج
-    }
-  }
+  // ---------------------------------------------------------------------------
+  // Core fix: navigate ONLY after tab transition is stable
+  // ---------------------------------------------------------------------------
 
-  void _onTabChanged() {
+  void _handleTabIndexChanged() {
+    if (_suppressTabListener) return;
+
+    // Wait until tab settles; this prevents the "orders needs two clicks" bug.
     if (tabController.indexIsChanging) return;
+
+    // Doctor guard
     if (isDoctor && selectedPatientId == null) return;
 
-    final location = _buildRecordLocationForTab(tabController.index);
-    _safeGo(location);
+    final target = _buildRecordLocationForTab(tabController.index);
+    final targetPath = target.split("?").first;
+    final currentPath = _readHashPathOrPath();
+
+    // Guard: do not navigate to same path
+    if (currentPath == targetPath || currentPath.endsWith(targetPath)) return;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+
+      // Re-check current path at execution time
+      final nowPath = _readHashPathOrPath();
+      if (nowPath == targetPath || nowPath.endsWith(targetPath)) return;
+
+      context.go(target);
+    });
   }
 
   // ---------------------------------------------------------------------------
@@ -295,7 +335,7 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
   }
 
   // ---------------------------------------------------------------------------
-  // UI building blocks (reduce repetition)
+  // UI building blocks
   // ---------------------------------------------------------------------------
 
   Widget _headerTile({required String titleText}) {
@@ -495,11 +535,18 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
                                         selectedPatientName = name;
                                       });
 
+                                      // Navigate to the current tab route with patientId
                                       final location =
                                           _buildRecordLocationForTab(
                                             tabController.index,
                                           );
-                                      _safeGo(location);
+
+                                      // Avoid route flicker: go after frame
+                                      WidgetsBinding.instance
+                                          .addPostFrameCallback((_) {
+                                            if (!mounted) return;
+                                            context.go(location);
+                                          });
 
                                       showAppSnackBar(
                                         context,
@@ -541,6 +588,26 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
         TabBar(
           controller: tabController,
           isScrollable: true,
+          onTap: (index) {
+            if (isDoctor && selectedPatientId == null) {
+              showAppSnackBar(
+                context,
+                "اختر مريضًا أولاً لعرض الإضبارة.",
+                type: AppSnackBarType.warning,
+              );
+              return;
+            }
+
+            final target = _buildRecordLocationForTab(index);
+
+            final currentPath = _readHashPathOrPath();
+            final targetPath = target.split('?').first;
+
+            if (currentPath == targetPath) return;
+
+            context.go(target);
+          },
+
           tabs: const [
             Tab(text: "الطلبات"),
             Tab(text: "الملفات"),
