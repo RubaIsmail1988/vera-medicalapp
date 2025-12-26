@@ -56,6 +56,8 @@ from .views import (
     DoctorAvailabilityListCreateView,
     DoctorAvailabilityRetrieveUpdateDestroyView,
     AppointmentTypeReadOnlyListView,
+    DoctorSpecificVisitTypeListCreateView,
+    DoctorSpecificVisitTypeRetrieveUpdateDestroyView,
 )
 
 
@@ -160,6 +162,16 @@ urlpatterns = [
     path("doctor-availabilities/", DoctorAvailabilityListCreateView.as_view(), name="doctor-availabilities-list-create"),
     path("doctor-availabilities/<int:pk>/", DoctorAvailabilityRetrieveUpdateDestroyView.as_view(), name="doctor-availabilities-detail"),
     path("appointment-types-read/", AppointmentTypeReadOnlyListView.as_view(), name="appointment-types-read",),
+    path(
+        "doctor-specific-visit-types/",
+        DoctorSpecificVisitTypeListCreateView.as_view(),
+        name="doctor-specific-visit-types-list-create",
+    ),
+    path(
+        "doctor-specific-visit-types/<int:pk>/",
+        DoctorSpecificVisitTypeRetrieveUpdateDestroyView.as_view(),
+        name="doctor-specific-visit-types-detail",
+    ),
     # ...
     path("governorates/", GovernorateListView.as_view(), name="governorate-list"),
 ]
