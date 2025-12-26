@@ -26,3 +26,8 @@ mobile/.pub/
 mobile/build/
 mobile/.flutter-plugins
 mobile/.flutter-plugins-dependencies
+
+# Flutter generated (platform-specific)
+mobile/**/flutter/generated_*
+mobile/**/Flutter/GeneratedPluginRegistrant.*
+mobile/**/flutter/generated_plugins.cmake
