@@ -1,11 +1,3 @@
-هذه القائمة تُستخدم عند مراجعة أي كود جديد قبل الدمج، وتهدف إلى:
-
-منع تكرار الأخطاء
-
-الحفاظ على اتساق المشروع
-
-تقليل الديون التقنية قبل المراحل القادمة (المواعيد، الإشعارات، الذكاء)
-
 1) Flutter — القواعد العامة
 1.1 التعامل مع async و context
 
@@ -33,7 +25,8 @@ showAppErrorSnackBar
 
 showAppSuccessSnackBar
 
-❑ المرجع: mobile/lib/utils/ui_helpers.dart
+❑ المرجع:
+mobile/lib/utils/ui_helpers.dart
 
 1.3 Dialogs
 
@@ -55,6 +48,31 @@ context.push
 
 ❑ Dialogs (showDialog) مسموحة.
 
+❑ أي شاشة يمكن الوصول لها من:
+
+Bottom Navigation
+
+Tabs
+يجب أن تمتلك Route صريح (Web-safe) إن كانت ضمن نطاق الويب.
+
+1.5 Lifecycle & Controllers
+
+❑ أي Controller مستخدم (مثل):
+
+TextEditingController
+
+TabController
+
+ScrollController
+
+أي Controller مخصص
+
+يجب:
+
+التخلص منه داخل dispose()
+
+يمنع ترك Controller بدون dispose
+
 2) Flutter — UI / UX
 2.1 الألوان والثيم
 
@@ -67,23 +85,23 @@ withValues(alpha: ...)
 
 ❑ يجب احترام الثيم المركزي:
 
-app_theme.dart
+mobile/lib/theme/app_theme.dart
 
-❑ لا أنظمة ثيم موازية.
+❑ يمنع إنشاء أنظمة ثيم موازية.
 
 2.2 حالات التحميل (Loading / Disabled)
 
 ❑ أي زر ينفّذ عملية async:
 
-يُعطّل أثناء التنفيذ.
+يُعطّل أثناء التنفيذ
 
-يظهر مؤشر تحميل صغير داخل الزر.
+يظهر مؤشر تحميل صغير داخل الزر
 
 ❑ يمنع السماح بالضغط المتكرر أثناء التحميل.
 
 2.3 حالات العرض
 
-❑ يجب التعامل بوضوح مع الحالات:
+❑ يجب التعامل بوضوح مع الحالات التالية:
 
 Loading
 
@@ -105,7 +123,7 @@ queryParameters
 
 يُنقل المنطق إلى initState
 
-أو didChangeDependencies بحذر.
+أو didChangeDependencies بحذر
 
 3) Flutter — Naming & Code Style
 3.1 المتغيرات
@@ -126,7 +144,13 @@ constants.dart
 
 ❑ إزالة أي import غير مستخدم.
 
-❑ ترتيب imports بشكل منطقي (SDK → packages → project).
+❑ ترتيب imports منطقيًا:
+
+SDK
+
+packages
+
+project
 
 4) Backend (Django) — عند وجود تعديل
 4.1 Serializers
@@ -135,19 +159,31 @@ constants.dart
 
 read_only
 
-❑ يمنع إضافة منطق عرض في الواجهة إذا كان يمكن توفيره من serializer.
+❑ يمنع نقل منطق العرض إلى الواجهة إذا كان يمكن توفيره من الـ serializer.
 
 4.2 الصلاحيات
 
 ❑ أي تعديل يجب أن يحترم الصلاحيات الحالية.
 
-❑ يمنع توسيع صلاحيات بدون قرار صريح موثّق.
+❑ يمنع توسيع الصلاحيات بدون قرار صريح موثّق.
 
 4.3 قاعدة البيانات
 
 ❑ لا migrations بدون سبب واضح.
 
 ❑ لا تغيير على models خارج نطاق المرحلة الحالية.
+
+4.4 Atomic Operations
+
+❑ العمليات التي:
+
+تُنشئ أكثر من سجل
+
+أو تعتمد على uniqueness / قيود تكامل
+
+يُفضّل تغليفها بـ:
+
+transaction.atomic()
 
 5) عام
 
@@ -162,8 +198,13 @@ read_only
 ملاحظة أخيرة
 
 هذه القائمة ملزمة وليست إرشادية.
+
 أي استثناء يجب أن يكون:
 
 مبررًا
 
-ومذكورًا صراحة في النقاش أو القرار.
+ومذكورًا صراحة في النقاش أو القرار
+
+✔ بهذه الصيغة، القائمة مغلقة ومعتمدة
+✔ جاهزة للاستخدام في كل مراجعة قادمة
+✔ متوافقة مع ما نُفّذ فعليًا في المشروع

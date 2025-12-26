@@ -69,13 +69,12 @@ class _HospitalPublicListScreenState extends State<HospitalPublicListScreen> {
   void openDetails(Hospital hospital) {
     final govName = governorateNamesById[hospital.governorate];
 
-    // Web-safe عبر GoRouter
-    context.go(
+    context.push(
       '/app/hospitals/detail',
       extra: {
         'name': hospital.name,
         'governorate': hospital.governorate,
-        'governorateName': govName, // ✅ الإضافة الوحيدة
+        'governorateName': govName,
         'address': hospital.address,
         'latitude': hospital.latitude,
         'longitude': hospital.longitude,
@@ -89,7 +88,7 @@ class _HospitalPublicListScreenState extends State<HospitalPublicListScreen> {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
 
-    // مهم: بدون Scaffold وبدون AppBar (لأنها داخل UserShell)
+    //  بدون Scaffold وبدون AppBar (لأنها داخل UserShell)
     return Column(
       children: [
         if (loadingGovernorates)

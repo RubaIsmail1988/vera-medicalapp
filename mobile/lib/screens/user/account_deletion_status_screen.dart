@@ -4,6 +4,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '/services/account_deletion_service.dart';
 import '/utils/ui_helpers.dart';
 
+import 'package:go_router/go_router.dart';
+
 class AccountDeletionStatusScreen extends StatefulWidget {
   const AccountDeletionStatusScreen({super.key});
 
@@ -291,35 +293,50 @@ class _AccountDeletionStatusScreenState
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
 
-    return Scaffold(
-      appBar: AppBar(title: const Text('حالة طلب حذف الحساب')),
-      body:
-          loading
-              ? const Center(child: CircularProgressIndicator())
-              : errorMessage != null
-              ? statusView(
-                icon: Icons.error_outline,
-                iconColor: cs.error,
-                title: 'حدث خطأ',
-                message: errorMessage!,
-              )
-              : buildStatusContent(context),
-      bottomNavigationBar:
-          (!loading && errorMessage == null && canRequestDeletion && isActive)
-              ? SafeArea(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-                  child: SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton.icon(
-                      onPressed: openDeletionRequestDialog,
-                      icon: const Icon(Icons.delete_outline),
-                      label: const Text('إرسال طلب حذف حساب'),
+    return PopScope(
+      canPop: false, // نمنع الرجوع الافتراضي
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        context.go('/app'); // الرجوع إلى الهوم
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('حالة طلب حذف الحساب'),
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back),
+            onPressed: () {
+              context.go('/app'); // نفس السلوك عند الضغط على السهم
+            },
+          ),
+        ),
+        body:
+            loading
+                ? const Center(child: CircularProgressIndicator())
+                : errorMessage != null
+                ? statusView(
+                  icon: Icons.error_outline,
+                  iconColor: cs.error,
+                  title: 'حدث خطأ',
+                  message: errorMessage!,
+                )
+                : buildStatusContent(context),
+        bottomNavigationBar:
+            (!loading && errorMessage == null && canRequestDeletion && isActive)
+                ? SafeArea(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                    child: SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        onPressed: openDeletionRequestDialog,
+                        icon: const Icon(Icons.delete_outline),
+                        label: const Text('إرسال طلب حذف حساب'),
+                      ),
                     ),
                   ),
-                ),
-              )
-              : null,
+                )
+                : null,
+      ),
     );
   }
 }

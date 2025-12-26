@@ -1,37 +1,35 @@
-هذا الملف هو المرجع الرسمي لقرارات المشروع الثابتة.
-الكود الموجود على GitHub هو المصدر النهائي للحقيقة، وهذا الملف يوضّح القواعد والقيود المتفق عليها لمنع تكرار العمل أو اتخاذ قرارات متعارضة في المراحل القادمة.
-
 1) حدود النطاق (Scope Boundaries)
-ميزات مؤجّلة صراحة
+ميزات مؤجلة صراحة
 
-PIN:
-ملفات PIN موجودة (screens/pin) لكنها غير مربوطة بالـ flow الحالي.
+PIN: ملفات PIN موجودة (screens/pin) لكنها غير مربوطة بالـ flow الحالي.
 
-المواعيد / الحجز / الجدولة:
-لم يبدأ تنفيذها بعد.
+المواعيد / الحجز / الجدولة: لم يبدأ تنفيذها بعد.
 
-الإشعارات / التذكيرات:
-مؤجّلة لمرحلة لاحقة، ومخطط أن تكون من جهة Flutter.
+الإشعارات / التذكيرات: مؤجّلة لمرحلة لاحقة (مرجّح تنفيذها من جهة Flutter).
 
-الذكاء الاصطناعي / التحليلات:
-خارج النطاق الحالي.
+الذكاء الاصطناعي / التحليلات: خارج النطاق الحالي.
 
-أي محادثة أو مرحلة جديدة يجب أن تحترم هذه الحدود.
+أي مرحلة أو محادثة جديدة يجب أن تحترم هذه الحدود.
 
 2) التوجيه والتنقل (Routing) — go_router
 
-التطبيق يعتمد على go_router كبنية تنقل أساسية.
+التطبيق يعتمد على go_router كبنية تنقّل أساسية للشاشات التي لها Routes (URL).
 
-يمنع استخدام Navigator.push / pop للتنقل بين الشاشات المرتبطة بالـ routes.
+قواعد ملزمة
 
-الاستثناء الوحيد:
-showDialog و Dialogs المشابهة (ليست تنقل صفحات).
+يُمنع استخدام Navigator.push/pop للتنقل بين الشاشات المعرّفة كـ routes في go_router.
 
-بنية عامة
+الاستثناءات المسموحة:
+
+showDialog وما شابه (Dialogs).
+
+تنقل داخلي محدود لصفحات غير معرّفة كRoutes (مثل بعض شاشات الفورم في الأدمن إن لم تكن Routes).
+
+البنية العامة
 
 / → Splash
 
-مسارات Auth:
+Auth
 
 /login
 
@@ -45,23 +43,23 @@ showDialog و Dialogs المشابهة (ليست تنقل صفحات).
 
 /forgot-password/new
 
-مسارات Admin:
+Admin (Shell + initialIndex)
 
-/admin وما تحته (Shell + initialIndex)
+/admin وما تحته
 
-تطبيق المستخدم:
+User App
 
-كل ما يخص المستخدم يجب أن يكون تحت /app كمسارات أبناء (children).
+كل ما يخص المستخدم يجب أن يكون تحت /app كـ children routes.
 
-مبدأ مهم
+مبدأ أساسي
 
 Refresh أو فتح رابط مباشر يجب ألا يعيد المستخدم بشكل غير متوقّع إلى Splash.
 
-Tab ↔ Route Sync مطبّق حيث يلزم (مثل الإضبارة الطبية).
+عند وجود Tabs مرتبطة بالمسارات (مثل الإضبارة) يجب الحفاظ على Tab ↔ Route Sync.
 
 3) نظام التنبيهات الموحد (SnackBars)
 
-يمنع استخدام ScaffoldMessenger.of(context) مباشرة داخل الشاشات.
+يُمنع استخدام ScaffoldMessenger.of(context) مباشرة داخل الشاشات.
 
 يجب استخدام النظام الموحد الموجود في:
 
@@ -71,14 +69,6 @@ mobile/lib/utils/ui_helpers.dart
 
 rootScaffoldMessengerKey هو المرجع الأساسي لعرض SnackBar.
 
-الهدف:
-
-تفادي مشاكل context after await
-
-تفادي مشاكل go_router
-
-تفادي غياب ScaffoldMessenger في حالات bootstrap
-
 الدوال المعتمدة
 
 showAppSnackBar(...)
@@ -87,43 +77,39 @@ showAppErrorSnackBar(...)
 
 showAppSuccessSnackBar(...)
 
+الهدف:
+
+تفادي مشاكل context after await
+
+تفادي مشاكل go_router
+
+تفادي غياب ScaffoldMessenger في حالات bootstrap
+
 4) Dialog التأكيد (Confirm Dialog)
 
-العمليات الحساسة (حذف، رفض، تعطيل…) يجب أن تستخدم Dialog تأكيد موحّد.
+العمليات الحساسة (حذف، رفض، تعطيل…) يجب أن تستخدم Dialog تأكيد موحّد:
 
-الدالة المعتمدة:
-
-showConfirmDialog(...)
-في ui_helpers.dart.
+showConfirmDialog(...) في ui_helpers.dart
 
 5) الثيم، الثوابت، والـ Helpers
 
-الثيم معتمد ومركزي في:
+Theme مركزي: mobile/lib/theme/app_theme.dart
 
-mobile/lib/theme/app_theme.dart
+Constants: mobile/lib/utils/constants.dart
 
-الثوابت العامة في:
+UI Helpers: mobile/lib/utils/ui_helpers.dart
 
-mobile/lib/utils/constants.dart
-
-الـ UI helpers في:
-
-mobile/lib/utils/ui_helpers.dart
-
-يمنع إنشاء أنظمة موازية أو مكررة لنفس الغرض.
+يُمنع إنشاء أنظمة موازية أو مكررة لنفس الغرض.
 
 6) قواعد تطوير ملزمة (Guardrails)
 6.1 SnackBars
 
-أي SnackBar داخل الشاشات يجب أن يستخدم helpers الموحّدة فقط.
+أي SnackBar يجب أن يستخدم helpers الموحّدة فقط.
 
 6.2 context بعد await
 
 في أي StatefulWidget:
-
-إذا وُجد await ثم استخدام context أو setState أو تنقل،
-
-يجب التحقق:
+إذا وُجد await ثم استخدام context أو setState أو تنقل، يجب التحقق:
 
 if (!mounted) return;
 
@@ -131,43 +117,41 @@ if (!mounted) return;
 
 في الشاشات المرتبطة بالـ routes:
 
-يستخدم context.go أو context.push.
+استخدم context.go أو context.push
+
+(مع استثناءات القسم 2).
 
 6.4 الألوان
 
-يمنع استخدام withOpacity.
+يمنع withOpacity
 
-يستخدم:
-
-withValues(alpha: ...)
+يستخدم withValues(alpha: ...)
 
 6.5 الأزرار أثناء التحميل
 
 أي زر يقوم بعملية async:
 
-يُعطّل أثناء التنفيذ.
+يُعطّل أثناء التنفيذ
 
-يظهر مؤشر تحميل صغير داخل الزر بنفس نمط موحّد.
+يُظهر مؤشر تحميل صغير داخل الزر بنمط موحّد
 
 6.6 منع Rebuild Loops
 
 عند استخدام state.extra أو queryParameters:
 
-يمنع تنفيذ منطق يؤدي إلى setState متكرر داخل build().
+يُمنع تنفيذ منطق يؤدي إلى setState متكرر داخل build()
 
-يُنقل الاستخراج إلى initState أو didChangeDependencies عند الحاجة.
+انقل الاستخراج إلى initState أو didChangeDependencies عند الحاجة
 
 7) الإضبارة الطبية (Clinical Module)
 
-الكيانات السريرية غير مربوطة إلزاميًا بموعد.
-
-الربط بالمواعيد مؤجّل لمرحلة لاحقة.
+الكيانات السريرية غير مربوطة إلزاميًا بموعد (الربط بالمواعيد مؤجّل).
 
 لا IDs تُعرض في الواجهة.
 
 Backend (عرض فقط)
 
-تم إضافة حقول read-only في serializers لأغراض العرض فقط:
+تم إضافة حقول read-only في serializers لأغراض العرض فقط مثل:
 
 doctor_display_name
 
@@ -175,7 +159,7 @@ patient_display_name
 
 وفي الالتزام الدوائي: medicine_name, dosage, frequency
 
-لا تغييرات على:
+بدون تغييرات على:
 
 الصلاحيات
 
@@ -191,22 +175,20 @@ patient_display_name
 
 المريض يستطيع حذف الملف فقط إذا كان pending_review.
 
-بعد approve أو reject:
+بعد approve أو reject: القرار نهائي.
 
-القرار نهائي ولا يمكن تغييره.
-
-9)Unified Record Tabs Architecture (Mobile-first, Web-safe)
-
+9) Unified Record Tabs Architecture (Mobile-first, Web-safe)
 Context
-تبويبات الإضبارة الطبية داخل /app/record يجب أن تكون:
+
+تبويبات الإضبارة داخل /app/record يجب أن تكون:
 
 قابلة للتوسعة
 
 Web-safe
 
-بدون flicker أو double-click
+تمنع رجوع مشكلة double-click قدر الإمكان عبر نمط routes ثابت
 
-بدون إعادة بناء منطق التوجيه عند كل تبويب جديد
+ملاحظة: معالجة الوميض (flicker) ليست ضمن المطلوب الحالي.
 
 Decision
 
@@ -214,10 +196,8 @@ Decision
 
 /app/record/<tab>
 
-
-في main.dart:
-
-أي Route تابع للإضبارة يبني UserShellScreen
+في main.dart
+أي Route تابع للإضبارة يبني UserShellScreen:
 
 بدون const
 
@@ -225,18 +205,17 @@ Decision
 
 key: ValueKey<String>(state.uri.path)
 
+داخل UnifiedRecordScreen
 
-داخل UnifiedRecordScreen:
+قائمة مركزية واحدة (index ↔ path) هي مصدر الحقيقة الوحيد.
 
-قائمة مركزية واحدة (index ↔ path) هي مصدر الحقيقة الوحيد
-
-إضافة تبويب جديد تعني:
+إضافة تبويب جديد تعني فقط:
 
 إضافة path واحد
 
 زيادة TabController.length
 
-إضافة Tab + Widget فقط
+إضافة Tab + Widget في TabBarView
 
 ممنوع:
 
@@ -244,29 +223,21 @@ TabController listeners
 
 addPostFrameCallback
 
-أي معالجة flicker أو تصحيح index بعد البناء
+أي “تصحيح index” بعد البناء
+
+أي منطق توجيه إضافي خارج TabBar.onTap
 
 التوجيه بين تبويبات الإضبارة:
 
-يتم حصريًا عبر TabBar.onTap
-
-باستخدام context.go(...)
-
-بدون أي توجيه إضافي داخل listeners
+حصريًا عبر TabBar.onTap باستخدام context.go(...).
 
 سياق الطبيب:
 
-patientId يُحافظ عليه تلقائيًا عند التنقل
+patientId يُحافظ عليه عند التنقل
 
 Guard يمنع التوجيه قبل اختيار مريض
 
-Status
-
-معتمد
-
-طُبّق فعليًا
-
-يُستخدم كأساس لأي تبويب جديد داخل الإضبارة
+Status: معتمد ومطبّق فعليًا، ويُستخدم كأساس لأي تبويب جديد داخل الإضبارة.
 
 10) الإشعارات (ملاحظة تصميمية فقط)
 
@@ -276,9 +247,9 @@ Status
 
 يجب أن تكون منفصلة عن المنطق الأساسي
 
-ويفضّل عبر نمط event / outbox
+ويفضل اتباع نمط event/outbox
 
-هذه ملاحظة تصميمية فقط، بدون تنفيذ حالي.
+(ملاحظة تصميمية فقط بدون تنفيذ حالي.)
 
 11) مراجعة الكود
 
