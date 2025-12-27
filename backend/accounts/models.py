@@ -237,6 +237,37 @@ class DoctorAppointmentType(models.Model):
         return f"{self.doctor.username} - {self.appointment_type.type_name}"
 
 # -----------------------------
+# أنواع زيارة الطبيب الخاصة به (نوع محدد لكل طبيب)
+# -----------------------------
+
+class DoctorSpecificVisitType(models.Model):
+    doctor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="doctor_specific_visit_types",
+        limit_choices_to={"role": "doctor"},
+    )
+    name = models.CharField(max_length=150)
+    duration_minutes = models.PositiveIntegerField(validators=[MinValueValidator(1)])
+    description = models.TextField(blank=True, null=True)
+
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["doctor", "name"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["doctor", "name"],
+                name="uniq_doctor_specific_visit_type_name",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.doctor.username} - {self.name} ({self.duration_minutes}m)"
+
+
+# -----------------------------
 # أوقات توافر الطبيب
 # -----------------------------
 class DoctorAvailability(models.Model):

@@ -13,6 +13,7 @@ from .models import (
     AccountDeletionRequest,
     AppointmentType,
     DoctorAppointmentType,
+    DoctorSpecificVisitType,
     DoctorAvailability,
     Governorate,
 )
@@ -334,6 +335,32 @@ class DoctorAppointmentTypeSerializer(serializers.ModelSerializer):
 
         return attrs
 
+class DoctorSpecificVisitTypeSerializer(serializers.ModelSerializer):
+    doctor = serializers.PrimaryKeyRelatedField(read_only=True)
+
+    class Meta:
+        model = DoctorSpecificVisitType
+        fields = [
+            "id",
+            "doctor",
+            "name",
+            "duration_minutes",
+            "description",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "doctor", "created_at", "updated_at"]
+
+    def validate_duration_minutes(self, value):
+        if value <= 0:
+            raise serializers.ValidationError("duration_minutes must be > 0.")
+        return value
+
+    def validate_name(self, value):
+        name = (value or "").strip()
+        if not name:
+            raise serializers.ValidationError("name is required.")
+        return name
 
 class DoctorAvailabilitySerializer(serializers.ModelSerializer):
     doctor = serializers.PrimaryKeyRelatedField(read_only=True)

@@ -18,7 +18,7 @@ import 'screens/admin/admin_shell_screen.dart';
 // System
 import 'screens/system/splash_screen.dart';
 
-// User details (NEW ROUTES)
+// User details
 import 'screens/user/patient_details_screen.dart';
 import 'screens/user/doctor_details_screen.dart';
 import 'screens/user/hospital_public_detail_screen.dart';
@@ -30,7 +30,7 @@ import 'screens/user/clinical/order_details_screen.dart';
 import 'screens/doctor/doctor_scheduling_settings_screen.dart';
 import 'screens/doctor/doctor_availability_screen.dart';
 import 'screens/doctor/doctor_visit_types_screen.dart';
-//
+
 import 'utils/ui_helpers.dart';
 
 void main() {
@@ -78,9 +78,7 @@ class MyAppState extends State<MyApp> {
         path: '/forgot-password/verify',
         builder: (context, state) {
           final email = state.uri.queryParameters['email']?.trim() ?? '';
-          if (email.isEmpty) {
-            return const ForgotPasswordScreen();
-          }
+          if (email.isEmpty) return const ForgotPasswordScreen();
           return ResetPasswordVerifyOtpScreen(email: email);
         },
       ),
@@ -99,33 +97,61 @@ class MyAppState extends State<MyApp> {
       // ---------------- Admin (web-safe) ----------------
       GoRoute(
         path: '/admin',
-        builder: (context, state) => const AdminShellScreen(initialIndex: 0),
+        builder:
+            (context, state) => AdminShellScreen(
+              key: ValueKey<String>(state.uri.path),
+              initialIndex: 0,
+            ),
       ),
       GoRoute(
         path: '/admin/users',
-        builder: (context, state) => const AdminShellScreen(initialIndex: 1),
+        builder:
+            (context, state) => AdminShellScreen(
+              key: ValueKey<String>(state.uri.path),
+              initialIndex: 1,
+            ),
       ),
       GoRoute(
         path: '/admin/hospitals',
-        builder: (context, state) => const AdminShellScreen(initialIndex: 2),
+        builder:
+            (context, state) => AdminShellScreen(
+              key: ValueKey<String>(state.uri.path),
+              initialIndex: 2,
+            ),
       ),
       GoRoute(
         path: '/admin/labs',
-        builder: (context, state) => const AdminShellScreen(initialIndex: 3),
+        builder:
+            (context, state) => AdminShellScreen(
+              key: ValueKey<String>(state.uri.path),
+              initialIndex: 3,
+            ),
       ),
       GoRoute(
         path: '/admin/requests',
-        builder: (context, state) => const AdminShellScreen(initialIndex: 4),
+        builder:
+            (context, state) => AdminShellScreen(
+              key: ValueKey<String>(state.uri.path),
+              initialIndex: 4,
+            ),
       ),
       GoRoute(
         path: '/admin/profile',
-        builder: (context, state) => const AdminShellScreen(initialIndex: 5),
+        builder:
+            (context, state) => AdminShellScreen(
+              key: ValueKey<String>(state.uri.path),
+              initialIndex: 5,
+            ),
       ),
 
       // ---------------- App (User web-safe) ----------------
       GoRoute(
         path: '/app',
-        builder: (context, state) => const UserShellScreen(initialIndex: 0),
+        builder:
+            (context, state) => UserShellScreen(
+              key: ValueKey<String>(state.uri.path),
+              initialIndex: 0,
+            ),
         routes: [
           // ---------------- Doctor Scheduling (Phase C) ----------------
           GoRoute(
@@ -146,7 +172,11 @@ class MyAppState extends State<MyApp> {
           // ---------------- Unified Record ----------------
           GoRoute(
             path: 'record',
-            builder: (context, state) => const UserShellScreen(initialIndex: 1),
+            builder:
+                (context, state) => UserShellScreen(
+                  key: ValueKey<String>(state.uri.path),
+                  initialIndex: 1,
+                ),
             routes: [
               // تفاصيل الطلب
               GoRoute(
@@ -160,14 +190,12 @@ class MyAppState extends State<MyApp> {
                     );
                   }
 
-                  // role من extra (مثل ما تعمل الآن)
                   final extra = state.extra;
                   final role =
                       (extra is Map && extra['role'] != null)
                           ? extra['role'].toString()
                           : 'patient';
 
-                  // نقرأ patientId من query حتى نعرف أين نرجع للطبيب
                   final patientIdRaw = state.uri.queryParameters['patientId'];
                   final patientId = int.tryParse(patientIdRaw ?? '');
 
@@ -181,14 +209,38 @@ class MyAppState extends State<MyApp> {
 
               // Tabs routes (UI فقط)
               GoRoute(
+                path: 'files',
+                builder:
+                    (context, state) => UserShellScreen(
+                      key: ValueKey<String>(state.uri.path),
+                      initialIndex: 1,
+                    ),
+              ),
+              GoRoute(
                 path: 'prescripts',
                 builder:
-                    (context, state) => const UserShellScreen(initialIndex: 1),
+                    (context, state) => UserShellScreen(
+                      key: ValueKey<String>(state.uri.path),
+                      initialIndex: 1,
+                    ),
               ),
               GoRoute(
                 path: 'adherence',
                 builder:
-                    (context, state) => const UserShellScreen(initialIndex: 1),
+                    (context, state) => UserShellScreen(
+                      key: ValueKey<String>(state.uri.path),
+                      initialIndex: 1,
+                    ),
+              ),
+
+              // ---------------- NEW: Health Profile Tab ----------------
+              GoRoute(
+                path: 'health-profile',
+                builder:
+                    (context, state) => UserShellScreen(
+                      key: ValueKey<String>(state.uri.path),
+                      initialIndex: 1,
+                    ),
               ),
             ],
           ),
@@ -196,7 +248,11 @@ class MyAppState extends State<MyApp> {
           // ---------------- Hospitals ----------------
           GoRoute(
             path: 'hospitals',
-            builder: (context, state) => const UserShellScreen(initialIndex: 2),
+            builder:
+                (context, state) => UserShellScreen(
+                  key: ValueKey<String>(state.uri.path),
+                  initialIndex: 2,
+                ),
             routes: [
               GoRoute(
                 path: 'detail',
@@ -204,7 +260,10 @@ class MyAppState extends State<MyApp> {
                   final extra = state.extra;
 
                   if (extra is! Map) {
-                    return const UserShellScreen(initialIndex: 2);
+                    return UserShellScreen(
+                      key: ValueKey<String>(state.uri.path),
+                      initialIndex: 2,
+                    );
                   }
 
                   final name = (extra['name'] ?? '').toString().trim();
@@ -216,7 +275,10 @@ class MyAppState extends State<MyApp> {
                           : int.tryParse(governorateRaw?.toString() ?? '') ?? 0;
 
                   if (name.isEmpty || governorate == 0) {
-                    return const UserShellScreen(initialIndex: 2);
+                    return UserShellScreen(
+                      key: ValueKey<String>(state.uri.path),
+                      initialIndex: 2,
+                    );
                   }
 
                   return HospitalPublicDetailScreen(
@@ -247,27 +309,58 @@ class MyAppState extends State<MyApp> {
           // ---------------- Labs ----------------
           GoRoute(
             path: 'labs',
-            builder: (context, state) => const UserShellScreen(initialIndex: 3),
+            builder:
+                (context, state) => UserShellScreen(
+                  key: ValueKey<String>(state.uri.path),
+                  initialIndex: 3,
+                ),
             routes: [
               GoRoute(
                 path: 'detail',
                 builder: (context, state) {
-                  final extra = state.extra as Map<String, dynamic>?;
+                  final extra = state.extra;
 
-                  if (extra == null) {
-                    return const Scaffold(
-                      body: Center(child: Text('لا توجد بيانات لعرضها')),
+                  if (extra is! Map) {
+                    return UserShellScreen(
+                      key: ValueKey<String>(state.uri.path),
+                      initialIndex: 3,
+                    );
+                  }
+
+                  final name = (extra['name'] ?? '').toString().trim();
+                  final governorateRaw = extra['governorate'];
+
+                  final int governorate =
+                      governorateRaw is int
+                          ? governorateRaw
+                          : int.tryParse(governorateRaw?.toString() ?? '') ?? 0;
+
+                  if (name.isEmpty || governorate == 0) {
+                    return UserShellScreen(
+                      key: ValueKey<String>(state.uri.path),
+                      initialIndex: 3,
                     );
                   }
 
                   return LabPublicDetailScreen(
-                    name: extra['name'] as String,
-                    governorate: extra['governorate'] as int,
-                    address: extra['address'] as String?,
-                    latitude: extra['latitude'] as double?,
-                    longitude: extra['longitude'] as double?,
-                    specialty: extra['specialty'] as String?,
-                    contactInfo: extra['contactInfo'] as String?,
+                    name: name,
+                    governorate: governorate,
+                    governorateName: extra['governorateName']?.toString(),
+                    address: extra['address']?.toString(),
+                    latitude:
+                        extra['latitude'] is double
+                            ? extra['latitude'] as double
+                            : double.tryParse(
+                              extra['latitude']?.toString() ?? '',
+                            ),
+                    longitude:
+                        extra['longitude'] is double
+                            ? extra['longitude'] as double
+                            : double.tryParse(
+                              extra['longitude']?.toString() ?? '',
+                            ),
+                    specialty: extra['specialty']?.toString(),
+                    contactInfo: extra['contactInfo']?.toString(),
                   );
                 },
               ),
@@ -277,7 +370,11 @@ class MyAppState extends State<MyApp> {
           // ---------------- Account ----------------
           GoRoute(
             path: 'account',
-            builder: (context, state) => const UserShellScreen(initialIndex: 4),
+            builder:
+                (context, state) => UserShellScreen(
+                  key: ValueKey<String>(state.uri.path),
+                  initialIndex: 4,
+                ),
             routes: [
               GoRoute(
                 path: 'patient-details',
@@ -295,7 +392,6 @@ class MyAppState extends State<MyApp> {
                       return PatientDetailsScreen(token: token, userId: userId);
                     }
                   }
-
                   return const UserShellScreen(initialIndex: 4);
                 },
               ),
@@ -315,7 +411,6 @@ class MyAppState extends State<MyApp> {
                       return DoctorDetailsScreen(token: token, userId: userId);
                     }
                   }
-
                   return const UserShellScreen(initialIndex: 4);
                 },
               ),

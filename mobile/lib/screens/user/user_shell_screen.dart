@@ -54,8 +54,6 @@ class _UserShellScreenState extends State<UserShellScreen> {
   @override
   void didUpdateWidget(covariant UserShellScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
-
-    // مزامنة الحالة إذا دخلنا عن طريق URL مباشرة (Refresh أو deep link)
     if (oldWidget.initialIndex != widget.initialIndex) {
       if (!mounted) return;
       setState(() => currentIndex = widget.initialIndex);
@@ -89,7 +87,6 @@ class _UserShellScreenState extends State<UserShellScreen> {
       loading = false;
     });
 
-    // إذا الجلسة غير صحيحة → login
     final invalidSession =
         token.isEmpty || userId == 0 || (role != 'patient' && role != 'doctor');
 
@@ -99,7 +96,6 @@ class _UserShellScreenState extends State<UserShellScreen> {
       return;
     }
 
-    // الطبيب غير مفعّل → waiting activation (حسب منطقك)
     if (role == 'doctor' && isActive == false) {
       if (!mounted) return;
       context.go('/waiting-activation');
@@ -117,11 +113,9 @@ class _UserShellScreenState extends State<UserShellScreen> {
 
   void goToTab(int index) {
     if (index < 0 || index >= tabPaths.length) return;
-
     if (!mounted) return;
-    setState(() => currentIndex = index);
 
-    // Web-safe: تحديث URL
+    // لا نعمل setState هنا — الـ route سيعيد بناء UserShellScreen بالـ initialIndex الصحيح
     context.go(tabPaths[index]);
   }
 
@@ -134,8 +128,6 @@ class _UserShellScreenState extends State<UserShellScreen> {
 
   void openDetails(String roleFromBackend) {
     if (!mounted) return;
-
-    // حماية: لا نفتح تفاصيل إذا الجلسة غير جاهزة
     if (token.isEmpty || userId == 0) return;
 
     final extra = {'token': token, 'userId': userId};
@@ -204,7 +196,6 @@ class _UserShellScreenState extends State<UserShellScreen> {
               style: TextStyle(fontSize: 14, color: activationColor),
             ),
             const SizedBox(height: 24),
-
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
@@ -213,9 +204,7 @@ class _UserShellScreenState extends State<UserShellScreen> {
                 child: const Text('عرض / تعديل البيانات'),
               ),
             ),
-
             const SizedBox(height: 16),
-
             SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(

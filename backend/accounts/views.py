@@ -16,10 +16,11 @@ from .serializers import (
     CurrentUserSerializer,
     AppointmentTypeSerializer,
     DoctorAppointmentTypeSerializer,
+    DoctorSpecificVisitTypeSerializer,
     DoctorAvailabilitySerializer,
     GovernorateSerializer,
 )
-from .models import CustomUser, PatientDetails, DoctorDetails, Hospital, Lab, AccountDeletionRequest,AppointmentType, DoctorAppointmentType, DoctorAvailability, Governorate 
+from .models import CustomUser, PatientDetails, DoctorDetails, Hospital, Lab, AccountDeletionRequest,AppointmentType, DoctorAppointmentType, DoctorAvailability, Governorate, DoctorSpecificVisitType 
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -554,6 +555,45 @@ class DoctorAppointmentTypeRetrieveUpdateDestroyView(generics.RetrieveUpdateDest
             return DoctorAppointmentType.objects.filter(doctor=user)
         return DoctorAppointmentType.objects.none()
 
+
+
+class DoctorSpecificVisitTypeListCreateView(generics.ListCreateAPIView):
+    serializer_class = DoctorSpecificVisitTypeSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        user = self.request.user
+        if getattr(user, "role", None) == "admin" or user.is_staff or user.is_superuser:
+            return DoctorSpecificVisitType.objects.all()
+        if getattr(user, "role", None) == "doctor":
+            return DoctorSpecificVisitType.objects.filter(doctor=user)
+        return DoctorSpecificVisitType.objects.none()
+
+    def perform_create(self, serializer):
+        user = self.request.user
+        if getattr(user, "role", None) != "doctor":
+            raise PermissionDenied("Only doctors can create DoctorSpecificVisitType.")
+
+        try:
+            with transaction.atomic():
+                serializer.save(doctor=user)
+        except IntegrityError:
+            raise ValidationError({"name": "This visit type name already exists for this doctor."})
+#-----------------------------
+
+#-----------------------------
+
+class DoctorSpecificVisitTypeRetrieveUpdateDestroyView(generics.RetrieveUpdateDestroyAPIView):
+    serializer_class = DoctorSpecificVisitTypeSerializer
+    permission_classes = [IsAuthenticated, IsDoctorOwnerOrAdmin]
+
+    def get_queryset(self):
+        user = self.request.user
+        if getattr(user, "role", None) == "admin" or user.is_staff or user.is_superuser:
+            return DoctorSpecificVisitType.objects.all()
+        if getattr(user, "role", None) == "doctor":
+            return DoctorSpecificVisitType.objects.filter(doctor=user)
+        return DoctorSpecificVisitType.objects.none()
 
 # -----------------------------
 # Phase C - DoctorAvailability

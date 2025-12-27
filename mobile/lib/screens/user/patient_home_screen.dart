@@ -3,7 +3,6 @@ import 'package:go_router/go_router.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '/services/account_deletion_service.dart';
-import 'account_deletion_status_screen.dart';
 
 // UI Helpers
 import '../../utils/ui_helpers.dart';
@@ -85,20 +84,19 @@ class _PatientHomeScreenState extends State<PatientHomeScreen> {
       },
     );
 
+    final reason = reasonController.text.trim();
+    reasonController.dispose();
+
     if (!context.mounted) return;
     if (confirmed != true) return;
 
-    final success = await deletionService.createDeletionRequest(
-      reason: reasonController.text,
-    );
+    final success = await deletionService.createDeletionRequest(reason: reason);
 
     if (!context.mounted) return;
 
     showAppSnackBar(
       context,
-      success
-          ? 'تم إرسال طلب حذف الحساب بنجاح.'
-          : 'فشل إرسال طلب حذف الحساب، حاول مرة أخرى.',
+      success ? 'تم إرسال طلب حذف الحساب بنجاح.' : 'لديك طلب قيد المراجعة',
       type: success ? AppSnackBarType.success : AppSnackBarType.error,
     );
   }
@@ -162,12 +160,7 @@ class _PatientHomeScreenState extends State<PatientHomeScreen> {
 
               TextButton(
                 onPressed: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => const AccountDeletionStatusScreen(),
-                    ),
-                  );
+                  context.go('/app/account/deletion-status');
                 },
                 child: const Text('عرض حالة طلب حذف الحساب'),
               ),

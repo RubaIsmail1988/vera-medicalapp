@@ -66,7 +66,7 @@ class _LabPublicListScreenState extends State<LabPublicListScreen> {
   }
 
   void openDetails(Lab lab) {
-    context.go(
+    context.push(
       '/app/labs/detail',
       extra: {
         'name': lab.name,

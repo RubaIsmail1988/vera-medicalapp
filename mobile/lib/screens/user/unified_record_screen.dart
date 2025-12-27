@@ -12,6 +12,7 @@ import 'clinical/orders_tab.dart';
 import 'clinical/files_tab.dart';
 import 'clinical/prescriptions_tab.dart';
 import 'clinical/adherence_tab.dart';
+import 'clinical/health_profile_tab.dart';
 
 class UnifiedRecordScreen extends StatefulWidget {
   final String role; // doctor | patient
@@ -30,9 +31,15 @@ class UnifiedRecordScreen extends StatefulWidget {
 class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
     with SingleTickerProviderStateMixin {
   static const int tabOrders = 0;
-  //static const int tabFiles = 1;
-  static const int tabPrescripts = 2;
-  static const int tabAdherence = 3;
+
+  // Single source of truth: tab index <-> route
+  static const List<String> _recordTabPaths = <String>[
+    "/app/record",
+    "/app/record/files",
+    "/app/record/prescripts",
+    "/app/record/adherence",
+    "/app/record/health-profile", // NEW
+  ];
 
   late final TabController tabController;
   late final ClinicalService clinicalService;
@@ -52,8 +59,6 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
   // PatientId captured from URL (doctor only)
   int? pendingPatientIdFromUrl;
 
-  bool didApplyInitialTabFromUrl = false;
-
   bool get isDoctor => widget.role == "doctor";
   bool get isPatient => widget.role == "patient";
 
@@ -67,15 +72,18 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
   void initState() {
     super.initState();
 
-    tabController = TabController(length: 4, vsync: this);
-    tabController.addListener(_onTabChanged);
+    final initialIndex = _initialTabIndexFromUrl();
+    tabController = TabController(
+      length: _recordTabPaths.length,
+      initialIndex: initialIndex,
+      vsync: this,
+    );
 
     clinicalService = ClinicalService(authService: AuthService());
 
     _loadCurrentUserNameFromPrefs();
 
     _capturePatientIdFromUrlIfAny();
-    _applyInitialTabFromUrlIfNeeded();
 
     if (isDoctor) {
       loadingPatients = true;
@@ -86,7 +94,6 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
 
   @override
   void dispose() {
-    tabController.removeListener(_onTabChanged);
     tabController.dispose();
     super.dispose();
   }
@@ -112,7 +119,7 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
   }
 
   // ---------------------------------------------------------------------------
-  // URL helpers (web hash-safe) + routing tab behavior
+  // URL helpers (web hash-safe)
   // ---------------------------------------------------------------------------
 
   String _readHashPathOrPath() {
@@ -126,6 +133,19 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
     // Non-hash
     final p = Uri.base.path;
     return p.isNotEmpty ? p : "/app/record";
+  }
+
+  int _initialTabIndexFromUrl() {
+    final path = _readHashPathOrPath();
+
+    for (int i = 0; i < _recordTabPaths.length; i++) {
+      final candidate = _recordTabPaths[i];
+      if (path == candidate || path.endsWith(candidate)) {
+        return i;
+      }
+    }
+
+    return tabOrders;
   }
 
   int? _readPatientIdFromUrl() {
@@ -155,7 +175,6 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
   void _applyPendingPatientSelectionIfPossible() {
     if (!isDoctor) return;
 
-    // already selected -> clear pending
     if (selectedPatientId != null) {
       pendingPatientIdFromUrl = null;
       return;
@@ -164,7 +183,6 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
     final pid = pendingPatientIdFromUrl;
     if (pid == null) return;
 
-    // wait until options loaded
     if (loadingPatients) return;
     if (patientOptions.isEmpty) return;
 
@@ -180,56 +198,17 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
     });
   }
 
-  void _applyInitialTabFromUrlIfNeeded() {
-    if (didApplyInitialTabFromUrl) return;
-    didApplyInitialTabFromUrl = true;
-
-    final path = _readHashPathOrPath();
-
-    int target = tabOrders;
-    if (path.endsWith("/prescripts")) target = tabPrescripts;
-    if (path.endsWith("/adherence")) target = tabAdherence;
-
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      if (tabController.index != target) {
-        tabController.animateTo(target);
-      }
-    });
-  }
-
   String _buildRecordLocationForTab(int index) {
+    final safeIndex =
+        (index >= 0 && index < _recordTabPaths.length) ? index : tabOrders;
+
+    final base = _recordTabPaths[safeIndex];
+
     final pid = isDoctor ? selectedPatientId : null;
     final hasPid = pid != null && pid > 0;
 
-    String base;
-    if (index == tabPrescripts) {
-      base = "/app/record/prescripts";
-    } else if (index == tabAdherence) {
-      base = "/app/record/adherence";
-    } else {
-      base = "/app/record";
-    }
-
     if (hasPid) return "$base?patientId=$pid";
     return base;
-  }
-
-  void _safeGo(String location) {
-    try {
-      if (!mounted) return;
-      GoRouter.of(context).go(location);
-    } catch (_) {
-      // تجاهل في وضع التطوير لتجنب وميض/إزعاج
-    }
-  }
-
-  void _onTabChanged() {
-    if (tabController.indexIsChanging) return;
-    if (isDoctor && selectedPatientId == null) return;
-
-    final location = _buildRecordLocationForTab(tabController.index);
-    _safeGo(location);
   }
 
   // ---------------------------------------------------------------------------
@@ -263,7 +242,6 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
             ? decoded.cast<Map<String, dynamic>>()
             : <Map<String, dynamic>>[];
 
-    // Build unique patients from orders: patient(id) + patient_display_name(label)
     final Map<int, String> byId = {};
 
     for (final o in list) {
@@ -295,15 +273,14 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
   }
 
   // ---------------------------------------------------------------------------
-  // UI building blocks (reduce repetition)
+  // UI building blocks
   // ---------------------------------------------------------------------------
 
-  Widget _headerTile({required String subtitleText}) {
+  Widget _headerTile({required String titleText}) {
     return Material(
       child: ListTile(
         leading: const Icon(Icons.folder_shared),
-        title: const Text("الإضبارة الطبية الموحدة"),
-        subtitle: Text(subtitleText),
+        title: Text(titleText),
       ),
     );
   }
@@ -404,7 +381,7 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
     if (isDoctor && selectedPatientId == null) {
       return Column(
         children: [
-          _headerTile(subtitleText: "الدور: $roleLabel | الطبيب: $doctorLabel"),
+          _headerTile(titleText: "الدور: $roleLabel | الطبيب: $doctorLabel"),
           Expanded(
             child:
                 loadingPatients
@@ -496,11 +473,11 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
                                         selectedPatientName = name;
                                       });
 
-                                      final location =
-                                          _buildRecordLocationForTab(
-                                            tabController.index,
-                                          );
-                                      _safeGo(location);
+                                      context.go(
+                                        _buildRecordLocationForTab(
+                                          tabController.index,
+                                        ),
+                                      );
 
                                       showAppSnackBar(
                                         context,
@@ -518,7 +495,7 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
                             icon: Icons.info_outline,
                             title: "ملاحظة",
                             message:
-                                "سيتم استخدام هذا الاختيار لعرض الطلبات والملفات والوصفات والالتزام الدوائي.",
+                                "سيتم استخدام هذا الاختيار لعرض الطلبات والملفات والوصفات والالتزام الدوائي والملف الصحي.",
                             tone: AppSnackBarType.info,
                           ),
                         ],
@@ -538,15 +515,27 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
 
     return Column(
       children: [
-        _headerTile(subtitleText: subtitleText),
+        _headerTile(titleText: subtitleText),
         TabBar(
           controller: tabController,
           isScrollable: true,
+          onTap: (index) {
+            if (isDoctor && selectedPatientId == null) {
+              showAppSnackBar(
+                context,
+                "اختر مريضًا أولاً لعرض الإضبارة.",
+                type: AppSnackBarType.warning,
+              );
+              return;
+            }
+            context.go(_buildRecordLocationForTab(index));
+          },
           tabs: const [
             Tab(text: "الطلبات"),
             Tab(text: "الملفات"),
             Tab(text: "الوصفات"),
             Tab(text: "الالتزام"),
+            Tab(text: "الملف الصحي"), // NEW
           ],
         ),
         Expanded(
@@ -573,6 +562,12 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
               ),
               AdherenceTab(
                 key: ValueKey<String>("adherence-$patientContextId"),
+                role: widget.role,
+                userId: widget.userId,
+                selectedPatientId: patientContextId,
+              ),
+              HealthProfileTab(
+                key: ValueKey<String>("health-profile-$patientContextId"),
                 role: widget.role,
                 userId: widget.userId,
                 selectedPatientId: patientContextId,

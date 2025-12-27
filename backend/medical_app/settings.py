@@ -11,21 +11,26 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
 from pathlib import Path
+import os
+from dotenv import load_dotenv
+
+
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(BASE_DIR / ".env")
 
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-5^hb0)@zsqkc7n^chkl-a6v6hl2oj3!dr!-d!7x4bv#hq!ry^$'
+SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "dev-secret-key-change-me")
 
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = os.environ.get("DJANGO_DEBUG", "True").strip().lower() in ("1", "true", "yes", "on")
 
-ALLOWED_HOSTS = []
+_allowed_hosts = os.environ.get("DJANGO_ALLOWED_HOSTS", "127.0.0.1,localhost").strip()
+ALLOWED_HOSTS = [h.strip() for h in _allowed_hosts.split(",") if h.strip()]
+
 
 
 # Application definition
@@ -168,10 +173,14 @@ EMAIL_HOST = "smtp.gmail.com"
 EMAIL_PORT = 587
 EMAIL_USE_TLS = True
 
-EMAIL_HOST_USER = "ruba.hikmat.ismail@gmail.com"
-EMAIL_HOST_PASSWORD = "ijoi mofb xmsk vsmv"
+EMAIL_HOST_USER = os.environ.get("DJANGO_EMAIL_HOST_USER", "")
+EMAIL_HOST_PASSWORD = os.environ.get("DJANGO_EMAIL_HOST_PASSWORD", "")
 
-DEFAULT_FROM_EMAIL = "Vera Smart Health <ruba.hikmat.ismail@gmail.com>"
+DEFAULT_FROM_EMAIL = os.environ.get(
+    "DJANGO_DEFAULT_FROM_EMAIL",
+    f"Vera Smart Health <{EMAIL_HOST_USER}>" if EMAIL_HOST_USER else "Vera Smart Health <no-reply@localhost>",
+)
+
 
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
