@@ -1,14 +1,17 @@
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework.decorators import api_view, permission_classes
 from django.db import transaction
+from django.shortcuts import get_object_or_404
 
-from clinical.permissions import IsPatient
+from clinical.permissions import IsPatient,IsDoctor
 from .serializers import AppointmentCreateSerializer
 from django.db.models import Q
 from rest_framework.permissions import IsAuthenticated
 
-from accounts.models import CustomUser, DoctorDetails
+from accounts.models import CustomUser, DoctorDetails, Appointment
+
 
 class AppointmentCreateView(APIView):
     permission_classes = [IsPatient]
@@ -25,14 +28,15 @@ class AppointmentCreateView(APIView):
                 "patient": appointment.patient_id,
                 "doctor": appointment.doctor_id,
                 "appointment_type": appointment.appointment_type_id,
-                "date_time": appointment.date_time,
+                "date_time": appointment.date_time.isoformat().replace("+00:00", "Z"),
                 "duration_minutes": appointment.duration_minutes,
                 "status": appointment.status,
                 "notes": appointment.notes,
-                "created_at": appointment.created_at,
+                "created_at": appointment.created_at.isoformat().replace("+00:00", "Z"),
             },
             status=status.HTTP_201_CREATED,
         )
+
     
     
 class DoctorSearchView(APIView):
@@ -65,3 +69,32 @@ class DoctorSearchView(APIView):
         ]
 
         return Response({"results": results})
+    
+@api_view(["POST"])
+@permission_classes([IsDoctor])
+def mark_no_show(request, pk: int):
+    user = request.user
+
+    appointment = get_object_or_404(Appointment, pk=pk)
+
+    # Must belong to this doctor
+    if appointment.doctor_id != user.id:
+        return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    # Basic state guard
+    if appointment.status == "cancelled":
+        return Response(
+            {"detail": "Cancelled appointments cannot be marked as no_show."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    appointment.status = "no_show"
+    appointment.save(update_fields=["status", "updated_at"])
+
+    return Response(
+        {
+            "id": appointment.id,
+            "status": appointment.status,
+        },
+        status=status.HTTP_200_OK,
+    )
