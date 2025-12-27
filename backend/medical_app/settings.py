@@ -44,6 +44,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'accounts',
     'clinical',
+    'appointments',
     'rest_framework',
     'corsheaders',
 ]
