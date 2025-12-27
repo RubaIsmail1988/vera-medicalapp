@@ -258,3 +258,13 @@ Status: معتمد ومطبّق فعليًا، ويُستخدم كأساس لأ�
 docs/CODE_REVIEW_CHECKLIST.md
 
 أي كود جديد يجب أن يلتزم بها.
+
+## Appointments – Core Decisions (Phase Appointments MVP)
+
+- Appointment statuses:
+  pending, confirmed, cancelled, no_show
+- no_show is manual (doctor action)
+- Booking for follow-up visits is blocked until required files are approved
+- Appointment duration resolution:
+  DoctorAppointmentType > AppointmentType.default_duration_minutes
+- No scheduling intelligence or prioritization logic in this phase
