@@ -151,6 +151,11 @@ class PatientDetails(models.Model):
 class AppointmentType(models.Model):
     type_name = models.CharField(max_length=150, unique=True)
     description = models.TextField(blank=True, null=True)
+    default_duration_minutes = models.PositiveIntegerField(
+        default=15,
+        validators=[MinValueValidator(1)],
+    )
+    requires_approved_files = models.BooleanField(default=False)    
     created_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -317,13 +322,15 @@ class Appointment(models.Model):
         ('Pending', 'Pending'),
         ('Confirmed', 'Confirmed'),
         ('Cancelled', 'Cancelled'),
+        ("no_show", "No Show"),
+
     ]
     patient = models.ForeignKey('CustomUser', on_delete=models.CASCADE, related_name='patient_appointments', limit_choices_to={'is_staff': False})
     doctor = models.ForeignKey('CustomUser', on_delete=models.CASCADE, related_name='doctor_appointments', limit_choices_to={'is_staff': False})
     appointment_type = models.ForeignKey(AppointmentType, on_delete=models.CASCADE)
     date_time = models.DateTimeField()
     duration_minutes = models.PositiveIntegerField(blank=True, null=True)  # يمكن أخذها من DoctorAppointmentType
-    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='Pending')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
     notes = models.TextField(blank=True, null=True)
     created_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(auto_now=True)
