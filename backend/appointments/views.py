@@ -98,3 +98,36 @@ def mark_no_show(request, pk: int):
         },
         status=status.HTTP_200_OK,
     )
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def cancel_appointment(request, pk: int):
+    user = request.user
+    appointment = get_object_or_404(Appointment, pk=pk)
+
+    is_admin = bool(getattr(user, "is_staff", False) or getattr(user, "is_superuser", False) or getattr(user, "role", "") == "admin")
+    is_owner_patient = appointment.patient_id == user.id
+    is_owner_doctor = appointment.doctor_id == user.id
+
+    if not (is_admin or is_owner_patient or is_owner_doctor):
+        return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    if appointment.status == "no_show":
+        return Response(
+            {"detail": "no_show appointments cannot be cancelled."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if appointment.status == "cancelled":
+        return Response(
+            {"id": appointment.id, "status": appointment.status},
+            status=status.HTTP_200_OK,
+        )
+
+    appointment.status = "cancelled"
+    appointment.save(update_fields=["status", "updated_at"])
+
+    return Response(
+        {"id": appointment.id, "status": appointment.status},
+        status=status.HTTP_200_OK,
+    )
