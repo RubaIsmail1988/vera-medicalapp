@@ -122,3 +122,118 @@ Future<bool> showConfirmDialog(
 
   return result == true;
 }
+
+// ---------------------------------------------------------------------------
+// API / Networking helpers (MVP)
+// ---------------------------------------------------------------------------
+
+/// يحاول استخراج رسالة خطأ مفيدة من payload قادم من الـ API.
+/// يدعم الأنماط الشائعة:
+/// - {"detail": "..." }
+/// - {"detail": ["..."] }
+/// - {"field": ["msg1", "msg2"], "field2": ["msg"] }
+String extractApiErrorMessage(
+  Object? data, {
+  String fallback = 'تعذّر تنفيذ العملية. يرجى التحقق من البيانات.',
+}) {
+  if (data == null) return fallback;
+
+  // String مباشرة
+  if (data is String) {
+    final trimmed = data.trim();
+    return trimmed.isEmpty ? fallback : trimmed;
+  }
+
+  // List مباشرة
+  if (data is List) {
+    if (data.isEmpty) return fallback;
+    final first = data.first;
+    if (first is String && first.trim().isNotEmpty) return first.trim();
+    return first.toString();
+  }
+
+  // Map (الأكثر شيوعًا)
+  if (data is Map) {
+    // 1) detail (string/list)
+    if (data.containsKey('detail')) {
+      final detail = data['detail'];
+      final msg = extractApiErrorMessage(detail, fallback: fallback);
+      if (msg.trim().isNotEmpty) return msg;
+    }
+
+    // 2) non_field_errors
+    if (data.containsKey('non_field_errors')) {
+      final nfe = data['non_field_errors'];
+      final msg = extractApiErrorMessage(nfe, fallback: fallback);
+      if (msg.trim().isNotEmpty) return msg;
+    }
+
+    // 3) أول حقل فيه قائمة رسائل
+    for (final entry in data.entries) {
+      final value = entry.value;
+      if (value is List && value.isNotEmpty) {
+        final first = value.first;
+        if (first is String && first.trim().isNotEmpty) return first.trim();
+        return first.toString();
+      }
+      if (value is String && value.trim().isNotEmpty) {
+        return value.trim();
+      }
+    }
+
+    return fallback;
+  }
+
+  // أي نوع آخر
+  return data.toString().trim().isEmpty ? fallback : data.toString();
+}
+
+/// يحدد رسالة عربية موحّدة اعتمادًا على HTTP status code + payload.
+/// يمكن استعماله مع أي library (http/dio) بتغذية statusCode و data.
+String mapHttpErrorToArabicMessage({required int? statusCode, Object? data}) {
+  // Network / unknown
+  if (statusCode == null) {
+    return 'تعذّر الاتصال بالخادم. تحقق من الإنترنت.';
+  }
+
+  if (statusCode == 401) {
+    return 'انتهت الجلسة، يرجى تسجيل الدخول مجددًا.';
+  }
+
+  if (statusCode == 403) {
+    return 'لا تملك صلاحية تنفيذ هذا الإجراء.';
+  }
+
+  // Security by design: قد تعني "ليس مالكًا"
+  if (statusCode == 404) {
+    return 'العنصر غير موجود.';
+  }
+
+  if (statusCode == 400) {
+    // إن وجدت رسالة من الباك، نعرضها كما هي (حالياً بعضها إنكليزي في المشروع)
+    // لاحقاً يمكن تعريبها تدريجياً من جهة الـ API أو عبر mapping هنا.
+    return extractApiErrorMessage(data);
+  }
+
+  if (statusCode >= 500) {
+    return 'حدث خطأ غير متوقع. حاول مرة أخرى لاحقًا.';
+  }
+
+  // Fallback
+  return extractApiErrorMessage(data, fallback: 'تعذّر تنفيذ العملية.');
+}
+
+/// Convenience: اعرض خطأ API بشكل موحّد.
+/// - statusCode: رقم الحالة HTTP (مثلاً response.statusCode)
+/// - data: body/response payload (مثلاً response.data)
+void showApiErrorSnackBar(
+  BuildContext? context, {
+  required int? statusCode,
+  Object? data,
+}) {
+  final message = mapHttpErrorToArabicMessage(
+    statusCode: statusCode,
+    data: data,
+  );
+  showAppErrorSnackBar(context, message);
+}
