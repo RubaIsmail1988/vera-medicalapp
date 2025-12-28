@@ -98,3 +98,98 @@ status IN ("pending", "confirmed")
 f) PASSED (Manual Verification)
 - When requires_approved_files=True and no approved files exist → booking returns 400 (blocked).
 - After uploading a file and doctor approval (and ensuring no other open orders are missing approved files) → booking returns 201 with status=pending.
+----------------------------------------
+Appointment Cancellation & no_show — Verification (MVP)
+Cancel Appointment
+
+Endpoint
+
+POST /api/appointments/{id}/cancel/
+
+
+Authorized roles
+
+Patient (مالك الموعد)
+
+Doctor (صاحب الموعد)
+
+Admin
+
+Rules
+
+الموعد بحالة pending أو confirmed يمكن إلغاؤه.
+
+الموعد بحالة cancelled:
+
+الإلغاء idempotent (يبقى cancelled).
+
+الموعد بحالة no_show:
+
+لا يمكن إلغاؤه.
+
+Expected Responses
+
+200 → عند الإلغاء الناجح.
+
+400 → محاولة إلغاء موعد no_show.
+
+404 → عند محاولة الإلغاء من مستخدم لا يملك الموعد.
+
+401 → بدون توكن.
+
+no_show Handling
+
+Endpoint
+
+POST /api/appointments/{id}/mark-no-show/
+
+
+Rules
+
+مسموح للطبيب صاحب الموعد فقط.
+
+لا يمكن تعيين no_show إلا لموعد غير ملغى.
+
+no_show حالة تاريخية ولا تحجز وقتًا مستقبليًا.
+
+Time Slot Reservation Rules (Confirmed)
+
+الحالات التي تحجز الوقت:
+
+pending
+
+confirmed
+
+الحالات التي لا تحجز الوقت:
+
+cancelled
+
+no_show
+
+بالتالي:
+
+يمكن الحجز في نفس الوقت بعد cancelled.
+
+يمكن الحجز في نفس الوقت بعد no_show.
+
+Verification Status
+
+ PASSED (Manual Postman Tests)
+
+Patient/Doctor cancellation works as expected.
+
+no_show cannot be cancelled.
+
+cancelled / no_show do not block future bookings.
+
+Unauthorized and non-owner access handled correctly.
+
+Future Consideration (Out of Scope — Documented)
+
+تكرار إلغاء المريض (cancelled) سيؤثر لاحقًا على أولوية الحجز ضمن:
+
+التحليلات
+
+الجدولة المتقدمة
+
+لا منطق أولوية مطبق في مرحلة MVP.
