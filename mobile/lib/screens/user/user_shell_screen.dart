@@ -10,6 +10,7 @@ import 'doctor_home_screen.dart';
 import 'hospital_public_list_screen.dart';
 import 'lab_public_list_screen.dart';
 import 'unified_record_screen.dart';
+import 'appointments/my_appointments_screen.dart';
 
 class UserShellScreen extends StatefulWidget {
   const UserShellScreen({super.key, required this.initialIndex});
@@ -42,6 +43,7 @@ class _UserShellScreenState extends State<UserShellScreen> {
     '/app/hospitals',
     '/app/labs',
     '/app/account',
+    '/app/appointments',
   ];
 
   @override
@@ -231,6 +233,9 @@ class _UserShellScreenState extends State<UserShellScreen> {
         return const LabPublicListScreen();
       case 4:
         return buildAccountTab(context);
+      case 5:
+        return const MyAppointmentsScreen();
+
       default:
         return buildHomeTab();
     }
@@ -250,6 +255,8 @@ class _UserShellScreenState extends State<UserShellScreen> {
         return 'المخابر';
       case 4:
         return 'الحساب';
+      case 5:
+        return 'المواعيد';
       default:
         return 'Vera Smart Health';
     }
@@ -297,6 +304,10 @@ class _UserShellScreenState extends State<UserShellScreen> {
           ),
           BottomNavigationBarItem(icon: Icon(Icons.science), label: 'المخابر'),
           BottomNavigationBarItem(icon: Icon(Icons.person), label: 'الحساب'),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.event_available),
+            label: 'المواعيد',
+          ),
         ],
       ),
     );

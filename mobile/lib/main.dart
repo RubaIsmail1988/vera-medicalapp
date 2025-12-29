@@ -31,6 +31,9 @@ import 'screens/doctor/doctor_scheduling_settings_screen.dart';
 import 'screens/doctor/doctor_availability_screen.dart';
 import 'screens/doctor/doctor_visit_types_screen.dart';
 
+//aAppointment
+import 'screens/user/appointments/book_appointment_screen.dart';
+import 'screens/user/appointments/doctor_search_screen.dart';
 import 'utils/ui_helpers.dart';
 
 void main() {
@@ -418,6 +421,51 @@ class MyAppState extends State<MyApp> {
                 path: 'deletion-status',
                 builder:
                     (context, state) => const AccountDeletionStatusScreen(),
+              ),
+            ],
+          ),
+          GoRoute(
+            path: 'appointments',
+            builder:
+                (context, state) => UserShellScreen(
+                  key: ValueKey<String>(state.uri.path),
+                  initialIndex: 5,
+                ),
+            routes: [
+              // 1) /app/appointments/book  -> DoctorSearchScreen
+              GoRoute(
+                path: 'book',
+                builder: (context, state) => const DoctorSearchScreen(),
+              ),
+
+              // 2) /app/appointments/book/:doctorId -> BookAppointmentScreen
+              GoRoute(
+                path: 'book/:doctorId',
+                builder: (context, state) {
+                  final raw = state.pathParameters['doctorId'];
+                  final doctorId = int.tryParse(raw ?? '');
+                  if (doctorId == null) {
+                    return const Scaffold(
+                      body: Center(child: Text('Invalid doctor id')),
+                    );
+                  }
+
+                  final extra = state.extra;
+                  final doctorName =
+                      (extra is Map && extra['doctorName'] != null)
+                          ? extra['doctorName'].toString()
+                          : 'طبيب';
+                  final doctorSpecialty =
+                      (extra is Map && extra['doctorSpecialty'] != null)
+                          ? extra['doctorSpecialty'].toString()
+                          : '';
+
+                  return BookAppointmentScreen(
+                    doctorId: doctorId,
+                    doctorName: doctorName,
+                    doctorSpecialty: doctorSpecialty,
+                  );
+                },
               ),
             ],
           ),

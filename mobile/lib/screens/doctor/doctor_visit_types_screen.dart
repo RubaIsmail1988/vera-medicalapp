@@ -2,10 +2,14 @@ import 'package:flutter/material.dart';
 
 import '../../models/appointment_type.dart';
 import '../../models/doctor_appointment_type.dart';
-import '../../models/doctor_specific_visit_type.dart';
+// NOTE: DoctorSpecificVisitType is intentionally disabled for now (future feature).
+// import '../../models/doctor_specific_visit_type.dart';
+
 import '../../services/appointment_type_service.dart';
 import '../../services/doctor_appointment_type_service.dart';
-import '../../services/doctor_specific_visit_type_service.dart';
+// NOTE: DoctorSpecificVisitType is intentionally disabled for now (future feature).
+// import '../../services/doctor_specific_visit_type_service.dart';
+
 import '../../utils/ui_helpers.dart';
 
 class DoctorVisitTypesScreen extends StatefulWidget {
@@ -20,15 +24,19 @@ class DoctorVisitTypesScreenState extends State<DoctorVisitTypesScreen> {
       AppointmentTypeService();
   final DoctorAppointmentTypeService doctorTypeService =
       DoctorAppointmentTypeService();
-  final DoctorSpecificVisitTypeService doctorSpecificService =
-      DoctorSpecificVisitTypeService();
+
+  // NOTE: Disabled for now (future feature).
+  // final DoctorSpecificVisitTypeService doctorSpecificService =
+  //     DoctorSpecificVisitTypeService();
 
   bool loading = false;
   String? errorMessage;
 
   List<AppointmentType> types = [];
   List<DoctorAppointmentType> items = [];
-  List<DoctorSpecificVisitType> specificItems = [];
+
+  // NOTE: Disabled for now (future feature).
+  // List<DoctorSpecificVisitType> specificItems = [];
 
   @override
   void initState() {
@@ -48,16 +56,17 @@ class DoctorVisitTypesScreenState extends State<DoctorVisitTypesScreen> {
       final resultTypes =
           await appointmentTypeService.fetchAppointmentTypesReadOnly();
       final resultMine = await doctorTypeService.fetchMine();
-      final resultSpecific = await doctorSpecificService.fetchMine();
+
+      // NOTE: Disabled for now (future feature).
+      // final resultSpecific = await doctorSpecificService.fetchMine();
+      // resultSpecific.sort((a, b) => a.name.compareTo(b.name));
 
       if (!mounted) return;
-
-      resultSpecific.sort((a, b) => a.name.compareTo(b.name));
 
       setState(() {
         types = resultTypes;
         items = resultMine;
-        specificItems = resultSpecific;
+        // specificItems = resultSpecific;
       });
     } catch (e) {
       if (!mounted) return;
@@ -67,9 +76,9 @@ class DoctorVisitTypesScreenState extends State<DoctorVisitTypesScreen> {
 
       showAppSnackBar(context, msg, type: AppSnackBarType.error);
     } finally {
-      // ignore: control_flow_in_finally
-      if (!mounted) return;
-      setState(() => loading = false);
+      if (mounted) {
+        setState(() => loading = false);
+      }
     }
   }
 
@@ -198,6 +207,46 @@ class DoctorVisitTypesScreenState extends State<DoctorVisitTypesScreen> {
     );
   }
 
+  Widget disabledFeatureCard({required String title, required String message}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      child: Card(
+        elevation: 0,
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.construction_outlined),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      title,
+                      style: const TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Text(message),
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: null,
+                  icon: const Icon(Icons.lock_outline),
+                  label: const Text("قيد التطوير"),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   // ---------------------------------------------------------------------------
   // Dialogs: Central types (existing)
   // ---------------------------------------------------------------------------
@@ -213,7 +262,7 @@ class DoctorVisitTypesScreenState extends State<DoctorVisitTypesScreen> {
     }
 
     int selectedTypeId = types.first.id;
-    final durationController = TextEditingController(text: "20");
+    final durationController = TextEditingController(text: "15");
 
     final ok = await showDialog<bool>(
       context: context,
@@ -249,7 +298,7 @@ class DoctorVisitTypesScreenState extends State<DoctorVisitTypesScreen> {
                 keyboardType: TextInputType.number,
                 decoration: const InputDecoration(
                   labelText: "المدة بالدقائق",
-                  hintText: "مثال: 20",
+                  hintText: "مثال: 15",
                   border: OutlineInputBorder(),
                 ),
               ),
@@ -305,7 +354,7 @@ class DoctorVisitTypesScreenState extends State<DoctorVisitTypesScreen> {
       if (!mounted) return;
       showAppSnackBar(
         context,
-        "فشل حفظ الإعدادات. حاول مرة أخرى.",
+        "تم تحديد المدة مسبقاً",
         type: AppSnackBarType.error,
       );
       setState(() => loading = false);
@@ -327,7 +376,7 @@ class DoctorVisitTypesScreenState extends State<DoctorVisitTypesScreen> {
             keyboardType: TextInputType.number,
             decoration: const InputDecoration(
               labelText: "المدة بالدقائق",
-              hintText: "مثال: 20",
+              hintText: "مثال: 15",
               border: OutlineInputBorder(),
             ),
           ),
@@ -426,285 +475,12 @@ class DoctorVisitTypesScreenState extends State<DoctorVisitTypesScreen> {
   }
 
   // ---------------------------------------------------------------------------
-  // Dialogs: Doctor-specific visit types (NEW)
-  // ---------------------------------------------------------------------------
-
-  Future<void> openAddSpecificDialog() async {
-    final nameController = TextEditingController();
-    final durationController = TextEditingController(text: "30");
-    final descriptionController = TextEditingController();
-
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          title: const Text("إضافة نوع زيارة خاص"),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: nameController,
-                decoration: const InputDecoration(
-                  labelText: "اسم النوع",
-                  hintText: "مثال: Root Canal",
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: durationController,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
-                  labelText: "المدة بالدقائق",
-                  hintText: "مثال: 30",
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: descriptionController,
-                maxLines: 2,
-                decoration: const InputDecoration(
-                  labelText: "وصف (اختياري)",
-                  border: OutlineInputBorder(),
-                ),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext, false),
-              child: const Text("إلغاء"),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.pop(dialogContext, true),
-              child: const Text("حفظ"),
-            ),
-          ],
-        );
-      },
-    );
-
-    final name = nameController.text.trim();
-    final durationRaw = durationController.text.trim();
-    final description = descriptionController.text.trim();
-
-    nameController.dispose();
-    durationController.dispose();
-    descriptionController.dispose();
-
-    if (!mounted) return;
-    if (ok != true) return;
-
-    if (name.isEmpty) {
-      showAppSnackBar(
-        context,
-        "أدخل اسم النوع.",
-        type: AppSnackBarType.warning,
-      );
-      return;
-    }
-
-    final duration = int.tryParse(durationRaw) ?? 0;
-    if (duration <= 0) {
-      showAppSnackBar(
-        context,
-        "أدخل مدة صحيحة أكبر من 0.",
-        type: AppSnackBarType.warning,
-      );
-      return;
-    }
-
-    setState(() => loading = true);
-
-    try {
-      await doctorSpecificService.create(
-        name: name,
-        durationMinutes: duration,
-        description: description,
-      );
-
-      if (!mounted) return;
-      showAppSnackBar(
-        context,
-        "تمت الإضافة بنجاح.",
-        type: AppSnackBarType.success,
-      );
-
-      await loadData();
-    } catch (e) {
-      if (!mounted) return;
-      showAppSnackBar(
-        context,
-        "فشل إضافة النوع الخاص. حاول مرة أخرى.",
-        type: AppSnackBarType.error,
-      );
-      setState(() => loading = false);
-    }
-  }
-
-  Future<void> openEditSpecificDialog(DoctorSpecificVisitType item) async {
-    final nameController = TextEditingController(text: item.name);
-    final durationController = TextEditingController(
-      text: item.durationMinutes.toString(),
-    );
-    final descriptionController = TextEditingController(
-      text: item.description ?? "",
-    );
-
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          title: const Text("تعديل نوع زيارة خاص"),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: nameController,
-                decoration: const InputDecoration(
-                  labelText: "اسم النوع",
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: durationController,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
-                  labelText: "المدة بالدقائق",
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: descriptionController,
-                maxLines: 2,
-                decoration: const InputDecoration(
-                  labelText: "وصف (اختياري)",
-                  border: OutlineInputBorder(),
-                ),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext, false),
-              child: const Text("إلغاء"),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.pop(dialogContext, true),
-              child: const Text("حفظ"),
-            ),
-          ],
-        );
-      },
-    );
-
-    final name = nameController.text.trim();
-    final durationRaw = durationController.text.trim();
-    final description = descriptionController.text.trim();
-
-    nameController.dispose();
-    durationController.dispose();
-    descriptionController.dispose();
-
-    if (!mounted) return;
-    if (ok != true) return;
-
-    if (name.isEmpty) {
-      showAppSnackBar(
-        context,
-        "أدخل اسم النوع.",
-        type: AppSnackBarType.warning,
-      );
-      return;
-    }
-
-    final duration = int.tryParse(durationRaw) ?? 0;
-    if (duration <= 0) {
-      showAppSnackBar(
-        context,
-        "أدخل مدة صحيحة أكبر من 0.",
-        type: AppSnackBarType.warning,
-      );
-      return;
-    }
-
-    setState(() => loading = true);
-
-    try {
-      await doctorSpecificService.update(
-        id: item.id,
-        name: name,
-        durationMinutes: duration,
-        description: description,
-      );
-
-      if (!mounted) return;
-      showAppSnackBar(
-        context,
-        "تم التعديل بنجاح.",
-        type: AppSnackBarType.success,
-      );
-
-      await loadData();
-    } catch (e) {
-      if (!mounted) return;
-      showAppSnackBar(
-        context,
-        "فشل تعديل النوع الخاص. حاول مرة أخرى.",
-        type: AppSnackBarType.error,
-      );
-      setState(() => loading = false);
-    }
-  }
-
-  Future<void> deleteSpecificItem(int id) async {
-    final confirm = await showConfirmDialog(
-      context,
-      title: "تأكيد الحذف",
-      message: "هل أنت متأكد من حذف نوع الزيارة الخاص؟",
-      confirmText: "حذف",
-      cancelText: "إلغاء",
-      danger: true,
-    );
-
-    if (!mounted) return;
-    if (!confirm) return;
-
-    setState(() => loading = true);
-
-    try {
-      await doctorSpecificService.delete(id);
-
-      if (!mounted) return;
-      showAppSnackBar(
-        context,
-        "تم الحذف بنجاح.",
-        type: AppSnackBarType.success,
-      );
-
-      await loadData();
-    } catch (e) {
-      if (!mounted) return;
-      showAppSnackBar(
-        context,
-        "فشل حذف النوع الخاص. حاول مرة أخرى.",
-        type: AppSnackBarType.error,
-      );
-      setState(() => loading = false);
-    }
-  }
-
-  // ---------------------------------------------------------------------------
   // Build
   // ---------------------------------------------------------------------------
 
   @override
   Widget build(BuildContext context) {
     final canAddCentral = !loading && types.isNotEmpty;
-    final canAddSpecific = !loading;
 
     if (loading) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
@@ -812,101 +588,22 @@ class DoctorVisitTypesScreenState extends State<DoctorVisitTypesScreen> {
             sectionHeader(
               "أنواع خاصة بالطبيب",
               subtitle:
-                  "يمكنك إضافة أنواع غير موجودة في قائمة الأدمن (مثل Root Canal).",
+                  "ميزة مستقبلية (غير مفعّلة الآن). سيتم تفعيلها لاحقًا عند اعتماد آلية حجز واضحة لها.",
               icon: Icons.person_pin_outlined,
             ),
-            if (specificItems.isEmpty)
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                child: Card(
-                  elevation: 0,
-                  child: Padding(
-                    padding: const EdgeInsets.all(14),
-                    child: Column(
-                      children: [
-                        const Text("لا توجد أنواع خاصة بعد."),
-                        const SizedBox(height: 10),
-                        SizedBox(
-                          width: double.infinity,
-                          child: ElevatedButton.icon(
-                            onPressed:
-                                canAddSpecific ? openAddSpecificDialog : null,
-                            icon: const Icon(Icons.add),
-                            label: const Text("إضافة نوع خاص"),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              )
-            else
-              ...specificItems.map((item) {
-                return Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 6,
-                  ),
-                  child: Card(
-                    elevation: 0,
-                    child: ListTile(
-                      leading: const CircleAvatar(
-                        child: Icon(Icons.star_border),
-                      ),
-                      title: Text(
-                        item.name,
-                        style: const TextStyle(fontWeight: FontWeight.w700),
-                      ),
-                      subtitle: Text(
-                        "المدة: ${item.durationMinutes} دقيقة${(item.description ?? '').trim().isNotEmpty ? "\n${item.description!.trim()}" : ""}",
-                      ),
-                      onTap: () => openEditSpecificDialog(item),
-                      trailing: PopupMenuButton<String>(
-                        onSelected: (value) {
-                          if (value == 'edit') {
-                            openEditSpecificDialog(item);
-                          } else if (value == 'delete') {
-                            deleteSpecificItem(item.id);
-                          }
-                        },
-                        itemBuilder:
-                            (_) => const [
-                              PopupMenuItem(
-                                value: 'edit',
-                                child: Text('تعديل'),
-                              ),
-                              PopupMenuItem(
-                                value: 'delete',
-                                child: Text('حذف'),
-                              ),
-                            ],
-                      ),
-                    ),
-                  ),
-                );
-              }),
+            disabledFeatureCard(
+              title: "أنواع خاصة بالطبيب (قيد التطوير)",
+              message:
+                  "حاليًا الحجز يعتمد فقط على الأنواع المركزية (Admin) مع إمكانية تخصيص المدة للطبيب. "
+                  "الأنواع الخاصة ستُفعّل لاحقًا عند تثبيت منطق الحجز والربط بشكل رسمي.",
+            ),
           ],
         ),
       ),
-      floatingActionButton: PopupMenuButton<String>(
-        tooltip: "إضافة",
-        onSelected: (value) {
-          if (value == "central") {
-            openAddCentralDialog();
-          } else if (value == "specific") {
-            openAddSpecificDialog();
-          }
-        },
-        itemBuilder:
-            (_) => const [
-              PopupMenuItem(value: "central", child: Text("إضافة نوع مركزي")),
-              PopupMenuItem(value: "specific", child: Text("إضافة نوع خاص")),
-            ],
-        child: FloatingActionButton.extended(
-          onPressed: null,
-          icon: const Icon(Icons.add),
-          label: const Text("إضافة"),
-        ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: canAddCentral ? openAddCentralDialog : null,
+        icon: const Icon(Icons.add),
+        label: const Text("إضافة نوع مركزي"),
       ),
     );
   }

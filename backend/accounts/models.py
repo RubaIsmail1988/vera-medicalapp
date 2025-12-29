@@ -319,10 +319,10 @@ class DoctorAvailability(models.Model):
 # -----------------------------
 class Appointment(models.Model):
     STATUS_CHOICES = [
-        ('Pending', 'Pending'),
-        ('Confirmed', 'Confirmed'),
-        ('Cancelled', 'Cancelled'),
-        ("no_show", "No Show"),
+        ('pending', 'Pending'),
+        ('confirmed', 'Confirmed'),
+        ('cancelled', 'Cancelled'),
+        ('no_show', 'No Show'),
 
     ]
     patient = models.ForeignKey('CustomUser', on_delete=models.CASCADE, related_name='patient_appointments', limit_choices_to={'is_staff': False})

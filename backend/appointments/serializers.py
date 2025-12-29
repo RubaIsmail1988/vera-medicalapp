@@ -1,5 +1,5 @@
 from datetime import timedelta
-
+from datetime import date as date_cls
 from django.utils import timezone
 from rest_framework import serializers
 
@@ -8,7 +8,6 @@ from accounts.models import (
     AppointmentType,
     DoctorAvailability,
     DoctorAppointmentType,
-    DoctorSpecificVisitType,
     CustomUser,
 )
 
@@ -17,11 +16,11 @@ from clinical.models import ClinicalOrder, MedicalRecordFile
 
 class AppointmentCreateSerializer(serializers.Serializer):
     doctor_id = serializers.IntegerField()
+    appointment_type_id = serializers.IntegerField()  # REQUIRED (central only)
     date_time = serializers.DateTimeField()
     notes = serializers.CharField(required=False, allow_blank=True)
 
-    # Exactly one of the following:
-    appointment_type_id = serializers.IntegerField(required=False)
+    # If sent by mistake, we will reject it explicitly (future feature).
     doctor_specific_visit_type_id = serializers.IntegerField(required=False)
 
     def validate(self, attrs):
@@ -39,71 +38,55 @@ class AppointmentCreateSerializer(serializers.Serializer):
         except CustomUser.DoesNotExist:
             raise serializers.ValidationError({"doctor_id": "Doctor not found."})
 
-        # 3) Exactly one visit type selector
-        appointment_type_id = attrs.get("appointment_type_id")
-        doctor_specific_id = attrs.get("doctor_specific_visit_type_id")
-        if bool(appointment_type_id) == bool(doctor_specific_id):
+        # 3) Reject doctor-specific booking for now (keep model for future)
+        if attrs.get("doctor_specific_visit_type_id"):
             raise serializers.ValidationError(
-                {"detail": "Provide exactly one of appointment_type_id or doctor_specific_visit_type_id."}
+                {
+                    "doctor_specific_visit_type_id": (
+                        "Doctor-specific visit types are temporarily disabled. "
+                        "Please book using appointment_type_id."
+                    )
+                }
             )
 
-        # Normalize date_time to aware
+        # 4) Normalize date_time to aware
         start_dt = attrs["date_time"]
         if timezone.is_naive(start_dt):
             start_dt = timezone.make_aware(start_dt, timezone.get_current_timezone())
         attrs["date_time"] = start_dt
 
-        # 4) Resolve duration + follow-up gate flag
-        requires_approved_files = False
-        duration_minutes = None
+        # 5) Resolve AppointmentType + duration (Doctor override > default 15)
+        appointment_type_id = attrs["appointment_type_id"]
+        try:
+            appt_type = AppointmentType.objects.get(id=appointment_type_id)
+        except AppointmentType.DoesNotExist:
+            raise serializers.ValidationError({"appointment_type_id": "AppointmentType not found."})
 
-        if appointment_type_id:
-            try:
-                appt_type = AppointmentType.objects.get(id=appointment_type_id)
-            except AppointmentType.DoesNotExist:
-                raise serializers.ValidationError({"appointment_type_id": "AppointmentType not found."})
+        dat = DoctorAppointmentType.objects.filter(
+            doctor=doctor,
+            appointment_type=appt_type,
+        ).first()
 
-            # Decision: DoctorAppointmentType > AppointmentType.default_duration_minutes
-            dat = DoctorAppointmentType.objects.filter(
-                doctor=doctor,
-                appointment_type=appt_type,
-            ).first()
-
-            if dat:
-                duration_minutes = dat.duration_minutes
-            else:
-                duration_minutes = getattr(appt_type, "default_duration_minutes", None)
-
-            if not duration_minutes or duration_minutes <= 0:
-                raise serializers.ValidationError({"detail": "Invalid duration."})
-
-            requires_approved_files = bool(getattr(appt_type, "requires_approved_files", False))
-
-            attrs["appointment_type_obj"] = appt_type
-
+        if dat:
+            duration_minutes = dat.duration_minutes
         else:
-            # DoctorSpecificVisitType path (disabled for now due to Appointment requiring appointment_type FK)
-            try:
-                DoctorSpecificVisitType.objects.get(id=doctor_specific_id, doctor=doctor)
-            except DoctorSpecificVisitType.DoesNotExist:
-                raise serializers.ValidationError(
-                    {"doctor_specific_visit_type_id": "Visit type not found for this doctor."}
-                )
+            duration_minutes = getattr(appt_type, "default_duration_minutes", None)
 
-            raise serializers.ValidationError(
-                {
-                    "doctor_specific_visit_type_id": (
-                        "Doctor-specific booking is temporarily disabled until a mapping "
-                        "strategy to AppointmentType is implemented."
-                    )
-                }
-            )
+        if not duration_minutes or int(duration_minutes) <= 0:
+            raise serializers.ValidationError({"detail": "Invalid duration."})
 
-        end_dt = start_dt + timedelta(minutes=int(duration_minutes))
+        duration_minutes = int(duration_minutes)
+        end_dt = start_dt + timedelta(minutes=duration_minutes)
 
-        # 5) Availability check (single window per day)
-        day_name = start_dt.strftime("%A")  # Monday..Sunday (matches your model choices)
-        availability = DoctorAvailability.objects.filter(doctor=doctor, day_of_week=day_name).first()
+        requires_approved_files = bool(getattr(appt_type, "requires_approved_files", False))
+
+        # 6) Availability check (single window per day)
+        day_name = start_dt.strftime("%A")  # Monday..Sunday
+        availability = DoctorAvailability.objects.filter(
+            doctor=doctor,
+            day_of_week=day_name,
+        ).first()
+
         if not availability:
             raise serializers.ValidationError({"detail": "Doctor is not available on this day."})
 
@@ -116,21 +99,29 @@ class AppointmentCreateSerializer(serializers.Serializer):
         if end_t > availability.end_time:
             raise serializers.ValidationError({"detail": "Appointment exceeds doctor availability window."})
 
-        # 6) Overlap check (pending/confirmed block time)
-        existing = Appointment.objects.filter(
+        # 7) Overlap check (pending/confirmed block time)
+        # reduce candidate set: only appointments near requested window
+        window_start = start_dt - timedelta(hours=8)
+        window_end = end_dt + timedelta(hours=8)
+
+        candidates = Appointment.objects.filter(
             doctor=doctor,
             status__in=["pending", "confirmed"],
+            date_time__lt=window_end,
+        ).filter(
+            date_time__gte=window_start
         )
 
-        for ap in existing:
+        for ap in candidates:
             ap_start = ap.date_time
             ap_dur = int(ap.duration_minutes or 0)
             ap_end = ap_start + timedelta(minutes=ap_dur)
 
+            # [start, end) overlap
             if ap_start < end_dt and start_dt < ap_end:
                 raise serializers.ValidationError({"detail": "This time slot is already booked."})
 
-        # 7) Follow-up gate (requires approved files)
+        # 8) Follow-up gate (requires approved files)
         if requires_approved_files:
             open_orders = ClinicalOrder.objects.filter(
                 doctor=doctor,
@@ -156,7 +147,8 @@ class AppointmentCreateSerializer(serializers.Serializer):
                     )
 
         attrs["doctor_obj"] = doctor
-        attrs["duration_minutes"] = int(duration_minutes)
+        attrs["appointment_type_obj"] = appt_type
+        attrs["duration_minutes"] = duration_minutes
         attrs["requires_approved_files"] = requires_approved_files
         return attrs
 
@@ -176,3 +168,6 @@ class AppointmentCreateSerializer(serializers.Serializer):
             notes=validated_data.get("notes", ""),
         )
         return appointment
+class DoctorSlotsQuerySerializer(serializers.Serializer):
+    date = serializers.DateField()
+    appointment_type_id = serializers.IntegerField(min_value=1)
