@@ -424,6 +424,8 @@ class MyAppState extends State<MyApp> {
               ),
             ],
           ),
+
+          // ---------------- appointments ----------------
           GoRoute(
             path: 'appointments',
             builder:
@@ -432,40 +434,42 @@ class MyAppState extends State<MyApp> {
                   initialIndex: 5,
                 ),
             routes: [
-              // 1) /app/appointments/book  -> DoctorSearchScreen
+              // /app/appointments/book
               GoRoute(
                 path: 'book',
                 builder: (context, state) => const DoctorSearchScreen(),
-              ),
+                routes: [
+                  // /app/appointments/book/:doctorId
+                  GoRoute(
+                    path: ':doctorId',
+                    builder: (context, state) {
+                      final raw = state.pathParameters['doctorId'];
+                      final doctorId = int.tryParse(raw ?? '');
+                      if (doctorId == null) {
+                        return const Scaffold(
+                          body: Center(child: Text('Invalid doctor id')),
+                        );
+                      }
 
-              // 2) /app/appointments/book/:doctorId -> BookAppointmentScreen
-              GoRoute(
-                path: 'book/:doctorId',
-                builder: (context, state) {
-                  final raw = state.pathParameters['doctorId'];
-                  final doctorId = int.tryParse(raw ?? '');
-                  if (doctorId == null) {
-                    return const Scaffold(
-                      body: Center(child: Text('Invalid doctor id')),
-                    );
-                  }
+                      final extra = state.extra;
+                      final doctorName =
+                          (extra is Map && extra['doctorName'] != null)
+                              ? extra['doctorName'].toString()
+                              : 'طبيب';
 
-                  final extra = state.extra;
-                  final doctorName =
-                      (extra is Map && extra['doctorName'] != null)
-                          ? extra['doctorName'].toString()
-                          : 'طبيب';
-                  final doctorSpecialty =
-                      (extra is Map && extra['doctorSpecialty'] != null)
-                          ? extra['doctorSpecialty'].toString()
-                          : '';
+                      final doctorSpecialty =
+                          (extra is Map && extra['doctorSpecialty'] != null)
+                              ? extra['doctorSpecialty'].toString()
+                              : '';
 
-                  return BookAppointmentScreen(
-                    doctorId: doctorId,
-                    doctorName: doctorName,
-                    doctorSpecialty: doctorSpecialty,
-                  );
-                },
+                      return BookAppointmentScreen(
+                        doctorId: doctorId,
+                        doctorName: doctorName,
+                        doctorSpecialty: doctorSpecialty,
+                      );
+                    },
+                  ),
+                ],
               ),
             ],
           ),

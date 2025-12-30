@@ -339,9 +339,7 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
       floatingActionButton:
           showBookButton
               ? FloatingActionButton.extended(
-                // مهم: ليس لديك route باسم /app/appointments/book بدون doctorId
-                // الموجود هو /app/appointments (ثم داخلها حجز/بحث طبيب)
-                onPressed: () => context.go('/app/appointments'),
+                onPressed: () => context.go('/app/appointments/book'),
                 icon: const Icon(Icons.add),
                 label: const Text('حجز موعد'),
               )

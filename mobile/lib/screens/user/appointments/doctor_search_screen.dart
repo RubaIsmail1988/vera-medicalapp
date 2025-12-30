@@ -88,7 +88,7 @@ class _DoctorSearchScreenState extends State<DoctorSearchScreen> {
   }
 
   void openBooking(DoctorSearchResult doctor) {
-    context.push(
+    context.go(
       '/app/appointments/book/${doctor.id}',
       extra: {
         'doctorName': doctor.username,
