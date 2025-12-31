@@ -1,11 +1,11 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../../models/appointment_create_request.dart';
 import '../../../services/appointments_service.dart';
 import '../../../utils/ui_helpers.dart';
-import 'package:go_router/go_router.dart';
 
 class BookAppointmentScreen extends StatefulWidget {
   final int doctorId;
@@ -27,23 +27,27 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
   final AppointmentsService appointmentsService = AppointmentsService();
 
   bool loadingTypes = true;
-  bool loadingSlots = false;
+  bool loadingRange = false;
   bool booking = false;
 
   // payload from /api/appointments/doctors/<id>/visit-types/
   List<Map<String, dynamic>> central = const [];
   List<Map<String, dynamic>> specific = const [];
-
   bool specificBookingEnabled = false;
 
   Map<String, dynamic>? selectedCentral;
 
-  DateTime selectedDate = DateTime.now();
+  // Range UI
+  DateTime rangeFromDate = DateTime.now();
+  int rangeDays = 7;
 
-  // slots payload
+  // Range payload (only days with slots)
+  List<Map<String, dynamic>> availableDays =
+      const []; // [{date, availability, slots}]
+  String? selectedDay; // YYYY-MM-DD
   List<String> slots = const [];
   String? selectedSlot;
-  Map<String, String>? availability; // {"start": "09:00", "end": "12:00"}
+  Map<String, String>? availability; // {"start":"..","end":".."}
   int resolvedDurationMinutes = 0;
 
   final TextEditingController notesController = TextEditingController();
@@ -65,6 +69,20 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
     return int.tryParse(v?.toString() ?? '') ?? 0;
   }
 
+  String _fmtDate(DateTime d) {
+    final mm = d.month.toString().padLeft(2, '0');
+    final dd = d.day.toString().padLeft(2, '0');
+    return '${d.year}-$mm-$dd';
+  }
+
+  DateTime _parseYmd(String ymd) {
+    final parts = ymd.split('-');
+    final y = int.tryParse(parts.isNotEmpty ? parts[0] : '') ?? 1970;
+    final m = int.tryParse(parts.length > 1 ? parts[1] : '') ?? 1;
+    final d = int.tryParse(parts.length > 2 ? parts[2] : '') ?? 1;
+    return DateTime(y, m, d);
+  }
+
   String _centralLabel(Map<String, dynamic> c) {
     final name = (c['type_name'] ?? '').toString().trim();
     final dur = c['resolved_duration_minutes']?.toString() ?? '';
@@ -76,28 +94,35 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
     return '$name — $dur دقيقة${hasOverride ? " (مخصص)" : ""}';
   }
 
-  String _fmtDate(DateTime d) {
-    final mm = d.month.toString().padLeft(2, '0');
-    final dd = d.day.toString().padLeft(2, '0');
-    return '${d.year}-$mm-$dd';
-  }
+  /// Builds UTC datetime to send to backend, from:
+  /// - selectedDay (YYYY-MM-DD) from range payload
+  /// - selectedSlot (HH:MM) from slots list (shown as local time)
+  DateTime _buildDateTimeFromSlotYmd(String ymd, String slotHHmm) {
+    final date = _parseYmd(ymd);
 
-  DateTime _buildDateTimeFromSlot(DateTime date, String slotHHmm) {
     final parts = slotHHmm.split(':');
     final hh = int.tryParse(parts.isNotEmpty ? parts[0] : '') ?? 0;
     final mi = int.tryParse(parts.length > 1 ? parts[1] : '') ?? 0;
 
-    return DateTime.utc(date.year, date.month, date.day, hh, mi);
+    // slot is shown in local time => build local then convert to UTC
+    final local = DateTime(date.year, date.month, date.day, hh, mi);
+    return local.toUtc();
   }
 
   Future<void> loadTypes() async {
     if (!mounted) return;
+
     setState(() {
       loadingTypes = true;
-      // reset
+
       central = const [];
       specific = const [];
       selectedCentral = null;
+
+      // reset range
+      loadingRange = false;
+      availableDays = const [];
+      selectedDay = null;
       slots = const [];
       selectedSlot = null;
       availability = null;
@@ -146,7 +171,6 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
       setState(() {
         central = centralRaw;
 
-        // Contract: booking central only for now
         specificBookingEnabled = enabled;
         specific = enabled ? specificRaw : <Map<String, dynamic>>[];
 
@@ -154,8 +178,7 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
         loadingTypes = false;
       });
 
-      // Load slots after selecting initial central type
-      await loadSlots();
+      await loadSlotsRange();
     } on ApiException catch (e) {
       if (!mounted) return;
       Object? body;
@@ -173,32 +196,55 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
     }
   }
 
-  Future<void> pickDate() async {
+  Future<void> pickRangeFromDate() async {
     final now = DateTime.now();
-    final date = await showDatePicker(
+    final picked = await showDatePicker(
       context: context,
-      initialDate: selectedDate.isBefore(now) ? now : selectedDate,
+      initialDate: rangeFromDate.isBefore(now) ? now : rangeFromDate,
       firstDate: now,
       lastDate: now.add(const Duration(days: 365)),
     );
 
     if (!mounted) return;
-    if (date == null) return;
+    if (picked == null) return;
 
     setState(() {
-      selectedDate = date;
+      rangeFromDate = picked;
+
+      selectedDay = null;
       selectedSlot = null;
+      slots = const [];
+      availability = null;
     });
 
-    await loadSlots();
+    await loadSlotsRange();
   }
 
-  Future<void> loadSlots() async {
+  Future<void> setNextWeekPreset() async {
+    final now = DateTime.now();
+    if (!mounted) return;
+
+    setState(() {
+      rangeFromDate = now;
+      rangeDays = 7;
+
+      selectedDay = null;
+      selectedSlot = null;
+      slots = const [];
+      availability = null;
+    });
+
+    await loadSlotsRange();
+  }
+
+  Future<void> loadSlotsRange() async {
     if (!mounted) return;
 
     final selected = selectedCentral;
     if (selected == null) {
       setState(() {
+        availableDays = const [];
+        selectedDay = null;
         slots = const [];
         selectedSlot = null;
         availability = null;
@@ -210,6 +256,8 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
     final appointmentTypeId = _toInt(selected['appointment_type_id']);
     if (appointmentTypeId == 0) {
       setState(() {
+        availableDays = const [];
+        selectedDay = null;
         slots = const [];
         selectedSlot = null;
         availability = null;
@@ -218,45 +266,92 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
       return;
     }
 
+    final fromYmd = _fmtDate(rangeFromDate);
+    final toYmd = _fmtDate(rangeFromDate.add(Duration(days: rangeDays - 1)));
+
     setState(() {
-      loadingSlots = true;
+      loadingRange = true;
+
+      availableDays = const [];
+      selectedDay = null;
       slots = const [];
       selectedSlot = null;
       availability = null;
+
       resolvedDurationMinutes = _toInt(selected['resolved_duration_minutes']);
     });
 
     try {
-      final payload = await appointmentsService.fetchDoctorSlots(
+      final payload = await appointmentsService.fetchDoctorSlotsRange(
         doctorId: widget.doctorId,
-        date: _fmtDate(selectedDate),
         appointmentTypeId: appointmentTypeId,
+        fromDate: fromYmd,
+        toDate: toYmd,
       );
 
       if (!mounted) return;
 
-      final slotsRaw =
-          (payload['slots'] is List)
-              ? (payload['slots'] as List).map((e) => e.toString()).toList()
-              : <String>[];
+      final dur = payload['duration_minutes'];
+      final resolved = (dur is num) ? dur.toInt() : int.tryParse('$dur') ?? 0;
 
-      final availabilityRaw = payload['availability'];
-      Map<String, String>? availabilityMap;
-      if (availabilityRaw is Map) {
-        final start = (availabilityRaw['start'] ?? '').toString();
-        final end = (availabilityRaw['end'] ?? '').toString();
-        if (start.trim().isNotEmpty && end.trim().isNotEmpty) {
-          availabilityMap = {'start': start, 'end': end};
+      final daysRaw =
+          (payload['days'] is List)
+              ? (payload['days'] as List)
+                  .whereType<Map>()
+                  .map((e) => Map<String, dynamic>.from(e))
+                  .toList()
+              : <Map<String, dynamic>>[];
+
+      // Backend should return only days with slots; still guard.
+      final daysWithSlots =
+          daysRaw.where((d) {
+            final s = d['slots'];
+            return (s is List) && s.isNotEmpty;
+          }).toList();
+
+      // Auto select first available day
+      String? firstDay;
+      if (daysWithSlots.isNotEmpty) {
+        final d = (daysWithSlots.first['date'] ?? '').toString().trim();
+        if (d.isNotEmpty) firstDay = d;
+      }
+
+      List<String> initialSlots = const [];
+      Map<String, String>? initialAvailability;
+
+      if (firstDay != null) {
+        final dayObj = daysWithSlots.firstWhere(
+          (x) => (x['date'] ?? '').toString() == firstDay,
+          orElse: () => <String, dynamic>{},
+        );
+
+        final slotsList =
+            (dayObj['slots'] is List)
+                ? (dayObj['slots'] as List).map((e) => e.toString()).toList()
+                : <String>[];
+
+        final availabilityRaw = dayObj['availability'];
+        if (availabilityRaw is Map) {
+          final start = (availabilityRaw['start'] ?? '').toString();
+          final end = (availabilityRaw['end'] ?? '').toString();
+          if (start.trim().isNotEmpty && end.trim().isNotEmpty) {
+            initialAvailability = {'start': start, 'end': end};
+          }
         }
+
+        initialSlots = slotsList;
       }
 
       setState(() {
-        slots = slotsRaw;
-        availability = availabilityMap;
-        loadingSlots = false;
+        availableDays = daysWithSlots;
+        resolvedDurationMinutes = resolved;
 
-        // اختيار افتراضي أول Slot إذا موجود
+        selectedDay = firstDay;
+        slots = initialSlots;
+        availability = initialAvailability;
         selectedSlot = slots.isNotEmpty ? slots.first : null;
+
+        loadingRange = false;
       });
     } on ApiException catch (e) {
       if (!mounted) return;
@@ -267,12 +362,43 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
         body = e.body;
       }
       showApiErrorSnackBar(context, statusCode: e.statusCode, data: body);
-      setState(() => loadingSlots = false);
+      setState(() => loadingRange = false);
     } catch (_) {
       if (!mounted) return;
-      showAppErrorSnackBar(context, 'تعذّر تحميل الأوقات المتاحة.');
-      setState(() => loadingSlots = false);
+      showAppErrorSnackBar(context, 'تعذّر تحميل الأوقات المتاحة ضمن النطاق.');
+      setState(() => loadingRange = false);
     }
+  }
+
+  void _selectDay(String ymd) {
+    if (!mounted) return;
+
+    final dayObj = availableDays.firstWhere(
+      (d) => (d['date'] ?? '').toString() == ymd,
+      orElse: () => <String, dynamic>{},
+    );
+
+    final slotsList =
+        (dayObj['slots'] is List)
+            ? (dayObj['slots'] as List).map((e) => e.toString()).toList()
+            : <String>[];
+
+    final availabilityRaw = dayObj['availability'];
+    Map<String, String>? availabilityMap;
+    if (availabilityRaw is Map) {
+      final start = (availabilityRaw['start'] ?? '').toString();
+      final end = (availabilityRaw['end'] ?? '').toString();
+      if (start.trim().isNotEmpty && end.trim().isNotEmpty) {
+        availabilityMap = {'start': start, 'end': end};
+      }
+    }
+
+    setState(() {
+      selectedDay = ymd;
+      slots = slotsList;
+      availability = availabilityMap;
+      selectedSlot = slots.isNotEmpty ? slots.first : null;
+    });
   }
 
   Future<void> submitBooking() async {
@@ -292,6 +418,15 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
       return;
     }
 
+    if (selectedDay == null || selectedDay!.trim().isEmpty) {
+      showAppSnackBar(
+        context,
+        'اختر يومًا متاحًا أولاً.',
+        type: AppSnackBarType.warning,
+      );
+      return;
+    }
+
     if (selectedSlot == null || selectedSlot!.trim().isEmpty) {
       showAppSnackBar(
         context,
@@ -304,7 +439,7 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
     setState(() => booking = true);
 
     try {
-      final dt = _buildDateTimeFromSlot(selectedDate, selectedSlot!);
+      final dt = _buildDateTimeFromSlotYmd(selectedDay!, selectedSlot!);
 
       final req = AppointmentCreateRequest(
         doctorId: widget.doctorId,
@@ -323,6 +458,7 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
         context,
         'تم حجز الموعد بنجاح (الحالة: ${appointment.status}).',
       );
+
       if (!mounted) return;
       context.go('/app/appointments');
     } on ApiException catch (e) {
@@ -397,14 +533,17 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
                           if (!mounted) return;
                           setState(() {
                             selectedCentral = v;
+
+                            selectedDay = null;
                             selectedSlot = null;
+                            slots = const [];
+                            availability = null;
                           });
-                          await loadSlots();
+                          await loadSlotsRange();
                         },
                 decoration: const InputDecoration(hintText: 'اختر نوع الزيارة'),
               ),
 
-            // Contract: hide this section unless enabled
             if (!loadingTypes &&
                 specificBookingEnabled &&
                 specific.isNotEmpty) ...[
@@ -426,25 +565,31 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
             ],
 
             const SizedBox(height: 16),
-            Text('التاريخ', style: theme.textTheme.titleMedium),
+            Text('نطاق البحث عن الأوقات', style: theme.textTheme.titleMedium),
             const SizedBox(height: 8),
 
-            OutlinedButton.icon(
-              onPressed: booking ? null : pickDate,
-              icon: const Icon(Icons.date_range),
-              label: Text(_fmtDate(selectedDate)),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                OutlinedButton.icon(
+                  onPressed: booking ? null : pickRangeFromDate,
+                  icon: const Icon(Icons.date_range),
+                  label: Text('بداية النطاق: ${_fmtDate(rangeFromDate)}'),
+                ),
+                ChoiceChip(
+                  label: const Text('الأسبوع القادم'),
+                  selected: rangeDays == 7,
+                  onSelected: booking ? null : (_) => setNextWeekPreset(),
+                ),
+              ],
             ),
 
-            if (availabilityText != null) ...[
-              const SizedBox(height: 8),
-              Text(availabilityText, style: theme.textTheme.bodySmall),
-            ],
-
             const SizedBox(height: 16),
-            Text('الأوقات المتاحة', style: theme.textTheme.titleMedium),
+            Text('الأيام المتاحة', style: theme.textTheme.titleMedium),
             const SizedBox(height: 8),
 
-            if (loadingSlots)
+            if (loadingRange)
               const Center(
                 child: Padding(
                   padding: EdgeInsets.all(12),
@@ -453,6 +598,40 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
               )
             else if (selectedCentral == null)
               const Text('اختر نوع الزيارة أولاً.')
+            else if (availableDays.isEmpty)
+              const Text('لا توجد أوقات متاحة ضمن هذا النطاق.')
+            else
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children:
+                    availableDays.map((d) {
+                      final ymd = (d['date'] ?? '').toString();
+                      final isSelected = ymd == selectedDay;
+                      return ChoiceChip(
+                        label: Text(ymd),
+                        selected: isSelected,
+                        onSelected: booking ? null : (_) => _selectDay(ymd),
+                      );
+                    }).toList(),
+              ),
+
+            if (availabilityText != null) ...[
+              const SizedBox(height: 8),
+              Text(availabilityText, style: theme.textTheme.bodySmall),
+            ],
+
+            const SizedBox(height: 16),
+            Text(
+              'الأوقات المتاحة لليوم المختار',
+              style: theme.textTheme.titleMedium,
+            ),
+            const SizedBox(height: 8),
+
+            if (loadingRange)
+              const SizedBox.shrink()
+            else if (selectedDay == null)
+              const Text('اختر يومًا متاحًا أولاً.')
             else if (slots.isEmpty)
               const Text('لا توجد أوقات متاحة في هذا اليوم.')
             else

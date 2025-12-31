@@ -9,8 +9,8 @@ from datetime import datetime, timedelta, time
 from rest_framework.permissions import IsAuthenticated
 from django.utils import timezone
 from clinical.permissions import IsPatient, IsDoctor
-from .serializers import AppointmentCreateSerializer, DoctorSlotsQuerySerializer
-
+from .serializers import AppointmentCreateSerializer, DoctorSlotsQuerySerializer,DoctorSlotsRangeQuerySerializer
+from collections import defaultdict
 from accounts.models import (
     CustomUser,
     DoctorDetails,
@@ -170,11 +170,14 @@ def mark_no_show(request, pk: int):
         )
 
     # New: prevent future no_show
-    if appointment.date_time > timezone.now():
+    end_dt = appointment.date_time + timedelta(minutes=appointment.duration_minutes or 0)
+
+    if end_dt > timezone.now():
         return Response(
-            {"detail": "Future appointments cannot be marked as no_show."},
+            {"detail": "Appointment has not ended yet."},
             status=status.HTTP_400_BAD_REQUEST,
         )
+
 
     appointment.status = "no_show"
     appointment.save(update_fields=["status", "updated_at"])
@@ -229,10 +232,9 @@ class DoctorAvailableSlotsView(APIView):
         appointment_type_id = qs.validated_data["appointment_type_id"]
 
         doctor = get_object_or_404(CustomUser, id=doctor_id, role="doctor")
-
         appt_type = get_object_or_404(AppointmentType, id=appointment_type_id)
 
-        # Resolve duration: DoctorAppointmentType override OR AppointmentType.default_duration_minutes OR 15
+        # Resolve duration
         override = DoctorAppointmentType.objects.filter(
             doctor_id=doctor.id,
             appointment_type_id=appt_type.id,
@@ -241,13 +243,12 @@ class DoctorAvailableSlotsView(APIView):
         default_minutes = int(getattr(appt_type, "default_duration_minutes", 15) or 15)
         duration_minutes = int(override.duration_minutes) if override else default_minutes
         if duration_minutes <= 0:
-            return Response(
-                {"detail": "Invalid duration."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return Response({"detail": "Invalid duration."}, status=status.HTTP_400_BAD_REQUEST)
+
+        tz = timezone.get_current_timezone()
 
         # Availability for that weekday
-        day_name = day_date.strftime("%A")  # Monday..Sunday
+        day_name = day_date.strftime("%A")
         availability = DoctorAvailability.objects.filter(
             doctor_id=doctor.id,
             day_of_week=day_name,
@@ -262,65 +263,90 @@ class DoctorAvailableSlotsView(APIView):
                     "duration_minutes": duration_minutes,
                     "availability": None,
                     "slots": [],
-                    "timezone": str(timezone.get_current_timezone()),
+                    "timezone": str(tz),
                 },
                 status=status.HTTP_200_OK,
             )
 
-        # Build day window in aware datetimes
-        tz = timezone.get_current_timezone()
-        start_dt = timezone.make_aware(
-            datetime.combine(day_date, availability.start_time),
-            tz,
-        )
-        end_dt = timezone.make_aware(
-            datetime.combine(day_date, availability.end_time),
-            tz,
-        )
+        start_dt = timezone.make_aware(datetime.combine(day_date, availability.start_time), tz)
+        end_dt = timezone.make_aware(datetime.combine(day_date, availability.end_time), tz)
 
-        # Do not offer slots in the past for "today"
-        now = timezone.now()
-        if start_dt.date() == now.astimezone(tz).date():
-            # round up now to next minute (simple) then clamp
-            if now > start_dt:
-                start_dt = now.replace(second=0, microsecond=0)
-                # optional: round to nearest 5-min grid, but not required now
+        # today: don't show past
+        now_local = timezone.now().astimezone(tz)
+        if day_date == now_local.date() and now_local > start_dt:
+            start_dt = now_local.replace(second=0, microsecond=0)
 
-        # Collect existing appointments that block time
-        # IMPORTANT: handle your inconsistent status values safely
-        blocking_statuses = ["pending", "confirmed"]
+        if start_dt >= end_dt:
+            return Response(
+                {
+                    "doctor_id": doctor.id,
+                    "date": day_date.isoformat(),
+                    "appointment_type_id": appt_type.id,
+                    "duration_minutes": duration_minutes,
+                    "availability": {
+                        "start": availability.start_time.strftime("%H:%M"),
+                        "end": availability.end_time.strftime("%H:%M"),
+                    },
+                    "slots": [],
+                    "timezone": str(tz),
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        # Prefetch blocking appointments
+        blocking_statuses = ["pending", "Pending", "confirmed", "Confirmed"]
         existing = Appointment.objects.filter(
             doctor_id=doctor.id,
-            date_time__lt=end_dt,
-            date_time__gte=start_dt - timedelta(days=1),  # safe window
             status__in=blocking_statuses,
-        )
+            date_time__lt=end_dt,
+            date_time__gte=start_dt - timedelta(days=1),
+        ).only("date_time", "duration_minutes")
 
         intervals = []
         for ap in existing:
             ap_start = ap.date_time
             if timezone.is_naive(ap_start):
                 ap_start = timezone.make_aware(ap_start, tz)
+            else:
+                ap_start = ap_start.astimezone(tz)
+
             ap_dur = int(ap.duration_minutes or 0) or default_minutes
             ap_end = ap_start + timedelta(minutes=ap_dur)
             intervals.append((ap_start, ap_end))
 
-        # Helper overlap check
-        def overlaps(a_start, a_end):
+        intervals.sort(key=lambda x: x[0])
+
+        def find_first_overlap(a_start, a_end):
             for b_start, b_end in intervals:
                 if b_start < a_end and a_start < b_end:
-                    return True
-            return False
+                    return (b_start, b_end)
+            return None
 
         slots = []
+        step = timedelta(minutes=duration_minutes)
         cursor = start_dt.replace(second=0, microsecond=0)
 
-        step = timedelta(minutes=duration_minutes)
         while cursor + step <= end_dt:
             candidate_end = cursor + step
-            if not overlaps(cursor, candidate_end):
+            hit = find_first_overlap(cursor, candidate_end)
+
+            if hit is None:
                 slots.append(cursor.strftime("%H:%M"))
-            cursor = cursor + step
+                cursor = cursor + step
+                continue
+
+            # jump exactly to end of overlapping appointment (NO grid re-alignment)
+            _, hit_end = hit
+            jump_to = hit_end.replace(second=0, microsecond=0)
+
+            # safety: ensure forward progress
+            if jump_to <= cursor:
+                jump_to = cursor + step
+
+            cursor = jump_to
+
+            if cursor >= end_dt:
+                break
 
         return Response(
             {
@@ -337,6 +363,154 @@ class DoctorAvailableSlotsView(APIView):
             },
             status=status.HTTP_200_OK,
         )
+
+
+class DoctorAvailableSlotsRangeView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, doctor_id: int):
+        qs = DoctorSlotsRangeQuerySerializer(data=request.query_params)
+        qs.is_valid(raise_exception=True)
+        v = qs.validated_data
+
+        doctor = get_object_or_404(CustomUser, id=doctor_id, role="doctor")
+        appt_type = get_object_or_404(AppointmentType, id=v["appointment_type_id"])
+
+        # Resolve duration
+        override = DoctorAppointmentType.objects.filter(
+            doctor_id=doctor.id,
+            appointment_type_id=appt_type.id,
+        ).first()
+
+        default_minutes = int(getattr(appt_type, "default_duration_minutes", 15) or 15)
+        duration_minutes = int(override.duration_minutes) if override else default_minutes
+        if duration_minutes <= 0:
+            return Response({"detail": "Invalid duration."}, status=status.HTTP_400_BAD_REQUEST)
+
+        tz = timezone.get_current_timezone()
+        now_local = timezone.now().astimezone(tz)
+
+        start_date = v["from_date"]
+        end_date = v["to_date"]
+
+        # --------- Prefetch availabilities once ----------
+        avail_qs = DoctorAvailability.objects.filter(doctor_id=doctor.id).only(
+            "day_of_week", "start_time", "end_time"
+        )
+        availability_by_dayname = {a.day_of_week: a for a in avail_qs}
+
+        # --------- Prefetch blocking appointments once ----------
+        blocking_statuses = ["pending", "Pending", "confirmed", "Confirmed"]
+
+        range_start_dt = timezone.make_aware(datetime.combine(start_date, datetime.min.time()), tz)
+        range_end_dt = timezone.make_aware(datetime.combine(end_date, datetime.max.time()), tz)
+
+        existing = Appointment.objects.filter(
+            doctor_id=doctor.id,
+            status__in=blocking_statuses,
+            date_time__lt=range_end_dt,
+            date_time__gte=range_start_dt - timedelta(days=1),
+        ).only("date_time", "duration_minutes")
+
+        intervals_by_date = defaultdict(list)
+
+        for ap in existing:
+            ap_start = ap.date_time
+            if timezone.is_naive(ap_start):
+                ap_start = timezone.make_aware(ap_start, tz)
+            else:
+                ap_start = ap_start.astimezone(tz)
+
+            ap_dur = int(ap.duration_minutes or 0) or default_minutes
+            ap_end = ap_start + timedelta(minutes=ap_dur)
+
+            cur_date = ap_start.date()
+            end_touch = ap_end.date()
+            while cur_date <= end_touch:
+                intervals_by_date[cur_date].append((ap_start, ap_end))
+                cur_date = cur_date + timedelta(days=1)
+
+        def compute_day_slots(day_date):
+            day_name = day_date.strftime("%A")
+            availability = availability_by_dayname.get(day_name)
+            if not availability:
+                return None
+
+            start_dt = timezone.make_aware(datetime.combine(day_date, availability.start_time), tz)
+            end_dt = timezone.make_aware(datetime.combine(day_date, availability.end_time), tz)
+
+            if day_date == now_local.date() and now_local > start_dt:
+                start_dt = now_local.replace(second=0, microsecond=0)
+
+            if start_dt >= end_dt:
+                return None
+
+            intervals = intervals_by_date.get(day_date, [])
+            intervals = sorted(intervals, key=lambda x: x[0])
+
+            def find_first_overlap(a_start, a_end):
+                for b_start, b_end in intervals:
+                    if b_start < a_end and a_start < b_end:
+                        return (b_start, b_end)
+                return None
+
+            slots = []
+            step = timedelta(minutes=duration_minutes)
+            cursor = start_dt.replace(second=0, microsecond=0)
+
+            while cursor + step <= end_dt:
+                candidate_end = cursor + step
+                hit = find_first_overlap(cursor, candidate_end)
+
+                if hit is None:
+                    slots.append(cursor.strftime("%H:%M"))
+                    cursor = cursor + step
+                    continue
+
+                _, hit_end = hit
+                jump_to = hit_end.replace(second=0, microsecond=0)
+
+                if jump_to <= cursor:
+                    jump_to = cursor + step
+
+                cursor = jump_to
+
+                if cursor >= end_dt:
+                    break
+
+            if not slots:
+                return None  # requirement: only days with slots
+
+            return {
+                "date": day_date.isoformat(),
+                "availability": {
+                    "start": availability.start_time.strftime("%H:%M"),
+                    "end": availability.end_time.strftime("%H:%M"),
+                },
+                "slots": slots,
+            }
+
+        days_out = []
+        d = start_date
+        while d <= end_date:
+            payload = compute_day_slots(d)
+            if payload is not None:
+                days_out.append(payload)
+            d = d + timedelta(days=1)
+
+        return Response(
+            {
+                "doctor_id": doctor.id,
+                "appointment_type_id": appt_type.id,
+                "duration_minutes": duration_minutes,
+                "timezone": str(tz),
+                "range": {"from": start_date.isoformat(), "to": end_date.isoformat()},
+                "days": days_out,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    
 class MyAppointmentsView(APIView):
     permission_classes = [IsAuthenticated]
 

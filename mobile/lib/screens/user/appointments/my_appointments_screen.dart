@@ -27,7 +27,15 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
   // Server-side filters
   String statusFilter =
       'all'; // all | pending | confirmed | cancelled | no_show
+
+  // time filter supported by backend: upcoming | past | all
+  String timeFilter = 'upcoming';
+
+  // preset supported by backend: today | next7 | day
   String? datePreset; // null | today | next7 | day
+  String? presetDay; // YYYY-MM-DD (only when datePreset == 'day')
+
+  // legacy/optional (keep, but we won’t use it in UI now)
   String? fromDate; // YYYY-MM-DD
   String? toDate; // YYYY-MM-DD
 
@@ -96,9 +104,13 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
     final s = _normStatus(a.status);
     if (s == 'cancelled' || s == 'no_show') return false;
 
-    // do not allow no_show for future appointments
+    // No Show after end time (start + duration), not after start only
     final now = DateTime.now();
-    return a.dateTime.toLocal().isBefore(now);
+    final endTime = a.dateTime.toLocal().add(
+      Duration(minutes: a.durationMinutes),
+    );
+
+    return endTime.isBefore(now);
   }
 
   bool _canConfirm(Appointment a) {
@@ -125,8 +137,13 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
     });
 
     try {
+      // IMPORTANT: prefer preset/time filters (server-side)
       final data = await appointmentsService.fetchMyAppointments(
         status: statusFilter == 'all' ? null : statusFilter,
+        time: timeFilter,
+        preset: datePreset,
+        date: presetDay,
+        // keep legacy support (not used in UI now)
         fromDate: fromDate,
         toDate: toDate,
       );
@@ -276,27 +293,49 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
   }
 
   Future<void> _setStatusFilter(String v) async {
+    if (!mounted) return;
     setState(() => statusFilter = v);
     await fetch();
   }
 
+  Future<void> _setTimeFilter(String v) async {
+    if (!mounted) return;
+
+    setState(() {
+      timeFilter = v;
+
+      // past + next7 is illogical -> clear date preset
+      if (timeFilter == 'past' && datePreset == 'next7') {
+        datePreset = null;
+        presetDay = null;
+        fromDate = null;
+        toDate = null;
+      }
+    });
+
+    await fetch();
+  }
+
   Future<void> _setToday() async {
-    final now = DateTime.now();
-    final ymd = fmtYmd(now);
+    if (!mounted) return;
     setState(() {
       datePreset = 'today';
-      fromDate = ymd;
-      toDate = ymd;
+      presetDay = null;
+      fromDate = null;
+      toDate = null;
     });
     await fetch();
   }
 
   Future<void> _setNext7() async {
-    final now = DateTime.now();
+    if (!mounted) return;
+    if (timeFilter == 'past') return; // guard: hidden in UI but keep safe
+
     setState(() {
       datePreset = 'next7';
-      fromDate = fmtYmd(now);
-      toDate = fmtYmd(now.add(const Duration(days: 7)));
+      presetDay = null;
+      fromDate = null;
+      toDate = null;
     });
     await fetch();
   }
@@ -316,19 +355,43 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
     final ymd = fmtYmd(picked);
     setState(() {
       datePreset = 'day';
-      fromDate = ymd;
-      toDate = ymd;
+      presetDay = ymd;
+      fromDate = null;
+      toDate = null;
     });
     await fetch();
   }
 
   Future<void> _clearDateFilter() async {
+    if (!mounted) return;
     setState(() {
       datePreset = null;
+      presetDay = null;
       fromDate = null;
       toDate = null;
     });
     await fetch();
+  }
+
+  String _timeLabel(String v) {
+    switch (v) {
+      case 'upcoming':
+        return 'القادمة';
+      case 'past':
+        return 'السابقة';
+      case 'all':
+        return 'الكل';
+      default:
+        return v;
+    }
+  }
+
+  String _dateFilterLabel() {
+    if (datePreset == null) return 'بدون فلترة تاريخ';
+    if (datePreset == 'today') return 'اليوم';
+    if (datePreset == 'next7') return 'الأسبوع القادم';
+    if (datePreset == 'day' && presetDay != null) return 'يوم: $presetDay';
+    return 'فلترة تاريخ';
   }
 
   @override
@@ -377,6 +440,36 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
                   ),
                   const SizedBox(height: 12),
 
+                  // -------- Time filter --------
+                  Text('الوقت', style: Theme.of(context).textTheme.titleSmall),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      ChoiceChip(
+                        label: Text(_timeLabel('upcoming')),
+                        selected: timeFilter == 'upcoming',
+                        onSelected: (_) => _setTimeFilter('upcoming'),
+                      ),
+                      ChoiceChip(
+                        label: Text(_timeLabel('past')),
+                        selected: timeFilter == 'past',
+                        onSelected: (_) => _setTimeFilter('past'),
+                      ),
+                      ChoiceChip(
+                        label: Text(_timeLabel('all')),
+                        selected: timeFilter == 'all',
+                        onSelected: (_) => _setTimeFilter('all'),
+                      ),
+                    ],
+                  ),
+
+                  const SizedBox(height: 14),
+
+                  // -------- Status filter --------
+                  Text('الحالة', style: Theme.of(context).textTheme.titleSmall),
+                  const SizedBox(height: 8),
                   Wrap(
                     spacing: 8,
                     runSpacing: 8,
@@ -409,43 +502,47 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
                     ],
                   ),
 
-                  if (role == 'doctor') ...[
-                    const SizedBox(height: 10),
-                    Text(
-                      'فلترة حسب التاريخ',
-                      style: Theme.of(context).textTheme.titleSmall,
-                    ),
-                    const SizedBox(height: 8),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        ChoiceChip(
-                          label: const Text('اليوم'),
-                          selected: datePreset == 'today',
-                          onSelected: (_) => _setToday(),
-                        ),
+                  const SizedBox(height: 14),
+
+                  // -------- Date preset filter --------
+                  Text(
+                    'التاريخ',
+                    style: Theme.of(context).textTheme.titleSmall,
+                  ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      ChoiceChip(
+                        label: const Text('اليوم'),
+                        selected: datePreset == 'today',
+                        onSelected: (_) => _setToday(),
+                      ),
+
+                      // Hide "next7" when timeFilter == past
+                      if (timeFilter != 'past')
                         ChoiceChip(
                           label: const Text('الأسبوع القادم'),
                           selected: datePreset == 'next7',
                           onSelected: (_) => _setNext7(),
                         ),
-                        ActionChip(
-                          avatar: const Icon(Icons.date_range),
-                          label: Text(
-                            datePreset == 'day' && fromDate != null
-                                ? 'اليوم: $fromDate'
-                                : 'اختيار يوم',
-                          ),
-                          onPressed: _pickDay,
+
+                      ActionChip(
+                        avatar: const Icon(Icons.date_range),
+                        label: Text(
+                          datePreset == 'day' && presetDay != null
+                              ? _dateFilterLabel()
+                              : 'اختيار يوم',
                         ),
-                        TextButton(
-                          onPressed: _clearDateFilter,
-                          child: const Text('مسح'),
-                        ),
-                      ],
-                    ),
-                  ],
+                        onPressed: _pickDay,
+                      ),
+                      TextButton(
+                        onPressed: _clearDateFilter,
+                        child: const Text('مسح'),
+                      ),
+                    ],
+                  ),
 
                   const SizedBox(height: 12),
 

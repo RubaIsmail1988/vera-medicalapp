@@ -202,14 +202,12 @@ class AppointmentsService {
 
     // time
     final t = (time ?? '').trim();
-    if (t.isNotEmpty && t != 'all') {
-      // إذا بدك الافتراضي upcoming لا ترسله، أو أرسله صراحة - حسب قرارك
-      qp['time'] = t; // upcoming|past
-    } else if (t == 'all') {
-      qp['time'] = 'all';
+    if (t.isNotEmpty) {
+      // upcoming|past|all
+      qp['time'] = t;
     }
 
-    // preset (takes precedence conceptually; backend will decide)
+    // preset (takes precedence conceptually)
     final p = (preset ?? '').trim();
     if (p.isNotEmpty) {
       qp['preset'] = p; // today|next7|day
@@ -225,8 +223,9 @@ class AppointmentsService {
       if (to.isNotEmpty) qp['to'] = to;
     }
 
-    final query = qp.isEmpty ? '' : '?${Uri(queryParameters: qp).query}';
-    final endpoint = "/my/$query";
+    // FIX: build endpoint correctly
+    final endpoint =
+        qp.isEmpty ? "/my/" : "/my/?${Uri(queryParameters: qp).query}";
 
     final resp = await _authorizedAppointmentsRequest(endpoint, "GET");
 
@@ -272,9 +271,38 @@ class AppointmentsService {
       "POST",
     );
 
-    // confirm endpoint يرجّع 200 حتى لو already confirmed (idempotent)
     if (resp.statusCode != 200) {
       throw ApiException(resp.statusCode, resp.body);
     }
+  }
+
+  Future<Map<String, dynamic>> fetchDoctorSlotsRange({
+    required int doctorId,
+    required int appointmentTypeId,
+    String? fromDate, // YYYY-MM-DD
+    String? toDate, // YYYY-MM-DD
+    int? days, // 1..31
+  }) async {
+    final qp = <String, String>{
+      'appointment_type_id': appointmentTypeId.toString(),
+    };
+
+    if (days != null) {
+      qp['days'] = days.toString();
+    } else {
+      if (fromDate != null) qp['from_date'] = fromDate;
+      if (toDate != null) qp['to_date'] = toDate;
+    }
+
+    final uri = Uri(
+      path: "/doctors/$doctorId/slots-range/",
+      queryParameters: qp,
+    );
+
+    final resp = await _authorizedAppointmentsRequest(uri.toString(), "GET");
+    if (resp.statusCode != 200) {
+      throw ApiException(resp.statusCode, resp.body);
+    }
+    return Map<String, dynamic>.from(jsonDecode(resp.body));
   }
 }

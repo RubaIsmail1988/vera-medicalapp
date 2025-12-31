@@ -49,10 +49,13 @@ class AppointmentCreateSerializer(serializers.Serializer):
                 }
             )
 
-        # 4) Normalize date_time to aware
+        # 4) Normalize date_time to aware (current tz)
+        tz = timezone.get_current_timezone()
         start_dt = attrs["date_time"]
         if timezone.is_naive(start_dt):
-            start_dt = timezone.make_aware(start_dt, timezone.get_current_timezone())
+            start_dt = timezone.make_aware(start_dt, tz)
+        else:
+            start_dt = start_dt.astimezone(tz)
         attrs["date_time"] = start_dt
 
         # 5) Resolve AppointmentType + duration (Doctor override > default 15)
@@ -99,27 +102,39 @@ class AppointmentCreateSerializer(serializers.Serializer):
         if end_t > availability.end_time:
             raise serializers.ValidationError({"detail": "Appointment exceeds doctor availability window."})
 
-        # 7) Overlap check (pending/confirmed block time)
-        # reduce candidate set: only appointments near requested window
-        window_start = start_dt - timedelta(hours=8)
-        window_end = end_dt + timedelta(hours=8)
+        # 7) Overlap check (pending/confirmed block time) + handle legacy capitalized values
+        blocking_statuses = ["pending", "confirmed", "Pending", "Confirmed"]
+
+        # نجيب أي موعد ممكن يتقاطع مع [start_dt, end_dt)
+        # شرط البداية: ap.date_time < end_dt
+        # وشرط النهاية: ap_end > start_dt  (هذا ما سنفحصه في الحلقة)
+        # لكن لتقليل البيانات: نأخذ فقط مواعيد تبدأ قبل end_dt
+        # ونأخذ مواعيد تبدأ بعد (start_dt - max_duration_safety)
+        # بدل 8 ساعات: نستخدم 1 يوم كـ buffer آمن وبسيط مثل slots-range
+        window_start = start_dt - timedelta(days=1)
+        window_end = end_dt
 
         candidates = Appointment.objects.filter(
             doctor=doctor,
-            status__in=["pending", "confirmed"],
+            status__in=blocking_statuses,
             date_time__lt=window_end,
-        ).filter(
-            date_time__gte=window_start
-        )
+            date_time__gte=window_start,
+        ).only("date_time", "duration_minutes")
 
         for ap in candidates:
             ap_start = ap.date_time
-            ap_dur = int(ap.duration_minutes or 0)
+            if timezone.is_naive(ap_start):
+                ap_start = timezone.make_aware(ap_start, tz)
+            else:
+                ap_start = ap_start.astimezone(tz)
+
+            ap_dur = int(ap.duration_minutes or 0) or duration_minutes
             ap_end = ap_start + timedelta(minutes=ap_dur)
 
             # [start, end) overlap
             if ap_start < end_dt and start_dt < ap_end:
                 raise serializers.ValidationError({"detail": "This time slot is already booked."})
+
 
         # 8) Follow-up gate (requires approved files)
         if requires_approved_files:
@@ -168,6 +183,55 @@ class AppointmentCreateSerializer(serializers.Serializer):
             notes=validated_data.get("notes", ""),
         )
         return appointment
+
+
 class DoctorSlotsQuerySerializer(serializers.Serializer):
     date = serializers.DateField()
     appointment_type_id = serializers.IntegerField(min_value=1)
+
+
+class DoctorSlotsRangeQuerySerializer(serializers.Serializer):
+    appointment_type_id = serializers.IntegerField(min_value=1)
+
+    from_date = serializers.DateField(required=False)
+    to_date = serializers.DateField(required=False)
+
+    days = serializers.IntegerField(required=False, min_value=1, max_value=31)
+
+    MAX_RANGE_DAYS = 31  # keep consistent with days max
+
+    def validate(self, attrs):
+        f = attrs.get("from_date")
+        t = attrs.get("to_date")
+        days = attrs.get("days")
+
+        if days is None and (f is None or t is None):
+            raise serializers.ValidationError(
+                "Provide either days or (from_date and to_date)."
+            )
+
+        if days is not None and (f is not None or t is not None):
+            raise serializers.ValidationError(
+                "Use either days or from/to, not both."
+            )
+
+        if days is None:
+            if f > t:
+                raise serializers.ValidationError("from_date must be <= to_date.")
+
+            span_days = (t - f).days + 1
+            if span_days < 1:
+                raise serializers.ValidationError("Invalid date range.")
+            if span_days > self.MAX_RANGE_DAYS:
+                raise serializers.ValidationError(
+                    f"Date range is too large. Max {self.MAX_RANGE_DAYS} days."
+                )
+            return attrs
+
+        today = timezone.localdate()
+        f2 = today
+        t2 = today + timedelta(days=int(days) - 1)
+
+        attrs["from_date"] = f2
+        attrs["to_date"] = t2
+        return attrs

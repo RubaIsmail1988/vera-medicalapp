@@ -7,6 +7,7 @@ from .views import (
     cancel_appointment,
     confirm_appointment,
     DoctorAvailableSlotsView,
+    DoctorAvailableSlotsRangeView,
     MyAppointmentsView,
 )
 
@@ -38,5 +39,12 @@ urlpatterns = [
 
     #My appointments
     path("my/", MyAppointmentsView.as_view(), name="my-appointments"),
+   
+   #Range slots
+    path(
+        "doctors/<int:doctor_id>/slots-range/",
+        DoctorAvailableSlotsRangeView.as_view(),
+        name="doctor-slots-range",
+    ),
 
 ]
