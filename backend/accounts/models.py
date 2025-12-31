@@ -144,26 +144,7 @@ class PatientDetails(models.Model):
     def __str__(self):
         return f"{self.user.username} - Patient"
 
-#------------------------------
-#Appointment Type
-#-----------------------------
 
-class AppointmentType(models.Model):
-    type_name = models.CharField(max_length=150, unique=True)
-    description = models.TextField(blank=True, null=True)
-    default_duration_minutes = models.PositiveIntegerField(
-        default=15,
-        validators=[MinValueValidator(1)],
-    )
-    requires_approved_files = models.BooleanField(default=False)    
-    created_at = models.DateTimeField(default=timezone.now)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        ordering = ["type_name"]
-
-    def __str__(self):
-        return self.type_name
 #------------------------------
 #reset password
 #-----------------------------
@@ -212,7 +193,27 @@ class PasswordResetOTP(models.Model):
     def __str__(self):
         return f"PasswordResetOTP(user={self.user.email}, code={self.code}, used={self.is_used})"
 
+#------------------------------
+#Appointment Type
+#-----------------------------
 
+class AppointmentType(models.Model):
+    type_name = models.CharField(max_length=150, unique=True)
+    description = models.TextField(blank=True, null=True)
+    default_duration_minutes = models.PositiveIntegerField(
+        default=15,
+        validators=[MinValueValidator(1)],
+    )
+    requires_approved_files = models.BooleanField(default=False)    
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["type_name"]
+
+    def __str__(self):
+        return self.type_name
+    
 # -----------------------------
 # أنواع زيارة الطبيب الخاصة به (مدة محددة لكل طبيب)
 # -----------------------------
@@ -363,6 +364,37 @@ class Lab(models.Model):
         return self.name
 
 
+class DoctorAbsence(models.Model):
+    TYPE_CHOICES = [
+        ("planned", "Planned"),
+        ("emergency", "Emergency"),
+    ]
+
+    doctor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="absences",
+        limit_choices_to={"role": "doctor"},
+    )
+    start_time = models.DateTimeField()
+    end_time = models.DateTimeField()
+    type = models.CharField(max_length=20, choices=TYPE_CHOICES, default="planned")
+    notes = models.TextField(blank=True, null=True)
+
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-start_time"]
+        constraints = [
+            models.CheckConstraint(
+                check=models.Q(start_time__lt=models.F("end_time")),
+                name="chk_absence_start_before_end",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.doctor.username} absence {self.start_time} -> {self.end_time}"
 
 
     
