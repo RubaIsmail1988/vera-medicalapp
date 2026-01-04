@@ -30,6 +30,7 @@ import 'screens/user/clinical/order_details_screen.dart';
 import 'screens/doctor/doctor_scheduling_settings_screen.dart';
 import 'screens/doctor/doctor_availability_screen.dart';
 import 'screens/doctor/doctor_visit_types_screen.dart';
+import 'screens/doctor/doctor_absences_screen.dart';
 
 //aAppointment
 import 'screens/user/appointments/book_appointment_screen.dart';
@@ -168,6 +169,10 @@ class MyAppState extends State<MyApp> {
               GoRoute(
                 path: 'visit-types',
                 builder: (context, state) => const DoctorVisitTypesScreen(),
+              ),
+              GoRoute(
+                path: 'absences',
+                builder: (context, state) => const DoctorAbsencesScreen(),
               ),
             ],
           ),

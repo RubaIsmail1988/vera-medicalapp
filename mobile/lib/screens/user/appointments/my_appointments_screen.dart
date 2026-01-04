@@ -95,7 +95,8 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
     final s = _normStatus(a.status);
     if (s == 'no_show') return false;
     if (s == 'cancelled') return false;
-    return true;
+    // قرارنا: pending/confirmed قابل للإلغاء
+    return s == 'pending' || s == 'confirmed';
   }
 
   bool _canMarkNoShow(Appointment a) {
@@ -128,6 +129,44 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
     return '$y-$m-$d  $hh:$mm';
   }
 
+  String _emptyLabelByFilters() {
+    final hasStatus = statusFilter != 'all';
+
+    String timePart;
+    if (timeFilter == 'past') {
+      timePart = 'سابقة';
+    } else if (timeFilter == 'upcoming') {
+      timePart = 'قادمة';
+    } else {
+      timePart = 'حالياً';
+    }
+
+    String datePart = '';
+    if (datePreset == 'today') datePart = ' لليوم';
+    if (datePreset == 'next7') datePart = ' للأسبوع القادم';
+    if (datePreset == 'day' && presetDay != null) datePart = ' ليوم $presetDay';
+
+    final statusPart = hasStatus ? ' بهذه الحالة' : '';
+    return 'لا توجد مواعيد $timePart$statusPart$datePart.';
+  }
+
+  void _sortAppointmentsInPlace(List<Appointment> data) {
+    // Default sorting:
+    // Upcoming: الأقدم أولًا
+    // Past: الأحدث أولًا
+    // All: الأحدث أولًا
+    if (timeFilter == 'upcoming') {
+      data.sort((a, b) => a.dateTime.compareTo(b.dateTime));
+      return;
+    }
+    if (timeFilter == 'past') {
+      data.sort((a, b) => b.dateTime.compareTo(a.dateTime));
+      return;
+    }
+    // all
+    data.sort((a, b) => b.dateTime.compareTo(a.dateTime));
+  }
+
   Future<void> fetch() async {
     if (!mounted) return;
 
@@ -137,18 +176,16 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
     });
 
     try {
-      // IMPORTANT: prefer preset/time filters (server-side)
       final data = await appointmentsService.fetchMyAppointments(
         status: statusFilter == 'all' ? null : statusFilter,
         time: timeFilter,
         preset: datePreset,
         date: presetDay,
-        // keep legacy support (not used in UI now)
         fromDate: fromDate,
         toDate: toDate,
       );
 
-      data.sort((a, b) => b.dateTime.compareTo(a.dateTime));
+      _sortAppointmentsInPlace(data);
 
       if (!mounted) return;
       setState(() {
@@ -225,7 +262,7 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
   Future<void> _markNoShow(Appointment a) async {
     final confirm = await showConfirmDialog(
       context,
-      title: 'تحديد كـ No Show',
+      title: 'تحديد كـ لم يحضر',
       message: 'هل تريد وضع هذا الموعد على أنه لم يحضر؟',
       confirmText: 'تأكيد',
       cancelText: 'إلغاء',
@@ -238,7 +275,7 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
     try {
       await appointmentsService.markNoShow(appointmentId: a.id);
       if (!mounted) return;
-      showAppSuccessSnackBar(context, 'تم تحديث الحالة إلى No Show.');
+      showAppSuccessSnackBar(context, 'تم تحديث الحالة إلى لم يحضر.');
       await fetch();
     } on ApiException catch (e) {
       if (!mounted) return;
@@ -329,7 +366,7 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
 
   Future<void> _setNext7() async {
     if (!mounted) return;
-    if (timeFilter == 'past') return; // guard: hidden in UI but keep safe
+    if (timeFilter == 'past') return;
 
     setState(() {
       datePreset = 'next7';
@@ -342,11 +379,31 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
 
   Future<void> _pickDay() async {
     final now = DateTime.now();
+
+    final DateTime firstDate;
+    final DateTime lastDate;
+
+    if (timeFilter == 'past') {
+      firstDate = now.subtract(const Duration(days: 365));
+      lastDate = now;
+    } else if (timeFilter == 'upcoming') {
+      firstDate = now;
+      lastDate = now.add(const Duration(days: 365));
+    } else {
+      firstDate = now.subtract(const Duration(days: 365));
+      lastDate = now.add(const Duration(days: 365));
+    }
+
+    final initialDate =
+        now.isBefore(firstDate)
+            ? firstDate
+            : (now.isAfter(lastDate) ? lastDate : now);
+
     final picked = await showDatePicker(
       context: context,
-      initialDate: now,
-      firstDate: now.subtract(const Duration(days: 365)),
-      lastDate: now.add(const Duration(days: 365)),
+      initialDate: initialDate,
+      firstDate: firstDate,
+      lastDate: lastDate,
     );
 
     if (!mounted) return;
@@ -392,6 +449,23 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
     if (datePreset == 'next7') return 'الأسبوع القادم';
     if (datePreset == 'day' && presetDay != null) return 'يوم: $presetDay';
     return 'فلترة تاريخ';
+  }
+
+  String _statusChipLabel(String v) {
+    switch (v) {
+      case 'all':
+        return 'الكل';
+      case 'pending':
+        return 'قيد الانتظار';
+      case 'confirmed':
+        return 'مؤكد';
+      case 'cancelled':
+        return 'ملغي';
+      case 'no_show':
+        return 'لم يحضر';
+      default:
+        return v;
+    }
   }
 
   @override
@@ -475,27 +549,27 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
                     runSpacing: 8,
                     children: [
                       ChoiceChip(
-                        label: const Text('الكل'),
+                        label: Text(_statusChipLabel('all')),
                         selected: statusFilter == 'all',
                         onSelected: (_) => _setStatusFilter('all'),
                       ),
                       ChoiceChip(
-                        label: const Text('Pending'),
+                        label: Text(_statusChipLabel('pending')),
                         selected: statusFilter == 'pending',
                         onSelected: (_) => _setStatusFilter('pending'),
                       ),
                       ChoiceChip(
-                        label: const Text('Confirmed'),
+                        label: Text(_statusChipLabel('confirmed')),
                         selected: statusFilter == 'confirmed',
                         onSelected: (_) => _setStatusFilter('confirmed'),
                       ),
                       ChoiceChip(
-                        label: const Text('Cancelled'),
+                        label: Text(_statusChipLabel('cancelled')),
                         selected: statusFilter == 'cancelled',
                         onSelected: (_) => _setStatusFilter('cancelled'),
                       ),
                       ChoiceChip(
-                        label: const Text('No Show'),
+                        label: Text(_statusChipLabel('no_show')),
                         selected: statusFilter == 'no_show',
                         onSelected: (_) => _setStatusFilter('no_show'),
                       ),
@@ -519,21 +593,22 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
                         selected: datePreset == 'today',
                         onSelected: (_) => _setToday(),
                       ),
-
-                      // Hide "next7" when timeFilter == past
                       if (timeFilter != 'past')
                         ChoiceChip(
                           label: const Text('الأسبوع القادم'),
                           selected: datePreset == 'next7',
                           onSelected: (_) => _setNext7(),
                         ),
-
                       ActionChip(
                         avatar: const Icon(Icons.date_range),
                         label: Text(
                           datePreset == 'day' && presetDay != null
                               ? _dateFilterLabel()
-                              : 'اختيار يوم',
+                              : (timeFilter == 'past'
+                                  ? 'اختيار يوم سابق'
+                                  : timeFilter == 'upcoming'
+                                  ? 'اختيار يوم قادم'
+                                  : 'اختيار يوم'),
                         ),
                         onPressed: _pickDay,
                       ),
@@ -547,25 +622,23 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
                   const SizedBox(height: 12),
 
                   if (appointments.isEmpty)
-                    const Center(
+                    Center(
                       child: Padding(
-                        padding: EdgeInsets.only(top: 32),
-                        child: Text('لا توجد مواعيد حالياً.'),
+                        padding: const EdgeInsets.only(top: 32),
+                        child: Text(_emptyLabelByFilters()),
                       ),
                     )
                   else
                     ...appointments.map((a) {
                       final typeName =
-                          (a.appointmentTypeName ??
-                                  'Type #${a.appointmentType}')
-                              .trim();
+                          (a.appointmentTypeName ?? 'نوع زيارة').trim();
 
                       final statusLabel = _statusLabel(a.status);
 
                       final counterpartLine =
                           role == 'doctor'
-                              ? 'المريض: ${(a.patientName ?? 'Patient #${a.patient}').trim()}'
-                              : 'الطبيب: ${(a.doctorName ?? 'Doctor #${a.doctor}').trim()}';
+                              ? 'المريض: ${(a.patientName ?? 'مريض #${a.patient}').trim()}'
+                              : 'الطبيب: ${(a.doctorName ?? 'طبيب #${a.doctor}').trim()}';
 
                       final notes = (a.notes ?? '').trim();
 
@@ -593,7 +666,7 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
                                 if (canNoShow)
                                   const PopupMenuItem(
                                     value: 'no_show',
-                                    child: Text('No Show'),
+                                    child: Text('لم يحضر'),
                                   ),
                                 if (canCancel)
                                   const PopupMenuItem(
@@ -609,6 +682,11 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
                         );
                       }
 
+                      final title =
+                          a.durationMinutes > 0
+                              ? '$typeName (${a.durationMinutes} دقيقة)'
+                              : typeName;
+
                       return Padding(
                         padding: const EdgeInsets.only(bottom: 8),
                         child: Card(
@@ -618,7 +696,7 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
                               child: Icon(_statusIcon(a.status)),
                             ),
                             title: Text(
-                              typeName,
+                              title,
                               style: const TextStyle(
                                 fontWeight: FontWeight.w700,
                               ),

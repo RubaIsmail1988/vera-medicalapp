@@ -9,6 +9,8 @@ from accounts.models import (
     DoctorAvailability,
     DoctorAppointmentType,
     CustomUser,
+    DoctorAbsence,
+
 )
 
 from clinical.models import ClinicalOrder, MedicalRecordFile
@@ -101,6 +103,19 @@ class AppointmentCreateSerializer(serializers.Serializer):
 
         if end_t > availability.end_time:
             raise serializers.ValidationError({"detail": "Appointment exceeds doctor availability window."})
+        # 6.5) Absence check (planned/emergency blocks booking) using [start, end)
+        # Any overlap with doctor absences => reject booking
+        absences = DoctorAbsence.objects.filter(
+            doctor=doctor,
+            start_time__lt=end_dt,
+            end_time__gt=start_dt,
+        )
+
+        if absences.exists():
+            raise serializers.ValidationError(
+                {"detail": "Doctor is not available during this time."}
+            )
+
 
         # 7) Overlap check (pending/confirmed block time) + handle legacy capitalized values
         blocking_statuses = ["pending", "confirmed", "Pending", "Confirmed"]
@@ -235,3 +250,159 @@ class DoctorSlotsRangeQuerySerializer(serializers.Serializer):
         attrs["from_date"] = f2
         attrs["to_date"] = t2
         return attrs
+
+class DoctorAbsenceSerializer(serializers.ModelSerializer):
+    """
+    CRUD serializer for DoctorAbsence (doctor-managed).
+    Validations:
+      - start_time < end_time
+      - normalize to current timezone (aware)
+      - prevent overlap with other absences for the same doctor (MVP)
+      - conflict guard: absence cannot overlap with upcoming appointments
+        with status in pending/confirmed (legacy case variants supported)
+      - standard overlap semantics: [start, end)
+    """
+
+    class Meta:
+        model = DoctorAbsence
+        fields = [
+            "id",
+            "doctor",
+            "start_time",
+            "end_time",
+            "type",
+            "notes",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "doctor", "created_at", "updated_at"]
+
+    def _to_current_tz_aware(self, dt):
+        tz = timezone.get_current_timezone()
+        if timezone.is_naive(dt):
+            return timezone.make_aware(dt, tz)
+        return dt.astimezone(tz)
+
+    def validate(self, attrs):
+        request = self.context.get("request")
+        if not request or not getattr(request, "user", None):
+            raise serializers.ValidationError({"detail": "Invalid request context."})
+
+        user = request.user
+        tz = timezone.get_current_timezone()
+
+        # Determine candidate start/end (handle partial update)
+        start = attrs.get("start_time", getattr(self.instance, "start_time", None))
+        end = attrs.get("end_time", getattr(self.instance, "end_time", None))
+
+        if start is None or end is None:
+            raise serializers.ValidationError({"detail": "start_time and end_time are required."})
+
+        start = self._to_current_tz_aware(start)
+        end = self._to_current_tz_aware(end)
+
+        if start >= end:
+            raise serializers.ValidationError({"detail": "يجب أن يكون وقت البداية قبل وقت النهاية."})
+
+        # Store back normalized
+        attrs["start_time"] = start
+        attrs["end_time"] = end
+
+        # ----------------------------------------------------
+        # (NEW) Absence-Absence overlap guard (same doctor)
+        # ----------------------------------------------------
+        overlap_qs = DoctorAbsence.objects.filter(
+            doctor_id=user.id,
+            start_time__lt=end,
+            end_time__gt=start,
+        ).only("id", "start_time", "end_time", "type")
+
+        # Exclude self on update
+        if self.instance is not None:
+            overlap_qs = overlap_qs.exclude(id=self.instance.id)
+
+        if overlap_qs.exists():
+            overlaps = []
+            for a in overlap_qs.order_by("start_time")[:10]:
+                overlaps.append(
+                    {
+                        "id": a.id,
+                        "start_time": a.start_time.astimezone(tz).isoformat(),
+                        "end_time": a.end_time.astimezone(tz).isoformat(),
+                        "type": a.type,
+                    }
+                )
+
+            raise serializers.ValidationError(
+                {
+                    "detail": "لا يمكن إنشاء/تعديل الغياب لأنه يتداخل مع غياب آخر.",
+                    "overlapping_absences": overlaps,
+                }
+            )
+
+        # ----------------------------------------------------
+        # Conflict guard only against upcoming appointments
+        # ----------------------------------------------------
+        now = timezone.now().astimezone(tz)
+        blocking_statuses = ["pending", "confirmed", "Pending", "Confirmed"]
+
+        qs = Appointment.objects.filter(
+            doctor_id=user.id,
+            status__in=blocking_statuses,
+            date_time__gte=now,
+        ).only("id", "date_time", "duration_minutes", "status")
+
+        # Coarse time window
+        qs = qs.filter(date_time__lt=end, date_time__gte=start - timedelta(days=1))
+
+        affected = []
+        for ap in qs:
+            ap_start = ap.date_time
+            if timezone.is_naive(ap_start):
+                ap_start = timezone.make_aware(ap_start, tz)
+            else:
+                ap_start = ap_start.astimezone(tz)
+
+            ap_dur = int(ap.duration_minutes or 0) or 0
+            ap_end = ap_start + timedelta(minutes=ap_dur)
+
+            # Overlap semantics: [start, end)
+            if ap_start < end and start < ap_end:
+                affected.append(
+                    {
+                        "id": ap.id,
+                        "date_time": ap_start.isoformat(),
+                        "status": ap.status,
+                    }
+                )
+
+        if affected:
+            raise serializers.ValidationError(
+                {
+                    "detail": "لا يمكن إنشاء/تعديل الغياب لأنه يتداخل مع مواعيد قادمة.",
+                    "affected_appointments": affected,
+                }
+            )
+
+        return attrs
+
+    def create(self, validated_data):
+        request = self.context["request"]
+        user = request.user
+
+        absence = DoctorAbsence.objects.create(
+            doctor=user,
+            start_time=validated_data["start_time"],
+            end_time=validated_data["end_time"],
+            type=validated_data.get("type", "planned"),
+            notes=validated_data.get("notes", ""),
+        )
+        return absence
+
+    def update(self, instance, validated_data):
+        instance.start_time = validated_data.get("start_time", instance.start_time)
+        instance.end_time = validated_data.get("end_time", instance.end_time)
+        instance.type = validated_data.get("type", instance.type)
+        instance.notes = validated_data.get("notes", instance.notes)
+        instance.save(update_fields=["start_time", "end_time", "type", "notes", "updated_at"])
+        return instance

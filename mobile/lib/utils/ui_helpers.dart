@@ -18,17 +18,13 @@ void showAppSnackBar(
   bool clearPrevious = true,
 }) {
   final messenger = rootScaffoldMessengerKey.currentState;
-  if (messenger == null) {
-    // لا يوجد ScaffoldMessenger جاهز (حالة نادرة جداً أثناء bootstrap)
-    return;
-  }
+  if (messenger == null) return;
 
   if (clearPrevious) {
     messenger.clearSnackBars();
   }
 
-  final ColorScheme? cs =
-      context != null ? Theme.of(context).colorScheme : null;
+  final cs = context != null ? Theme.of(context).colorScheme : null;
 
   Color background;
   Color foreground;
@@ -82,7 +78,6 @@ void showAppSnackBar(
   );
 }
 
-/// اختصار شائع
 void showAppErrorSnackBar(BuildContext? context, String message) {
   showAppSnackBar(context, message, type: AppSnackBarType.error);
 }
@@ -102,6 +97,7 @@ Future<bool> showConfirmDialog(
 }) async {
   final result = await showDialog<bool>(
     context: context,
+    barrierDismissible: false,
     builder: (ctx) {
       return AlertDialog(
         title: Text(title),
@@ -111,7 +107,7 @@ Future<bool> showConfirmDialog(
             onPressed: () => Navigator.pop(ctx, false),
             child: Text(cancelText),
           ),
-          ElevatedButton(
+          FilledButton(
             onPressed: () => Navigator.pop(ctx, true),
             child: Text(confirmText),
           ),
@@ -124,12 +120,12 @@ Future<bool> showConfirmDialog(
 }
 
 // ---------------------------------------------------------------------------
-// API / Networking helpers (MVP)
+// API / Networking helpers
 // ---------------------------------------------------------------------------
 
 /// يحاول استخراج رسالة خطأ مفيدة من payload قادم من الـ API.
 /// يدعم الأنماط الشائعة:
-/// - {"detail": "..." }
+/// - {"detail": "..."}
 /// - {"detail": ["..."] }
 /// - {"field": ["msg1", "msg2"], "field2": ["msg"] }
 String extractApiErrorMessage(
@@ -138,13 +134,11 @@ String extractApiErrorMessage(
 }) {
   if (data == null) return fallback;
 
-  // String مباشرة
   if (data is String) {
     final trimmed = data.trim();
     return trimmed.isEmpty ? fallback : trimmed;
   }
 
-  // List مباشرة
   if (data is List) {
     if (data.isEmpty) return fallback;
     final first = data.first;
@@ -152,30 +146,28 @@ String extractApiErrorMessage(
     return first.toString();
   }
 
-  // Map (الأكثر شيوعًا)
   if (data is Map) {
-    // 1) detail (string/list)
     if (data.containsKey('detail')) {
       final detail = data['detail'];
       final msg = extractApiErrorMessage(detail, fallback: fallback);
       if (msg.trim().isNotEmpty) return msg;
     }
 
-    // 2) non_field_errors
     if (data.containsKey('non_field_errors')) {
       final nfe = data['non_field_errors'];
       final msg = extractApiErrorMessage(nfe, fallback: fallback);
       if (msg.trim().isNotEmpty) return msg;
     }
 
-    // 3) أول حقل فيه قائمة رسائل
     for (final entry in data.entries) {
       final value = entry.value;
+
       if (value is List && value.isNotEmpty) {
         final first = value.first;
         if (first is String && first.trim().isNotEmpty) return first.trim();
         return first.toString();
       }
+
       if (value is String && value.trim().isNotEmpty) {
         return value.trim();
       }
@@ -184,14 +176,11 @@ String extractApiErrorMessage(
     return fallback;
   }
 
-  // أي نوع آخر
-  return data.toString().trim().isEmpty ? fallback : data.toString();
+  final s = data.toString().trim();
+  return s.isEmpty ? fallback : s;
 }
 
-/// يحدد رسالة عربية موحّدة اعتمادًا على HTTP status code + payload.
-/// يمكن استعماله مع أي library (http/dio) بتغذية statusCode و data.
 String mapHttpErrorToArabicMessage({required int? statusCode, Object? data}) {
-  // Network / unknown
   if (statusCode == null) {
     return 'تعذّر الاتصال بالخادم. تحقق من الإنترنت.';
   }
@@ -204,14 +193,11 @@ String mapHttpErrorToArabicMessage({required int? statusCode, Object? data}) {
     return 'لا تملك صلاحية تنفيذ هذا الإجراء.';
   }
 
-  // Security by design: قد تعني "ليس مالكًا"
   if (statusCode == 404) {
     return 'العنصر غير موجود.';
   }
 
   if (statusCode == 400) {
-    // إن وجدت رسالة من الباك، نعرضها كما هي (حالياً بعضها إنكليزي في المشروع)
-    // لاحقاً يمكن تعريبها تدريجياً من جهة الـ API أو عبر mapping هنا.
     return extractApiErrorMessage(data);
   }
 
@@ -219,13 +205,9 @@ String mapHttpErrorToArabicMessage({required int? statusCode, Object? data}) {
     return 'حدث خطأ غير متوقع. حاول مرة أخرى لاحقًا.';
   }
 
-  // Fallback
   return extractApiErrorMessage(data, fallback: 'تعذّر تنفيذ العملية.');
 }
 
-/// Convenience: اعرض خطأ API بشكل موحّد.
-/// - statusCode: رقم الحالة HTTP (مثلاً response.statusCode)
-/// - data: body/response payload (مثلاً response.data)
 void showApiErrorSnackBar(
   BuildContext? context, {
   required int? statusCode,

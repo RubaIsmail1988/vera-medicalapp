@@ -1,26 +1,64 @@
+from collections import defaultdict
+from datetime import datetime, timedelta
+
+from django.db import transaction
+from django.db.models import Q
+from django.http import Http404
+from django.shortcuts import get_object_or_404
+from django.utils import timezone
+
 from rest_framework import status
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from rest_framework.decorators import api_view, permission_classes
-from django.db import transaction
-from django.shortcuts import get_object_or_404
-from django.db.models import Q
-from datetime import datetime, timedelta, time
-from rest_framework.permissions import IsAuthenticated
-from django.utils import timezone
+
 from clinical.permissions import IsPatient, IsDoctor
-from .serializers import AppointmentCreateSerializer, DoctorSlotsQuerySerializer,DoctorSlotsRangeQuerySerializer
-from collections import defaultdict
+
 from accounts.models import (
-    CustomUser,
-    DoctorDetails,
-    DoctorAvailability,
     Appointment,
     AppointmentType,
+    CustomUser,
+    DoctorAbsence,
     DoctorAppointmentType,
+    DoctorAvailability,
+    DoctorDetails,
     DoctorSpecificVisitType,
 )
 
+from .permissions import IsDoctorOrAdmin
+from .serializers import (
+    AppointmentCreateSerializer,
+    DoctorAbsenceSerializer,
+    DoctorSlotsQuerySerializer,
+    DoctorSlotsRangeQuerySerializer,
+)
+
+
+# -----------------------------
+# Helpers
+# -----------------------------
+
+def _is_admin(user) -> bool:
+    return bool(
+        getattr(user, "is_staff", False)
+        or getattr(user, "is_superuser", False)
+        or getattr(user, "role", "") == "admin"
+    )
+
+
+class _ImpersonatedRequest:
+    """
+    Minimal request-like object for serializer context, to ensure validation
+    runs against the target doctor (not admin) when admin manages absences.
+    """
+    def __init__(self, user):
+        self.user = user
+
+
+# -----------------------------
+# Appointment create (Patient)
+# -----------------------------
 
 class AppointmentCreateView(APIView):
     permission_classes = [IsPatient]
@@ -50,6 +88,10 @@ class AppointmentCreateView(APIView):
         )
 
 
+# -----------------------------
+# Doctor search (Authenticated)
+# -----------------------------
+
 class DoctorSearchView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -68,10 +110,11 @@ class DoctorSearchView(APIView):
             .order_by("username")[:50]
         )
 
-        # Fetch specialties in one query
         specialties_map = {
             row["user_id"]: row["specialty"]
-            for row in DoctorDetails.objects.filter(user_id__in=[d.id for d in doctors]).values("user_id", "specialty")
+            for row in DoctorDetails.objects.filter(
+                user_id__in=[d.id for d in doctors]
+            ).values("user_id", "specialty")
         }
 
         results = [
@@ -87,22 +130,18 @@ class DoctorSearchView(APIView):
         return Response({"results": results})
 
 
+# -----------------------------
+# Doctor visit types (central + specific)
+# -----------------------------
+
 class DoctorVisitTypesView(APIView):
-    """
-    Read-only endpoint for booking UI:
-    - central: all AppointmentType with resolved duration for this doctor
-      (DoctorAppointmentType override OR AppointmentType.default_duration_minutes)
-    - specific: DoctorSpecificVisitType list for this doctor
-    """
     permission_classes = [IsAuthenticated]
 
     def get(self, request, doctor_id: int):
         doctor = get_object_or_404(CustomUser, id=doctor_id, role="doctor")
 
-        # Central catalog
         types = AppointmentType.objects.all().order_by("type_name")
 
-        # Overrides by this doctor
         overrides = {
             row["appointment_type_id"]: row["duration_minutes"]
             for row in DoctorAppointmentType.objects.filter(doctor_id=doctor.id).values(
@@ -128,8 +167,10 @@ class DoctorVisitTypesView(APIView):
                 }
             )
 
-        # Doctor-specific types
-        specific_qs = DoctorSpecificVisitType.objects.filter(doctor_id=doctor.id).order_by("name")
+        specific_qs = DoctorSpecificVisitType.objects.filter(
+            doctor_id=doctor.id
+        ).order_by("name")
+
         specific = [
             {
                 "id": s.id,
@@ -145,14 +186,15 @@ class DoctorVisitTypesView(APIView):
                 "doctor_id": doctor.id,
                 "central": central,
                 "specific": specific,
-                "specific_booking_enabled": False,  # Contract: booking central only for now
-
+                "specific_booking_enabled": False,
             },
             status=status.HTTP_200_OK,
         )
 
 
-from django.utils import timezone
+# -----------------------------
+# Doctor actions: mark no_show
+# -----------------------------
 
 @api_view(["POST"])
 @permission_classes([IsDoctor])
@@ -169,15 +211,13 @@ def mark_no_show(request, pk: int):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
-    # New: prevent future no_show
+    # prevent future no_show: must be after (start + duration)
     end_dt = appointment.date_time + timedelta(minutes=appointment.duration_minutes or 0)
-
     if end_dt > timezone.now():
         return Response(
             {"detail": "Appointment has not ended yet."},
             status=status.HTTP_400_BAD_REQUEST,
         )
-
 
     appointment.status = "no_show"
     appointment.save(update_fields=["status", "updated_at"])
@@ -185,17 +225,17 @@ def mark_no_show(request, pk: int):
     return Response({"id": appointment.id, "status": appointment.status}, status=status.HTTP_200_OK)
 
 
+# -----------------------------
+# Cancel appointment (patient/doctor/admin)
+# -----------------------------
+
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def cancel_appointment(request, pk: int):
     user = request.user
     appointment = get_object_or_404(Appointment, pk=pk)
 
-    is_admin = bool(
-        getattr(user, "is_staff", False)
-        or getattr(user, "is_superuser", False)
-        or getattr(user, "role", "") == "admin"
-    )
+    is_admin = _is_admin(user)
     is_owner_patient = appointment.patient_id == user.id
     is_owner_doctor = appointment.doctor_id == user.id
 
@@ -217,10 +257,49 @@ def cancel_appointment(request, pk: int):
     appointment.status = "cancelled"
     appointment.save(update_fields=["status", "updated_at"])
 
-    return Response(
-        {"id": appointment.id, "status": appointment.status},
-        status=status.HTTP_200_OK,
-    )
+    return Response({"id": appointment.id, "status": appointment.status}, status=status.HTTP_200_OK)
+
+
+# -----------------------------
+# Confirm appointment (doctor/admin)
+# -----------------------------
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def confirm_appointment(request, pk: int):
+    user = request.user
+    appointment = get_object_or_404(Appointment, pk=pk)
+
+    is_admin = _is_admin(user)
+    is_owner_doctor = appointment.doctor_id == user.id
+
+    if not (is_admin or is_owner_doctor):
+        return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    if appointment.status in ["cancelled", "no_show"]:
+        return Response(
+            {"detail": "This appointment cannot be confirmed."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if appointment.status == "confirmed":
+        return Response({"id": appointment.id, "status": appointment.status}, status=status.HTTP_200_OK)
+
+    if appointment.status != "pending":
+        return Response(
+            {"detail": "Only pending appointments can be confirmed."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    appointment.status = "confirmed"
+    appointment.save(update_fields=["status", "updated_at"])
+
+    return Response({"id": appointment.id, "status": appointment.status}, status=status.HTTP_200_OK)
+
+
+# -----------------------------
+# Slots (single day)
+# -----------------------------
 
 class DoctorAvailableSlotsView(APIView):
     permission_classes = [IsAuthenticated]
@@ -234,7 +313,6 @@ class DoctorAvailableSlotsView(APIView):
         doctor = get_object_or_404(CustomUser, id=doctor_id, role="doctor")
         appt_type = get_object_or_404(AppointmentType, id=appointment_type_id)
 
-        # Resolve duration
         override = DoctorAppointmentType.objects.filter(
             doctor_id=doctor.id,
             appointment_type_id=appt_type.id,
@@ -247,7 +325,6 @@ class DoctorAvailableSlotsView(APIView):
 
         tz = timezone.get_current_timezone()
 
-        # Availability for that weekday
         day_name = day_date.strftime("%A")
         availability = DoctorAvailability.objects.filter(
             doctor_id=doctor.id,
@@ -271,7 +348,6 @@ class DoctorAvailableSlotsView(APIView):
         start_dt = timezone.make_aware(datetime.combine(day_date, availability.start_time), tz)
         end_dt = timezone.make_aware(datetime.combine(day_date, availability.end_time), tz)
 
-        # today: don't show past
         now_local = timezone.now().astimezone(tz)
         if day_date == now_local.date() and now_local > start_dt:
             start_dt = now_local.replace(second=0, microsecond=0)
@@ -293,8 +369,8 @@ class DoctorAvailableSlotsView(APIView):
                 status=status.HTTP_200_OK,
             )
 
-        # Prefetch blocking appointments
         blocking_statuses = ["pending", "Pending", "confirmed", "Confirmed"]
+
         existing = Appointment.objects.filter(
             doctor_id=doctor.id,
             status__in=blocking_statuses,
@@ -303,6 +379,8 @@ class DoctorAvailableSlotsView(APIView):
         ).only("date_time", "duration_minutes")
 
         intervals = []
+
+        # appointments
         for ap in existing:
             ap_start = ap.date_time
             if timezone.is_naive(ap_start):
@@ -313,6 +391,35 @@ class DoctorAvailableSlotsView(APIView):
             ap_dur = int(ap.duration_minutes or 0) or default_minutes
             ap_end = ap_start + timedelta(minutes=ap_dur)
             intervals.append((ap_start, ap_end))
+
+        # absences (clamp to day window)
+        absences = DoctorAbsence.objects.filter(
+            doctor_id=doctor.id,
+            start_time__lt=end_dt,
+            end_time__gt=start_dt,
+        ).only("start_time", "end_time")
+
+        for ab in absences:
+            ab_start = ab.start_time
+            ab_end = ab.end_time
+
+            if timezone.is_naive(ab_start):
+                ab_start = timezone.make_aware(ab_start, tz)
+            else:
+                ab_start = ab_start.astimezone(tz)
+
+            if timezone.is_naive(ab_end):
+                ab_end = timezone.make_aware(ab_end, tz)
+            else:
+                ab_end = ab_end.astimezone(tz)
+
+            if ab_start < start_dt:
+                ab_start = start_dt
+            if ab_end > end_dt:
+                ab_end = end_dt
+
+            if ab_start < ab_end:
+                intervals.append((ab_start, ab_end))
 
         intervals.sort(key=lambda x: x[0])
 
@@ -335,16 +442,13 @@ class DoctorAvailableSlotsView(APIView):
                 cursor = cursor + step
                 continue
 
-            # jump exactly to end of overlapping appointment (NO grid re-alignment)
             _, hit_end = hit
             jump_to = hit_end.replace(second=0, microsecond=0)
 
-            # safety: ensure forward progress
             if jump_to <= cursor:
                 jump_to = cursor + step
 
             cursor = jump_to
-
             if cursor >= end_dt:
                 break
 
@@ -365,6 +469,10 @@ class DoctorAvailableSlotsView(APIView):
         )
 
 
+# -----------------------------
+# Slots-range (multi-day) with CLAMP
+# -----------------------------
+
 class DoctorAvailableSlotsRangeView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -376,7 +484,6 @@ class DoctorAvailableSlotsRangeView(APIView):
         doctor = get_object_or_404(CustomUser, id=doctor_id, role="doctor")
         appt_type = get_object_or_404(AppointmentType, id=v["appointment_type_id"])
 
-        # Resolve duration
         override = DoctorAppointmentType.objects.filter(
             doctor_id=doctor.id,
             appointment_type_id=appt_type.id,
@@ -393,18 +500,25 @@ class DoctorAvailableSlotsRangeView(APIView):
         start_date = v["from_date"]
         end_date = v["to_date"]
 
-        # --------- Prefetch availabilities once ----------
+        # availabilities
         avail_qs = DoctorAvailability.objects.filter(doctor_id=doctor.id).only(
             "day_of_week", "start_time", "end_time"
         )
         availability_by_dayname = {a.day_of_week: a for a in avail_qs}
 
-        # --------- Prefetch blocking appointments once ----------
         blocking_statuses = ["pending", "Pending", "confirmed", "Confirmed"]
 
         range_start_dt = timezone.make_aware(datetime.combine(start_date, datetime.min.time()), tz)
         range_end_dt = timezone.make_aware(datetime.combine(end_date, datetime.max.time()), tz)
 
+        # prefetch absences once
+        absences_qs = DoctorAbsence.objects.filter(
+            doctor_id=doctor.id,
+            start_time__lt=range_end_dt,
+            end_time__gt=range_start_dt,
+        ).only("start_time", "end_time")
+
+        # prefetch appointments once
         existing = Appointment.objects.filter(
             doctor_id=doctor.id,
             status__in=blocking_statuses,
@@ -414,6 +528,7 @@ class DoctorAvailableSlotsRangeView(APIView):
 
         intervals_by_date = defaultdict(list)
 
+        # bucket appointments
         for ap in existing:
             ap_start = ap.date_time
             if timezone.is_naive(ap_start):
@@ -430,9 +545,31 @@ class DoctorAvailableSlotsRangeView(APIView):
                 intervals_by_date[cur_date].append((ap_start, ap_end))
                 cur_date = cur_date + timedelta(days=1)
 
+        # bucket absences
+        for ab in absences_qs:
+            ab_start = ab.start_time
+            ab_end = ab.end_time
+
+            if timezone.is_naive(ab_start):
+                ab_start = timezone.make_aware(ab_start, tz)
+            else:
+                ab_start = ab_start.astimezone(tz)
+
+            if timezone.is_naive(ab_end):
+                ab_end = timezone.make_aware(ab_end, tz)
+            else:
+                ab_end = ab_end.astimezone(tz)
+
+            cur_date = ab_start.date()
+            end_touch = ab_end.date()
+            while cur_date <= end_touch:
+                intervals_by_date[cur_date].append((ab_start, ab_end))
+                cur_date = cur_date + timedelta(days=1)
+
         def compute_day_slots(day_date):
             day_name = day_date.strftime("%A")
             availability = availability_by_dayname.get(day_name)
+
             if not availability:
                 return None
 
@@ -445,8 +582,30 @@ class DoctorAvailableSlotsRangeView(APIView):
             if start_dt >= end_dt:
                 return None
 
-            intervals = intervals_by_date.get(day_date, [])
-            intervals = sorted(intervals, key=lambda x: x[0])
+            raw_intervals = intervals_by_date.get(day_date, [])
+            intervals = []
+
+            # --- CLAMP intervals to [start_dt, end_dt] ---
+            for a_start, a_end in raw_intervals:
+                if timezone.is_naive(a_start):
+                    a_start = timezone.make_aware(a_start, tz)
+                else:
+                    a_start = a_start.astimezone(tz)
+
+                if timezone.is_naive(a_end):
+                    a_end = timezone.make_aware(a_end, tz)
+                else:
+                    a_end = a_end.astimezone(tz)
+
+                if a_start < start_dt:
+                    a_start = start_dt
+                if a_end > end_dt:
+                    a_end = end_dt
+
+                if a_start < a_end:
+                    intervals.append((a_start, a_end))
+
+            intervals.sort(key=lambda x: x[0])
 
             def find_first_overlap(a_start, a_end):
                 for b_start, b_end in intervals:
@@ -474,12 +633,11 @@ class DoctorAvailableSlotsRangeView(APIView):
                     jump_to = cursor + step
 
                 cursor = jump_to
-
                 if cursor >= end_dt:
                     break
 
             if not slots:
-                return None  # requirement: only days with slots
+                return None
 
             return {
                 "date": day_date.isoformat(),
@@ -510,7 +668,11 @@ class DoctorAvailableSlotsRangeView(APIView):
             status=status.HTTP_200_OK,
         )
 
-    
+
+# -----------------------------
+# My appointments (filters: status, preset, time)
+# -----------------------------
+
 class MyAppointmentsView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -527,21 +689,18 @@ class MyAppointmentsView(APIView):
         else:
             return Response({"results": []}, status=status.HTTP_200_OK)
 
-        # ---------------- Optional filters ----------------
         raw_status = (request.query_params.get("status") or "").strip().lower()
 
-        # New: preset filters
-        preset = (request.query_params.get("preset") or "").strip().lower()  # today | next7 | day
-        preset_day = (request.query_params.get("date") or "").strip()        # YYYY-MM-DD (when preset=day)
+        preset = (request.query_params.get("preset") or "").strip().lower()  # today|next7|day
+        preset_day = (request.query_params.get("date") or "").strip()        # YYYY-MM-DD
 
-        # Old: explicit range filters
         date_from = (request.query_params.get("from") or "").strip()
         date_to = (request.query_params.get("to") or "").strip()
 
         tz = timezone.get_current_timezone()
         now_local = timezone.now().astimezone(tz)
 
-        # ---- status filter (accept legacy variants too) ----
+        # status
         if raw_status:
             status_map = {
                 "pending": ["pending", "Pending"],
@@ -555,29 +714,28 @@ class MyAppointmentsView(APIView):
             else:
                 qs = qs.none()
 
-
+        # time: upcoming|past|all
         time_filter = (request.query_params.get("time") or "upcoming").strip().lower()
         now_dt = timezone.now()
 
         if time_filter == "upcoming":
-           qs = qs.filter(date_time__gte=now_dt)
+            qs = qs.filter(date_time__gte=now_dt)
         elif time_filter == "past":
-           qs = qs.filter(date_time__lt=now_dt)
+            qs = qs.filter(date_time__lt=now_dt)
         elif time_filter == "all":
             pass
         else:
             return Response(
                 {"detail": "Invalid time filter. Use time=upcoming|past|all"},
                 status=status.HTTP_400_BAD_REQUEST,
-           )
+            )
 
-
-        # ---- preset takes precedence over from/to ----
         def day_range(d):
             start = timezone.make_aware(datetime.combine(d, datetime.min.time()), tz)
             end = timezone.make_aware(datetime.combine(d, datetime.max.time()), tz)
             return start, end
 
+        # preset precedence
         if preset == "today":
             d1 = now_local.date()
             start_dt, end_dt = day_range(d1)
@@ -607,7 +765,6 @@ class MyAppointmentsView(APIView):
             qs = qs.filter(date_time__gte=start_dt, date_time__lte=end_dt)
 
         else:
-            # from/to only if no preset
             if date_from:
                 try:
                     d1 = datetime.strptime(date_from, "%Y-%m-%d").date()
@@ -652,50 +809,129 @@ class MyAppointmentsView(APIView):
             )
 
         return Response({"results": results}, status=status.HTTP_200_OK)
-    
-@api_view(["POST"])
-@permission_classes([IsAuthenticated])
-def confirm_appointment(request, pk: int):
-    user = request.user
-    appointment = get_object_or_404(Appointment, pk=pk)
 
-    is_admin = bool(
-        getattr(user, "is_staff", False)
-        or getattr(user, "is_superuser", False)
-        or getattr(user, "role", "") == "admin"
-    )
 
-    is_owner_doctor = appointment.doctor_id == user.id
+# -----------------------------
+# Doctor Absences (CRUD)
+# Admin: manage all; Doctor: manage own
+# -----------------------------
 
-    # فقط صاحب الموعد (الطبيب) أو Admin
-    if not (is_admin or is_owner_doctor):
-        return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+class DoctorAbsenceListCreateView(APIView):
+    permission_classes = [IsAuthenticated, IsDoctorOrAdmin]
 
-    # ممنوع تأكيد موعد ملغي أو no_show
-    if appointment.status in ["cancelled", "no_show"]:
-        return Response(
-            {"detail": "This appointment cannot be confirmed."},
-            status=status.HTTP_400_BAD_REQUEST,
+    def get(self, request):
+        user = request.user
+        is_admin = _is_admin(user)
+
+        qs = DoctorAbsence.objects.all().order_by("-start_time") if is_admin else \
+             DoctorAbsence.objects.filter(doctor=user).order_by("-start_time")
+
+        # optional admin filter: ?doctor_id=33
+        if is_admin:
+            raw_doctor_id = (request.query_params.get("doctor_id") or "").strip()
+            if raw_doctor_id:
+                try:
+                    did = int(raw_doctor_id)
+                    qs = qs.filter(doctor_id=did)
+                except ValueError:
+                    return Response(
+                        {"detail": "Invalid doctor_id. Use integer."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+        serializer = DoctorAbsenceSerializer(qs, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    def post(self, request):
+        user = request.user
+        is_admin = _is_admin(user)
+
+        data = request.data.copy()
+
+        # Admin may create for a doctor using doctor_id (optional but enabled)
+        if is_admin:
+            raw_doctor_id = (data.get("doctor_id") or "").strip()
+            if not raw_doctor_id:
+                return Response(
+                    {"detail": "doctor_id is required for admin."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            try:
+                did = int(raw_doctor_id)
+            except ValueError:
+                return Response({"detail": "Invalid doctor_id."}, status=status.HTTP_400_BAD_REQUEST)
+
+            doctor = get_object_or_404(CustomUser, id=did, role="doctor")
+
+            # run serializer validations as the doctor (impersonated)
+            serializer = DoctorAbsenceSerializer(
+                data=data,
+                context={"request": _ImpersonatedRequest(doctor)},
+            )
+            serializer.is_valid(raise_exception=True)
+            absence = serializer.save()
+            return Response(DoctorAbsenceSerializer(absence).data, status=status.HTTP_201_CREATED)
+
+        # doctor creates own
+        serializer = DoctorAbsenceSerializer(
+            data=data,
+            context={"request": request},
         )
+        serializer.is_valid(raise_exception=True)
+        absence = serializer.save()
 
-    # idempotent إذا كان confirmed
-    if appointment.status == "confirmed":
-        return Response(
-            {"id": appointment.id, "status": appointment.status},
-            status=status.HTTP_200_OK,
+        return Response(DoctorAbsenceSerializer(absence).data, status=status.HTTP_201_CREATED)
+
+
+class DoctorAbsenceDetailView(APIView):
+    permission_classes = [IsAuthenticated, IsDoctorOrAdmin]
+
+    def get_object(self, request, pk):
+        absence = get_object_or_404(DoctorAbsence, pk=pk)
+
+        if _is_admin(request.user):
+            return absence
+
+        if absence.doctor_id != request.user.id:
+            raise Http404
+
+        return absence
+
+    def _serializer_context_for(self, request, absence: DoctorAbsence):
+        # Ensure validation checks run against the correct doctor
+        if _is_admin(request.user):
+            return {"request": _ImpersonatedRequest(absence.doctor)}
+        return {"request": request}
+
+    def get(self, request, pk):
+        absence = self.get_object(request, pk)
+        serializer = DoctorAbsenceSerializer(absence)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    def put(self, request, pk):
+        absence = self.get_object(request, pk)
+        serializer = DoctorAbsenceSerializer(
+            absence,
+            data=request.data,
+            context=self._serializer_context_for(request, absence),
         )
+        serializer.is_valid(raise_exception=True)
+        absence = serializer.save()
+        return Response(DoctorAbsenceSerializer(absence).data, status=status.HTTP_200_OK)
 
-    # فقط من pending إلى confirmed
-    if appointment.status != "pending":
-        return Response(
-            {"detail": "Only pending appointments can be confirmed."},
-            status=status.HTTP_400_BAD_REQUEST,
+    def patch(self, request, pk):
+        absence = self.get_object(request, pk)
+        serializer = DoctorAbsenceSerializer(
+            absence,
+            data=request.data,
+            partial=True,
+            context=self._serializer_context_for(request, absence),
         )
+        serializer.is_valid(raise_exception=True)
+        absence = serializer.save()
+        return Response(DoctorAbsenceSerializer(absence).data, status=status.HTTP_200_OK)
 
-    appointment.status = "confirmed"
-    appointment.save(update_fields=["status", "updated_at"])
-
-    return Response(
-        {"id": appointment.id, "status": appointment.status},
-        status=status.HTTP_200_OK,
-    )
+    def delete(self, request, pk):
+        absence = self.get_object(request, pk)
+        absence.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)

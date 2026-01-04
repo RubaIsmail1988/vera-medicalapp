@@ -69,7 +69,7 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
     return int.tryParse(v?.toString() ?? '') ?? 0;
   }
 
-  String _fmtDate(DateTime d) {
+  String _fmtYmd(DateTime d) {
     final mm = d.month.toString().padLeft(2, '0');
     final dd = d.day.toString().padLeft(2, '0');
     return '${d.year}-$mm-$dd';
@@ -81,6 +81,33 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
     final m = int.tryParse(parts.length > 1 ? parts[1] : '') ?? 1;
     final d = int.tryParse(parts.length > 2 ? parts[2] : '') ?? 1;
     return DateTime(y, m, d);
+  }
+
+  String _weekdayAr(int weekday) {
+    // DateTime.weekday: Mon=1..Sun=7
+    switch (weekday) {
+      case 1:
+        return 'الإثنين';
+      case 2:
+        return 'الثلاثاء';
+      case 3:
+        return 'الأربعاء';
+      case 4:
+        return 'الخميس';
+      case 5:
+        return 'الجمعة';
+      case 6:
+        return 'السبت';
+      case 7:
+        return 'الأحد';
+      default:
+        return '';
+    }
+  }
+
+  String _dayChipLabel(String ymd) {
+    final dt = _parseYmd(ymd);
+    return '${_weekdayAr(dt.weekday)}  $ymd';
   }
 
   String _centralLabel(Map<String, dynamic> c) {
@@ -119,7 +146,6 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
       specific = const [];
       selectedCentral = null;
 
-      // reset range
       loadingRange = false;
       availableDays = const [];
       selectedDay = null;
@@ -181,16 +207,22 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
       await loadSlotsRange();
     } on ApiException catch (e) {
       if (!mounted) return;
+
       Object? body;
       try {
         body = jsonDecode(e.body);
       } catch (_) {
         body = e.body;
       }
+
       showApiErrorSnackBar(context, statusCode: e.statusCode, data: body);
-      setState(() => loadingTypes = false);
+
+      setState(() {
+        loadingTypes = false;
+      });
     } catch (_) {
       if (!mounted) return;
+
       showAppErrorSnackBar(context, 'تعذّر تحميل أنواع الزيارات.');
       setState(() => loadingTypes = false);
     }
@@ -210,7 +242,6 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
 
     setState(() {
       rangeFromDate = picked;
-
       selectedDay = null;
       selectedSlot = null;
       slots = const [];
@@ -266,8 +297,8 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
       return;
     }
 
-    final fromYmd = _fmtDate(rangeFromDate);
-    final toYmd = _fmtDate(rangeFromDate.add(Duration(days: rangeDays - 1)));
+    final fromYmd = _fmtYmd(rangeFromDate);
+    final toYmd = _fmtYmd(rangeFromDate.add(Duration(days: rangeDays - 1)));
 
     setState(() {
       loadingRange = true;
@@ -355,16 +386,19 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
       });
     } on ApiException catch (e) {
       if (!mounted) return;
+
       Object? body;
       try {
         body = jsonDecode(e.body);
       } catch (_) {
         body = e.body;
       }
+
       showApiErrorSnackBar(context, statusCode: e.statusCode, data: body);
       setState(() => loadingRange = false);
     } catch (_) {
       if (!mounted) return;
+
       showAppErrorSnackBar(context, 'تعذّر تحميل الأوقات المتاحة ضمن النطاق.');
       setState(() => loadingRange = false);
     }
@@ -436,6 +470,7 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
       return;
     }
 
+    if (!mounted) return;
     setState(() => booking = true);
 
     try {
@@ -463,12 +498,14 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
       context.go('/app/appointments');
     } on ApiException catch (e) {
       if (!mounted) return;
+
       Object? body;
       try {
         body = jsonDecode(e.body);
       } catch (_) {
         body = e.body;
       }
+
       showApiErrorSnackBar(context, statusCode: e.statusCode, data: body);
     } catch (_) {
       if (!mounted) return;
@@ -487,13 +524,20 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
             ? null
             : 'دوام الطبيب: من ${availability!['start']} إلى ${availability!['end']}';
 
+    final daysTitle =
+        rangeDays == 7 ? 'الأيام المتاحة (7 أيام)' : 'الأيام المتاحة';
+
+    final bool hasTypesLoaded = !loadingTypes;
+    final bool hasCentralSelected = selectedCentral != null;
+
     return Scaffold(
-      appBar: AppBar(title: const Text('تفاصيل الحجز')),
+      appBar: AppBar(title: const Text('حجز موعد')),
       body: Padding(
         padding: const EdgeInsets.all(12),
         child: ListView(
           children: [
             Card(
+              elevation: 0,
               child: ListTile(
                 title: Text(widget.doctorName),
                 subtitle: Text(widget.doctorSpecialty),
@@ -531,6 +575,7 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
                         ? null
                         : (v) async {
                           if (!mounted) return;
+
                           setState(() {
                             selectedCentral = v;
 
@@ -539,25 +584,29 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
                             slots = const [];
                             availability = null;
                           });
+
                           await loadSlotsRange();
                         },
-                decoration: const InputDecoration(hintText: 'اختر نوع الزيارة'),
+                decoration: const InputDecoration(
+                  hintText: 'اختر نوع الزيارة',
+                  border: OutlineInputBorder(),
+                ),
               ),
 
-            if (!loadingTypes &&
+            if (hasTypesLoaded &&
                 specificBookingEnabled &&
                 specific.isNotEmpty) ...[
               const SizedBox(height: 12),
               Text('أنواع خاصة بالطبيب', style: theme.textTheme.titleSmall),
               const SizedBox(height: 6),
               ...specific.map((s) {
-                final name = (s['name'] ?? '').toString();
+                final name = (s['name'] ?? '').toString().trim();
                 final dur = s['duration_minutes']?.toString() ?? '';
                 return Card(
                   elevation: 0,
                   child: ListTile(
                     leading: const Icon(Icons.star_border),
-                    title: Text(name),
+                    title: Text(name.isEmpty ? 'نوع خاص' : name),
                     subtitle: Text(dur.isEmpty ? '' : 'المدة: $dur دقيقة'),
                   ),
                 );
@@ -575,7 +624,7 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
                 OutlinedButton.icon(
                   onPressed: booking ? null : pickRangeFromDate,
                   icon: const Icon(Icons.date_range),
-                  label: Text('بداية النطاق: ${_fmtDate(rangeFromDate)}'),
+                  label: Text('بداية النطاق: ${_fmtYmd(rangeFromDate)}'),
                 ),
                 ChoiceChip(
                   label: const Text('الأسبوع القادم'),
@@ -586,7 +635,7 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
             ),
 
             const SizedBox(height: 16),
-            Text('الأيام المتاحة', style: theme.textTheme.titleMedium),
+            Text(daysTitle, style: theme.textTheme.titleMedium),
             const SizedBox(height: 8),
 
             if (loadingRange)
@@ -596,7 +645,7 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
                   child: CircularProgressIndicator(),
                 ),
               )
-            else if (selectedCentral == null)
+            else if (!hasCentralSelected)
               const Text('اختر نوع الزيارة أولاً.')
             else if (availableDays.isEmpty)
               const Text('لا توجد أوقات متاحة ضمن هذا النطاق.')
@@ -606,10 +655,10 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
                 runSpacing: 8,
                 children:
                     availableDays.map((d) {
-                      final ymd = (d['date'] ?? '').toString();
+                      final ymd = (d['date'] ?? '').toString().trim();
                       final isSelected = ymd == selectedDay;
                       return ChoiceChip(
-                        label: Text(ymd),
+                        label: Text(_dayChipLabel(ymd)),
                         selected: isSelected,
                         onSelected: booking ? null : (_) => _selectDay(ymd),
                       );
@@ -622,10 +671,7 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
             ],
 
             const SizedBox(height: 16),
-            Text(
-              'الأوقات المتاحة لليوم المختار',
-              style: theme.textTheme.titleMedium,
-            ),
+            Text('الأوقات المتاحة', style: theme.textTheme.titleMedium),
             const SizedBox(height: 8),
 
             if (loadingRange)
@@ -663,6 +709,7 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
               maxLines: 3,
               decoration: const InputDecoration(
                 hintText: 'أضف ملاحظة للطبيب إن لزم...',
+                border: OutlineInputBorder(),
               ),
             ),
 

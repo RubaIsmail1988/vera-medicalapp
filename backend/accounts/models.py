@@ -388,7 +388,7 @@ class DoctorAbsence(models.Model):
         ordering = ["-start_time"]
         constraints = [
             models.CheckConstraint(
-                check=models.Q(start_time__lt=models.F("end_time")),
+                condition=models.Q(start_time__lt=models.F("end_time")),
                 name="chk_absence_start_before_end",
             ),
         ]

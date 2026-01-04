@@ -9,6 +9,8 @@ from .views import (
     DoctorAvailableSlotsView,
     DoctorAvailableSlotsRangeView,
     MyAppointmentsView,
+    DoctorAbsenceListCreateView,
+    DoctorAbsenceDetailView,
 )
 
 urlpatterns = [
@@ -46,5 +48,17 @@ urlpatterns = [
         DoctorAvailableSlotsRangeView.as_view(),
         name="doctor-slots-range",
     ),
+    # Doctor absences (MVP)
+    path(
+        "absences/",
+        DoctorAbsenceListCreateView.as_view(),
+        name="doctor-absence-list-create",
+    ),
+    path(
+        "absences/<int:pk>/",
+        DoctorAbsenceDetailView.as_view(),
+        name="doctor-absence-detail",
+    ),
+
 
 ]

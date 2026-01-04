@@ -290,19 +290,118 @@ class AppointmentsService {
     if (days != null) {
       qp['days'] = days.toString();
     } else {
-      if (fromDate != null) qp['from_date'] = fromDate;
-      if (toDate != null) qp['to_date'] = toDate;
+      if (fromDate != null && fromDate.trim().isNotEmpty) {
+        qp['from_date'] = fromDate.trim();
+      }
+      if (toDate != null && toDate.trim().isNotEmpty) {
+        qp['to_date'] = toDate.trim();
+      }
     }
 
-    final uri = Uri(
-      path: "/doctors/$doctorId/slots-range/",
-      queryParameters: qp,
-    );
+    final endpoint =
+        "/doctors/$doctorId/slots-range/?${Uri(queryParameters: qp).query}";
 
-    final resp = await _authorizedAppointmentsRequest(uri.toString(), "GET");
+    final resp = await _authorizedAppointmentsRequest(endpoint, "GET");
+
     if (resp.statusCode != 200) {
       throw ApiException(resp.statusCode, resp.body);
     }
+
     return Map<String, dynamic>.from(jsonDecode(resp.body));
+  }
+
+  // ---------------- Doctor Absences (CRUD) ----------------
+
+  Future<List<DoctorAbsenceDto>> fetchDoctorAbsences() async {
+    final resp = await _authorizedAppointmentsRequest("/absences/", "GET");
+
+    if (resp.statusCode != 200) {
+      throw ApiException(resp.statusCode, resp.body);
+    }
+
+    final decoded = jsonDecode(resp.body);
+    if (decoded is List) {
+      return decoded
+          .map((e) => DoctorAbsenceDto.fromJson(Map<String, dynamic>.from(e)))
+          .toList();
+    }
+
+    throw Exception("Unexpected response format.");
+  }
+
+  Future<DoctorAbsenceDto> createDoctorAbsence({
+    required Map<String, dynamic> payload,
+  }) async {
+    final resp = await _authorizedAppointmentsRequest(
+      "/absences/",
+      "POST",
+      body: payload,
+    );
+
+    if (resp.statusCode == 201) {
+      return DoctorAbsenceDto.fromJson(
+        Map<String, dynamic>.from(jsonDecode(resp.body)),
+      );
+    }
+
+    throw ApiException(resp.statusCode, resp.body);
+  }
+
+  Future<DoctorAbsenceDto> updateDoctorAbsence({
+    required int absenceId,
+    required Map<String, dynamic> payload,
+  }) async {
+    final resp = await _authorizedAppointmentsRequest(
+      "/absences/$absenceId/",
+      "PATCH",
+      body: payload,
+    );
+
+    if (resp.statusCode == 200) {
+      return DoctorAbsenceDto.fromJson(
+        Map<String, dynamic>.from(jsonDecode(resp.body)),
+      );
+    }
+
+    throw ApiException(resp.statusCode, resp.body);
+  }
+
+  Future<void> deleteDoctorAbsence({required int absenceId}) async {
+    final resp = await _authorizedAppointmentsRequest(
+      "/absences/$absenceId/",
+      "DELETE",
+    );
+
+    if (resp.statusCode == 204) return;
+    throw ApiException(resp.statusCode, resp.body);
+  }
+}
+
+class DoctorAbsenceDto {
+  final int id;
+  final int doctor;
+  final DateTime startTime;
+  final DateTime endTime;
+  final String type;
+  final String? notes;
+
+  DoctorAbsenceDto({
+    required this.id,
+    required this.doctor,
+    required this.startTime,
+    required this.endTime,
+    required this.type,
+    required this.notes,
+  });
+
+  factory DoctorAbsenceDto.fromJson(Map<String, dynamic> json) {
+    return DoctorAbsenceDto(
+      id: (json['id'] as num).toInt(),
+      doctor: (json['doctor'] as num).toInt(),
+      startTime: DateTime.parse(json['start_time'] as String),
+      endTime: DateTime.parse(json['end_time'] as String),
+      type: (json['type'] as String?) ?? 'planned',
+      notes: json['notes'] as String?,
+    );
   }
 }
