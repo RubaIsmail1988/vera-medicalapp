@@ -182,7 +182,7 @@ class MyAppState extends State<MyApp> {
             path: 'record',
             builder:
                 (context, state) => UserShellScreen(
-                  key: ValueKey<String>(state.uri.path),
+                  key: ValueKey<String>(state.uri.toString()),
                   initialIndex: 1,
                 ),
             routes: [
@@ -198,19 +198,22 @@ class MyAppState extends State<MyApp> {
                     );
                   }
 
-                  final extra = state.extra;
+                  // WEB-SAFE: role from query (not extra)
                   final role =
-                      (extra is Map && extra['role'] != null)
-                          ? extra['role'].toString()
-                          : 'patient';
+                      (state.uri.queryParameters['role'] ?? 'patient').trim();
 
                   final patientIdRaw = state.uri.queryParameters['patientId'];
                   final patientId = int.tryParse(patientIdRaw ?? '');
+
+                  // (اختياري لكن مفيد) اذا بدنا نمرر appointmentId للشاشة لاحقًا
+                  final apptIdRaw = state.uri.queryParameters['appointmentId'];
+                  final appointmentId = int.tryParse(apptIdRaw ?? '');
 
                   return OrderDetailsScreen(
                     role: role,
                     orderId: orderId,
                     doctorPatientId: (role == 'doctor') ? patientId : null,
+                    appointmentId: appointmentId,
                   );
                 },
               ),

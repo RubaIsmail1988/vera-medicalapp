@@ -15,6 +15,10 @@ class Appointment {
   final String? notes;
   final DateTime createdAt;
 
+  // NEW flags from backend
+  final bool hasAnyOrders; // أي طلبات (تحاليل/صور) مرتبطة بالموعد
+  final bool hasOpenOrders; // هل يوجد طلبات بحالة open
+
   Appointment({
     required this.id,
     required this.patient,
@@ -28,12 +32,22 @@ class Appointment {
     required this.status,
     required this.notes,
     required this.createdAt,
+    required this.hasAnyOrders,
+    required this.hasOpenOrders,
   });
 
   factory Appointment.fromJson(Map<String, dynamic> json) {
     final dur = json['duration_minutes'];
+
+    bool asBool(dynamic v) {
+      if (v is bool) return v;
+      if (v is num) return v != 0;
+      final s = (v?.toString() ?? '').trim().toLowerCase();
+      return s == 'true' || s == '1' || s == 'yes';
+    }
+
     return Appointment(
-      id: json['id'] as int,
+      id: (json['id'] as num).toInt(),
       patient: (json['patient'] as num).toInt(),
       patientName: json['patient_name'] as String?,
       doctor: (json['doctor'] as num).toInt(),
@@ -46,6 +60,10 @@ class Appointment {
       status: (json['status'] as String),
       notes: json['notes'] as String?,
       createdAt: DateTime.parse(json['created_at'] as String),
+
+      // NEW: support both snake_case and camelCase just in case
+      hasAnyOrders: asBool(json['has_any_orders'] ?? json['hasAnyOrders']),
+      hasOpenOrders: asBool(json['has_open_orders'] ?? json['hasOpenOrders']),
     );
   }
 }

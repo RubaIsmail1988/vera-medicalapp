@@ -297,7 +297,7 @@ class _AccountDeletionStatusScreenState
       canPop: false, // نمنع الرجوع الافتراضي
       onPopInvokedWithResult: (didPop, result) {
         if (didPop) return;
-        context.go('/app'); // الرجوع إلى الهوم
+        context.go('/app/account'); // الرجوع إلى صفحة الاعدادات
       },
       child: Scaffold(
         appBar: AppBar(
@@ -305,7 +305,7 @@ class _AccountDeletionStatusScreenState
           leading: IconButton(
             icon: const Icon(Icons.arrow_back),
             onPressed: () {
-              context.go('/app'); // نفس السلوك عند الضغط على السهم
+              context.go('/app/account'); // نفس السلوك عند الضغط على السهم
             },
           ),
         ),

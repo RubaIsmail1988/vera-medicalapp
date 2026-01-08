@@ -32,9 +32,7 @@ class _HealthProfileTabState extends State<HealthProfileTab> {
   bool get isPatient => widget.role == "patient";
 
   int get _targetUserId {
-    if (isDoctor) {
-      return widget.selectedPatientId ?? 0;
-    }
+    if (isDoctor) return widget.selectedPatientId ?? 0;
     return widget.userId;
   }
 
@@ -68,6 +66,7 @@ class _HealthProfileTabState extends State<HealthProfileTab> {
 
   Future<void> _load() async {
     final targetUserId = _targetUserId;
+
     if (targetUserId <= 0) {
       if (!mounted) return;
       setState(() {
@@ -220,22 +219,17 @@ class _HealthProfileTabState extends State<HealthProfileTab> {
     final chronic = _asText(d["chronic_disease"]);
     final notes = _asText(d["health_notes"]);
 
-    final titleText = isDoctor ? "الملف الصحي " : "الملف الصحي ";
-
     return Padding(
       padding: const EdgeInsets.all(12),
       child: ListView(
         children: [
-          Card(
+          const Card(
             child: ListTile(
-              leading: const Icon(Icons.health_and_safety_outlined),
-              title: Text(titleText),
-              // subtitle: Text("User ID: $_targetUserId"),
+              leading: Icon(Icons.health_and_safety_outlined),
+              title: Text("الملف الصحي"),
             ),
           ),
-
           const SizedBox(height: 8),
-
           _infoTile(
             icon: Icons.cake_outlined,
             title: "تاريخ الميلاد",
@@ -248,9 +242,7 @@ class _HealthProfileTabState extends State<HealthProfileTab> {
             value: weight,
           ),
           _infoTile(icon: Icons.analytics_outlined, title: "BMI", value: bmi),
-
           const SizedBox(height: 8),
-
           _infoTile(icon: Icons.wc_outlined, title: "الجنس", value: gender),
           _infoTile(
             icon: Icons.bloodtype_outlined,

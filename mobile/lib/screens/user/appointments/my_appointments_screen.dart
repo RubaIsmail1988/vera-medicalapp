@@ -91,12 +91,34 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
     }
   }
 
+  bool _isMoreThanOneHourBeforeStart(Appointment a) {
+    final now = DateTime.now();
+    final startLocal = a.dateTime.toLocal();
+    final cutoff = startLocal.subtract(const Duration(hours: 1));
+    return now.isBefore(cutoff);
+  }
+
   bool _canCancel(Appointment a) {
     final s = _normStatus(a.status);
+
+    // never cancel
     if (s == 'no_show') return false;
     if (s == 'cancelled') return false;
-    // قرارنا: pending/confirmed قابل للإلغاء
-    return s == 'pending' || s == 'confirmed';
+
+    // only pending/confirmed
+    final isCancelableStatus = s == 'pending' || s == 'confirmed';
+    if (!isCancelableStatus) return false;
+
+    // NEW: hide cancel if clinical orders exist (orders only; prescriptions are irrelevant here)
+    if (a.hasAnyOrders) return false;
+
+    // Patient UX rule: do NOT allow cancel within 1 hour of start (and after start)
+    if (role == 'patient') {
+      return _isMoreThanOneHourBeforeStart(a);
+    }
+
+    // Doctor/Admin: allow by status (backend still enforces hard rules)
+    return true;
   }
 
   bool _canMarkNoShow(Appointment a) {
@@ -105,7 +127,12 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
     final s = _normStatus(a.status);
     if (s == 'cancelled' || s == 'no_show') return false;
 
-    // No Show after end time (start + duration), not after start only
+    // NEW: no_show only for confirmed (your latest policy)
+    if (s != 'confirmed') return false;
+
+    // NEW: hide if clinical orders exist (orders only)
+    if (a.hasAnyOrders) return false;
+
     final now = DateTime.now();
     final endTime = a.dateTime.toLocal().add(
       Duration(minutes: a.durationMinutes),
@@ -151,10 +178,6 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
   }
 
   void _sortAppointmentsInPlace(List<Appointment> data) {
-    // Default sorting:
-    // Upcoming: الأقدم أولًا
-    // Past: الأحدث أولًا
-    // All: الأحدث أولًا
     if (timeFilter == 'upcoming') {
       data.sort((a, b) => a.dateTime.compareTo(b.dateTime));
       return;
@@ -163,7 +186,6 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
       data.sort((a, b) => b.dateTime.compareTo(a.dateTime));
       return;
     }
-    // all
     data.sort((a, b) => b.dateTime.compareTo(a.dateTime));
   }
 
@@ -329,6 +351,31 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
     }
   }
 
+  void _openRecordForAppointment(Appointment a) {
+    if (!mounted) return;
+
+    final appointmentId = a.id;
+    if (appointmentId <= 0) return;
+
+    if (role == 'doctor') {
+      final patientId = a.patient;
+      if (patientId <= 0) {
+        showAppSnackBar(
+          context,
+          'تعذر فتح الإضبارة: patientId غير متوفر.',
+          type: AppSnackBarType.error,
+        );
+        return;
+      }
+      context.go(
+        '/app/record?patientId=$patientId&appointmentId=$appointmentId',
+      );
+      return;
+    }
+
+    context.go('/app/record?appointmentId=$appointmentId');
+  }
+
   Future<void> _setStatusFilter(String v) async {
     if (!mounted) return;
     setState(() => statusFilter = v);
@@ -341,7 +388,6 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
     setState(() {
       timeFilter = v;
 
-      // past + next7 is illogical -> clear date preset
       if (timeFilter == 'past' && datePreset == 'next7') {
         datePreset = null;
         presetDay = null;
@@ -470,194 +516,193 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final showBookButton = role == 'patient';
+    return SafeArea(
+      child: Builder(
+        builder: (_) {
+          if (loading) {
+            return const Center(child: CircularProgressIndicator());
+          }
 
-    return Scaffold(
-      floatingActionButton:
-          showBookButton
-              ? FloatingActionButton.extended(
-                onPressed: () => context.go('/app/appointments/book'),
-                icon: const Icon(Icons.add),
-                label: const Text('حجز موعد'),
-              )
-              : null,
-      body: SafeArea(
-        child: Builder(
-          builder: (_) {
-            if (loading) {
-              return const Center(child: CircularProgressIndicator());
-            }
+          if (errorMessage != null) {
+            return Center(child: Text(errorMessage!));
+          }
 
-            if (errorMessage != null) {
-              return Center(child: Text(errorMessage!));
-            }
-
-            return RefreshIndicator(
-              onRefresh: fetch,
-              child: ListView(
-                padding: const EdgeInsets.fromLTRB(12, 12, 12, 90),
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          role == 'doctor' ? 'مواعيد المرضى' : 'مواعيدي',
-                          style: Theme.of(context).textTheme.titleLarge,
-                        ),
+          return RefreshIndicator(
+            onRefresh: fetch,
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        role == 'doctor' ? 'مواعيد المرضى' : 'مواعيدي',
+                        style: Theme.of(context).textTheme.titleLarge,
                       ),
-                      IconButton(
-                        tooltip: 'تحديث',
-                        onPressed: fetch,
-                        icon: const Icon(Icons.refresh),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
+                    ),
+                    IconButton(
+                      tooltip: 'تحديث',
+                      onPressed: fetch,
+                      icon: const Icon(Icons.refresh),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
 
-                  // -------- Time filter --------
-                  Text('الوقت', style: Theme.of(context).textTheme.titleSmall),
-                  const SizedBox(height: 8),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
+                // -------- Time filter --------
+                Text('الوقت', style: Theme.of(context).textTheme.titleSmall),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    ChoiceChip(
+                      label: Text(_timeLabel('upcoming')),
+                      selected: timeFilter == 'upcoming',
+                      onSelected: (_) => _setTimeFilter('upcoming'),
+                    ),
+                    ChoiceChip(
+                      label: Text(_timeLabel('past')),
+                      selected: timeFilter == 'past',
+                      onSelected: (_) => _setTimeFilter('past'),
+                    ),
+                    ChoiceChip(
+                      label: Text(_timeLabel('all')),
+                      selected: timeFilter == 'all',
+                      onSelected: (_) => _setTimeFilter('all'),
+                    ),
+                  ],
+                ),
+
+                const SizedBox(height: 14),
+
+                // -------- Status filter --------
+                Text('الحالة', style: Theme.of(context).textTheme.titleSmall),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    ChoiceChip(
+                      label: Text(_statusChipLabel('all')),
+                      selected: statusFilter == 'all',
+                      onSelected: (_) => _setStatusFilter('all'),
+                    ),
+                    ChoiceChip(
+                      label: Text(_statusChipLabel('pending')),
+                      selected: statusFilter == 'pending',
+                      onSelected: (_) => _setStatusFilter('pending'),
+                    ),
+                    ChoiceChip(
+                      label: Text(_statusChipLabel('confirmed')),
+                      selected: statusFilter == 'confirmed',
+                      onSelected: (_) => _setStatusFilter('confirmed'),
+                    ),
+                    ChoiceChip(
+                      label: Text(_statusChipLabel('cancelled')),
+                      selected: statusFilter == 'cancelled',
+                      onSelected: (_) => _setStatusFilter('cancelled'),
+                    ),
+                    ChoiceChip(
+                      label: Text(_statusChipLabel('no_show')),
+                      selected: statusFilter == 'no_show',
+                      onSelected: (_) => _setStatusFilter('no_show'),
+                    ),
+                  ],
+                ),
+
+                const SizedBox(height: 14),
+
+                // -------- Date preset filter --------
+                Text('التاريخ', style: Theme.of(context).textTheme.titleSmall),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    ChoiceChip(
+                      label: const Text('اليوم'),
+                      selected: datePreset == 'today',
+                      onSelected: (_) => _setToday(),
+                    ),
+                    if (timeFilter != 'past')
                       ChoiceChip(
-                        label: Text(_timeLabel('upcoming')),
-                        selected: timeFilter == 'upcoming',
-                        onSelected: (_) => _setTimeFilter('upcoming'),
+                        label: const Text('الأسبوع القادم'),
+                        selected: datePreset == 'next7',
+                        onSelected: (_) => _setNext7(),
                       ),
-                      ChoiceChip(
-                        label: Text(_timeLabel('past')),
-                        selected: timeFilter == 'past',
-                        onSelected: (_) => _setTimeFilter('past'),
+                    ActionChip(
+                      avatar: const Icon(Icons.date_range),
+                      label: Text(
+                        datePreset == 'day' && presetDay != null
+                            ? _dateFilterLabel()
+                            : (timeFilter == 'past'
+                                ? 'اختيار يوم سابق'
+                                : timeFilter == 'upcoming'
+                                ? 'اختيار يوم قادم'
+                                : 'اختيار يوم'),
                       ),
-                      ChoiceChip(
-                        label: Text(_timeLabel('all')),
-                        selected: timeFilter == 'all',
-                        onSelected: (_) => _setTimeFilter('all'),
-                      ),
-                    ],
-                  ),
+                      onPressed: _pickDay,
+                    ),
+                    TextButton(
+                      onPressed: _clearDateFilter,
+                      child: const Text('مسح'),
+                    ),
+                  ],
+                ),
 
-                  const SizedBox(height: 14),
+                const SizedBox(height: 12),
 
-                  // -------- Status filter --------
-                  Text('الحالة', style: Theme.of(context).textTheme.titleSmall),
-                  const SizedBox(height: 8),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      ChoiceChip(
-                        label: Text(_statusChipLabel('all')),
-                        selected: statusFilter == 'all',
-                        onSelected: (_) => _setStatusFilter('all'),
-                      ),
-                      ChoiceChip(
-                        label: Text(_statusChipLabel('pending')),
-                        selected: statusFilter == 'pending',
-                        onSelected: (_) => _setStatusFilter('pending'),
-                      ),
-                      ChoiceChip(
-                        label: Text(_statusChipLabel('confirmed')),
-                        selected: statusFilter == 'confirmed',
-                        onSelected: (_) => _setStatusFilter('confirmed'),
-                      ),
-                      ChoiceChip(
-                        label: Text(_statusChipLabel('cancelled')),
-                        selected: statusFilter == 'cancelled',
-                        onSelected: (_) => _setStatusFilter('cancelled'),
-                      ),
-                      ChoiceChip(
-                        label: Text(_statusChipLabel('no_show')),
-                        selected: statusFilter == 'no_show',
-                        onSelected: (_) => _setStatusFilter('no_show'),
-                      ),
-                    ],
-                  ),
+                if (appointments.isEmpty)
+                  Center(
+                    child: Padding(
+                      padding: const EdgeInsets.only(top: 32),
+                      child: Text(_emptyLabelByFilters()),
+                    ),
+                  )
+                else
+                  ...appointments.map((a) {
+                    final typeName =
+                        (a.appointmentTypeName ?? 'نوع زيارة').trim();
+                    final statusLabel = _statusLabel(a.status);
 
-                  const SizedBox(height: 14),
+                    final counterpartLine =
+                        role == 'doctor'
+                            ? 'المريض: ${(a.patientName ?? 'مريض #${a.patient}').trim()}'
+                            : 'الطبيب: ${(a.doctorName ?? 'طبيب #${a.doctor}').trim()}';
 
-                  // -------- Date preset filter --------
-                  Text(
-                    'التاريخ',
-                    style: Theme.of(context).textTheme.titleSmall,
-                  ),
-                  const SizedBox(height: 8),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      ChoiceChip(
-                        label: const Text('اليوم'),
-                        selected: datePreset == 'today',
-                        onSelected: (_) => _setToday(),
-                      ),
-                      if (timeFilter != 'past')
-                        ChoiceChip(
-                          label: const Text('الأسبوع القادم'),
-                          selected: datePreset == 'next7',
-                          onSelected: (_) => _setNext7(),
-                        ),
-                      ActionChip(
-                        avatar: const Icon(Icons.date_range),
-                        label: Text(
-                          datePreset == 'day' && presetDay != null
-                              ? _dateFilterLabel()
-                              : (timeFilter == 'past'
-                                  ? 'اختيار يوم سابق'
-                                  : timeFilter == 'upcoming'
-                                  ? 'اختيار يوم قادم'
-                                  : 'اختيار يوم'),
-                        ),
-                        onPressed: _pickDay,
-                      ),
-                      TextButton(
-                        onPressed: _clearDateFilter,
-                        child: const Text('مسح'),
-                      ),
-                    ],
-                  ),
+                    final notes = (a.notes ?? '').trim();
 
-                  const SizedBox(height: 12),
+                    final canCancel = _canCancel(a);
+                    final canNoShow = _canMarkNoShow(a);
+                    final canConfirm = _canConfirm(a);
 
-                  if (appointments.isEmpty)
-                    Center(
-                      child: Padding(
-                        padding: const EdgeInsets.only(top: 32),
-                        child: Text(_emptyLabelByFilters()),
-                      ),
-                    )
-                  else
-                    ...appointments.map((a) {
-                      final typeName =
-                          (a.appointmentTypeName ?? 'نوع زيارة').trim();
+                    final title =
+                        a.durationMinutes > 0
+                            ? '$typeName (${a.durationMinutes} دقيقة)'
+                            : typeName;
 
-                      final statusLabel = _statusLabel(a.status);
+                    final bool showMenuForDoctor =
+                        role == 'doctor' &&
+                        (canConfirm || canNoShow || canCancel);
 
-                      final counterpartLine =
-                          role == 'doctor'
-                              ? 'المريض: ${(a.patientName ?? 'مريض #${a.patient}').trim()}'
-                              : 'الطبيب: ${(a.doctorName ?? 'طبيب #${a.doctor}').trim()}';
+                    Widget? trailing;
 
-                      final notes = (a.notes ?? '').trim();
-
-                      final canCancel = _canCancel(a);
-                      final canNoShow = _canMarkNoShow(a);
-                      final canConfirm = _canConfirm(a);
-
-                      Widget? trailing;
-
-                      if (role == 'doctor' &&
-                          (canConfirm || canNoShow || canCancel)) {
-                        trailing = PopupMenuButton<String>(
-                          onSelected: (v) {
-                            if (v == 'confirm') _confirm(a);
-                            if (v == 'no_show') _markNoShow(a);
-                            if (v == 'cancel') _cancel(a);
-                          },
-                          itemBuilder:
-                              (_) => [
+                    if (role == 'doctor') {
+                      trailing = PopupMenuButton<String>(
+                        onSelected: (v) {
+                          if (v == 'record') _openRecordForAppointment(a);
+                          if (v == 'confirm') _confirm(a);
+                          if (v == 'no_show') _markNoShow(a);
+                          if (v == 'cancel') _cancel(a);
+                        },
+                        itemBuilder:
+                            (_) => [
+                              const PopupMenuItem(
+                                value: 'record',
+                                child: Text('فتح الإضبارة لهذه الزيارة'),
+                              ),
+                              if (showMenuForDoctor) ...[
                                 if (canConfirm)
                                   const PopupMenuItem(
                                     value: 'confirm',
@@ -674,49 +719,58 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
                                     child: Text('إلغاء'),
                                   ),
                               ],
-                        );
-                      } else if (role == 'patient' && canCancel) {
-                        trailing = TextButton(
-                          onPressed: () => _cancel(a),
-                          child: const Text('إلغاء'),
-                        );
-                      }
-
-                      final title =
-                          a.durationMinutes > 0
-                              ? '$typeName (${a.durationMinutes} دقيقة)'
-                              : typeName;
-
-                      return Padding(
-                        padding: const EdgeInsets.only(bottom: 8),
-                        child: Card(
-                          elevation: 0,
-                          child: ListTile(
-                            leading: CircleAvatar(
-                              child: Icon(_statusIcon(a.status)),
-                            ),
-                            title: Text(
-                              title,
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                            subtitle: Text(
-                              '$counterpartLine\n'
-                              'الوقت: ${_fmtDateTime(a.dateTime)}\n'
-                              'الحالة: $statusLabel'
-                              '${notes.isNotEmpty ? "\nملاحظات: $notes" : ""}',
-                            ),
-                            trailing: trailing,
-                          ),
-                        ),
+                            ],
                       );
-                    }),
-                ],
-              ),
-            );
-          },
-        ),
+                    } else {
+                      // patient
+                      trailing = PopupMenuButton<String>(
+                        onSelected: (v) {
+                          if (v == 'record') _openRecordForAppointment(a);
+                          if (v == 'cancel') _cancel(a);
+                        },
+                        itemBuilder:
+                            (_) => [
+                              const PopupMenuItem(
+                                value: 'record',
+                                child: Text('فتح الإضبارة'),
+                              ),
+                              if (canCancel)
+                                const PopupMenuItem(
+                                  value: 'cancel',
+                                  child: Text('إلغاء الموعد'),
+                                ),
+                            ],
+                      );
+                    }
+
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Card(
+                        elevation: 0,
+                        child: ListTile(
+                          leading: CircleAvatar(
+                            child: Icon(_statusIcon(a.status)),
+                          ),
+                          title: Text(
+                            title,
+                            style: const TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                          subtitle: Text(
+                            '$counterpartLine\n'
+                            'الوقت: ${_fmtDateTime(a.dateTime)}\n'
+                            'الحالة: $statusLabel'
+                            '${notes.isNotEmpty ? "\nملاحظات: $notes" : ""}',
+                          ),
+                          trailing: trailing,
+                          isThreeLine: true,
+                        ),
+                      ),
+                    );
+                  }),
+              ],
+            ),
+          );
+        },
       ),
     );
   }
