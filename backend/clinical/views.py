@@ -24,6 +24,7 @@ from .serializers import (
     MedicationAdherenceSerializer,
     OutboxEventSerializer,
 )
+from accounts.models import Appointment
 
 
 def _create_outbox_event(*, event_type: str, actor, patient=None, obj=None, payload=None):
@@ -96,29 +97,92 @@ class ClinicalOrderListCreateView(generics.ListCreateAPIView):
         if not (is_doctor(request.user) or is_admin(request.user)):
             return Response({"detail": "Only doctors can create clinical orders."}, status=403)
 
-        serializer = self.get_serializer(data=request.data)
+        appointment_id = request.data.get("appointment")
+        if not appointment_id:
+            return Response({"appointment": "appointment is required."}, status=400)
+
+        try:
+            appointment_id = int(appointment_id)
+        except (TypeError, ValueError):
+            return Response({"appointment": "appointment must be an integer."}, status=400)
+
+        appt = (
+            Appointment.objects.select_related("doctor", "patient")
+            .filter(id=appointment_id)
+            .first()
+        )
+        if not appt:
+            return Response({"detail": "Appointment not found."}, status=404)
+
+        # Resolve actor doctor
+        if is_admin(request.user):
+            resolved_doctor = appt.doctor
+        else:
+            resolved_doctor = request.user
+            if appt.doctor_id != resolved_doctor.id:
+                return Response({"detail": "Not found."}, status=404)  
+         # Gate: must be confirmed to create clinical activity
+        if appt.status in ["cancelled", "no_show"]:
+            return Response(
+                {"detail": f"Cannot create order for appointment in status '{appt.status}'."},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        if appt.status != "confirmed":
+            return Response(
+                {"detail": "Appointment must be confirmed before creating clinical orders."},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        # Client must NOT send patient (derived from appointment)
+        data = request.data.copy()
+
+        raw_patient = data.get("patient", None)
+        if raw_patient is not None and str(raw_patient).strip() != "":
+            return Response(
+                {"patient": ["Do not send patient. It is derived from appointment."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # if key exists but empty, drop it to avoid confusion
+        data.pop("patient", None)
+
+        forced_patient = appt.patient
+
+        # Force patient + appointment
+        data["patient"] = str(forced_patient.id)
+        data["appointment"] = str(appt.id)
+
+
+        # IMPORTANT: tell serializer that patient was injected by server (so it won't reject it)
+        serializer = self.get_serializer(
+            data=data,
+            context={**self.get_serializer_context(), "patient_from_appointment": True},
+        )
         serializer.is_valid(raise_exception=True)
-        patient = serializer.validated_data.get("patient")
-        patient_id = getattr(patient, "id", None)
 
-        if patient_id is None:
-            return Response({"patient": "patient is required."}, status=400)
-
-        if is_doctor(request.user) and not _doctor_is_linked_to_patient(doctor=request.user, patient_id=patient_id):
-            return Response({"detail": "You cannot create orders for this patient."}, status=403)
-
-
-        order = serializer.save(doctor=request.user)
+        order = serializer.save(
+            doctor=resolved_doctor,
+            patient=forced_patient,
+            appointment=appt,
+        )
 
         _create_outbox_event(
             event_type="CLINICAL_ORDER_CREATED",
-            actor=request.user,
+            actor=resolved_doctor,
             patient=order.patient,
             obj=order,
-            payload={"order_category": order.order_category, "title": order.title},
+            payload={
+                "order_category": order.order_category,
+                "title": order.title,
+                "appointment_id": appt.id,
+            },
         )
 
-        return Response(ClinicalOrderSerializer(order).data, status=status.HTTP_201_CREATED)
+        return Response(
+            ClinicalOrderSerializer(order).data,
+            status=status.HTTP_201_CREATED,
+        )
 
 
 class ClinicalOrderRetrieveView(generics.RetrieveAPIView):
@@ -293,7 +357,21 @@ def approve_medical_record_file(request, file_id: int):
     f.reviewed_at = timezone.now()
     f.doctor_note = request.data.get("doctor_note", "") or ""
     f.save(update_fields=["review_status", "reviewed_by", "reviewed_at", "doctor_note"])
+    
+    # After approving a file, auto-fulfill the order if there is at least one approved file
+    # (MVP rule: 1 approved file is enough to fulfill the order)
+    order = f.order
 
+    has_approved = MedicalRecordFile.objects.filter(
+        order_id=order.id,
+        patient_id=order.patient_id,
+        review_status=MedicalRecordFile.ReviewStatus.APPROVED,
+    ).exists()
+
+    if has_approved and order.status != ClinicalOrder.Status.FULFILLED:
+        order.status = ClinicalOrder.Status.FULFILLED
+        order.save(update_fields=["status", "updated_at"])
+   
     _create_outbox_event(
         event_type="MEDICAL_FILE_REVIEWED",
         actor=request.user,
@@ -360,28 +438,84 @@ class PrescriptionListCreateView(generics.ListCreateAPIView):
         if not (is_doctor(request.user) or is_admin(request.user)):
             return Response({"detail": "Only doctors can create prescriptions."}, status=403)
 
-        serializer = self.get_serializer(data=request.data)
+        appointment_id = request.data.get("appointment")
+        if not appointment_id:
+            return Response({"appointment": "appointment is required."}, status=400)
+
+        try:
+            appointment_id = int(appointment_id)
+        except (TypeError, ValueError):
+            return Response({"appointment": "appointment must be an integer."}, status=400)
+
+        appt = (
+            Appointment.objects.select_related("doctor", "patient")
+            .filter(id=appointment_id)
+            .first()
+        )
+        if not appt:
+            return Response({"detail": "Appointment not found."}, status=404)
+
+        # Resolve actor doctor
+        if is_admin(request.user):
+            resolved_doctor = appt.doctor
+        else:
+            resolved_doctor = request.user
+            if appt.doctor_id != resolved_doctor.id:
+                return Response({"detail": "Not found."}, status=404)
+
+        if appt.status in ["cancelled", "no_show"]:
+            return Response(
+                {"detail": f"Cannot create prescription for appointment in status '{appt.status}'."},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        if appt.status != "confirmed":
+            return Response(
+                {"detail": "Appointment must be confirmed before creating prescriptions."},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+
+        # Client must NOT send patient (derived from appointment)
+        raw_patient = request.data.get("patient", None)
+        if raw_patient is not None and str(raw_patient).strip() != "":
+            return Response(
+                {"patient": ["Do not send patient. It is derived from appointment."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        # إذا كان موجود لكن فاضي (شائع مع form-data) نعتبره غير مرسل
+        # ولا نعمل return error
+
+        forced_patient = appt.patient
+
+        # Build data copy: force patient + appointment
+        data = request.data.copy()
+        data["patient"] = str(forced_patient.id)
+        data["appointment"] = str(appt.id)
+
+        # IMPORTANT: tell serializer that patient was injected by server
+        serializer = self.get_serializer(
+            data=data,
+            context={**self.get_serializer_context(), "patient_from_appointment": True},
+        )
         serializer.is_valid(raise_exception=True)
-        patient = serializer.validated_data.get("patient")
-        patient_id = getattr(patient, "id", None)
 
-        if patient_id is None:
-            return Response({"patient": "patient is required."}, status=400)
-
-        if is_doctor(request.user) and not _doctor_is_linked_to_patient(doctor=request.user, patient_id=patient_id):
-            return Response({"detail": "You cannot create prescriptions for this patient."}, status=403)
-
-        rx = serializer.save(doctor=request.user)
+        rx = serializer.save(
+            doctor=resolved_doctor,
+            patient=forced_patient,
+            appointment=appt,
+        )
 
         _create_outbox_event(
             event_type="PRESCRIPTION_CREATED",
-            actor=request.user,
+            actor=resolved_doctor,
             patient=rx.patient,
             obj=rx,
-            payload={"items_count": rx.items.count()},
+            payload={"items_count": rx.items.count(), "appointment_id": appt.id},
         )
 
         return Response(PrescriptionSerializer(rx).data, status=status.HTTP_201_CREATED)
+
 
 
 class PrescriptionRetrieveView(generics.RetrieveAPIView):

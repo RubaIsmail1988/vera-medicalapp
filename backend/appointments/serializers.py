@@ -152,34 +152,23 @@ class AppointmentCreateSerializer(serializers.Serializer):
 
 
         # 8) Follow-up gate (requires approved files)
+        # NEW policy: allow booking (pending) if there are open orders,
+        # but DO NOT require approved files here. Confirmation will be hard-gated.
         if requires_approved_files:
-            open_orders = ClinicalOrder.objects.filter(
-                doctor=doctor,
-                patient=patient,
-                status=ClinicalOrder.Status.OPEN,
-            )
-
-            if not open_orders.exists():
-                raise serializers.ValidationError(
-                    {"detail": "Follow-up booking is blocked until required files are approved."}
-                )
-
-            for order in open_orders:
-                files = MedicalRecordFile.objects.filter(order=order, patient=patient)
-                if not files.exists():
-                    raise serializers.ValidationError(
-                        {"detail": "Follow-up booking is blocked until required files are approved."}
-                    )
-
-                if files.exclude(review_status=MedicalRecordFile.ReviewStatus.APPROVED).exists():
-                    raise serializers.ValidationError(
-                        {"detail": "Follow-up booking is blocked until required files are approved."}
-                    )
-
+            pass
+         #   open_orders = ClinicalOrder.objects.filter(
+         #    doctor=doctor,
+         #   patient=patient,
+         #     status=ClinicalOrder.Status.OPEN,
+         #  )
+         # if not open_orders.exists():
+         #    raise serializers.ValidationError(
+         #       {"detail": "Follow-up booking requires existing open clinical orders."}
+         #  )
+        
         attrs["doctor_obj"] = doctor
         attrs["appointment_type_obj"] = appt_type
         attrs["duration_minutes"] = duration_minutes
-        attrs["requires_approved_files"] = requires_approved_files
         return attrs
 
     def create(self, validated_data):

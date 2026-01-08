@@ -14,6 +14,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from clinical.permissions import IsPatient, IsDoctor
+from clinical.models import ClinicalOrder, MedicalRecordFile, Prescription, MedicationAdherence, Prescription
 
 from accounts.models import (
     Appointment,
@@ -205,10 +206,21 @@ def mark_no_show(request, pk: int):
     if appointment.doctor_id != user.id:
         return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
 
+    # لا تسمح لو الموعد ملغى أو no_show مسبقًا
     if appointment.status == "cancelled":
         return Response(
             {"detail": "Cancelled appointments cannot be marked as no_show."},
             status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if appointment.status == "no_show":
+        return Response({"id": appointment.id, "status": appointment.status}, status=status.HTTP_200_OK)
+
+    # يجب أن يكون الموعد confirmed أساسًا (مهم لمنع no_show على pending)
+    if appointment.status != "confirmed":
+        return Response(
+            {"detail": "Only confirmed appointments can be marked as no_show."},
+            status=status.HTTP_409_CONFLICT,
         )
 
     # prevent future no_show: must be after (start + duration)
@@ -219,11 +231,27 @@ def mark_no_show(request, pk: int):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
+    # -----------------------------
+    # NEW: Block no_show if clinical activity exists
+    # -----------------------------
+    has_orders = ClinicalOrder.objects.filter(appointment_id=appointment.id).exists()
+    has_rx = Prescription.objects.filter(appointment_id=appointment.id).exists()
+
+    # (اختياري لكن أنصح به) إذا عندك adherence مربوط بالـ Rx items:
+    has_adh = MedicationAdherence.objects.filter(
+        prescription_item__prescription__appointment_id=appointment.id
+    ).exists()
+
+    if has_orders or has_rx or has_adh:
+        return Response(
+            {"detail": "Cannot mark no_show after clinical actions were recorded."},
+            status=status.HTTP_409_CONFLICT,
+        )
+
     appointment.status = "no_show"
     appointment.save(update_fields=["status", "updated_at"])
 
     return Response({"id": appointment.id, "status": appointment.status}, status=status.HTTP_200_OK)
-
 
 # -----------------------------
 # Cancel appointment (patient/doctor/admin)
@@ -252,6 +280,16 @@ def cancel_appointment(request, pk: int):
         return Response(
             {"id": appointment.id, "status": appointment.status},
             status=status.HTTP_200_OK,
+        )
+    
+    # Block cancellation if clinical activity already exists for this appointment
+    has_orders = ClinicalOrder.objects.filter(appointment_id=appointment.id).exists()
+    has_rx = Prescription.objects.filter(appointment_id=appointment.id).exists()
+
+    if has_orders or has_rx:
+        return Response(
+            {"detail": "Cannot cancel appointment after clinical actions were recorded."},
+            status=status.HTTP_409_CONFLICT,
         )
 
     appointment.status = "cancelled"
@@ -283,7 +321,10 @@ def confirm_appointment(request, pk: int):
         )
 
     if appointment.status == "confirmed":
-        return Response({"id": appointment.id, "status": appointment.status}, status=status.HTTP_200_OK)
+        return Response(
+            {"id": appointment.id, "status": appointment.status},
+            status=status.HTTP_200_OK,
+        )
 
     if appointment.status != "pending":
         return Response(
@@ -291,11 +332,53 @@ def confirm_appointment(request, pk: int):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
+    # ------------------------------------------------------------
+    # Follow-up confirmation gate (Policy 2 - flexible)
+    # - If no OPEN orders => allow confirmation
+    # - If there are OPEN orders => each must have >=1 file AND all files approved
+    # ------------------------------------------------------------
+    appt_type = appointment.appointment_type
+    if bool(getattr(appt_type, "requires_approved_files", False)):
+        open_orders = ClinicalOrder.objects.filter(
+            doctor_id=appointment.doctor_id,
+            patient_id=appointment.patient_id,
+            status=ClinicalOrder.Status.OPEN,
+        ).only("id")
+
+        if open_orders.exists():
+            for order in open_orders:
+                files_qs = MedicalRecordFile.objects.filter(
+                    order_id=order.id,
+                    patient_id=appointment.patient_id,
+                ).only("id", "review_status")
+
+                if not files_qs.exists():
+                    return Response(
+                        {
+                            "detail": "Cannot confirm follow-up: missing required files.",
+                            "order_id": order.id,
+                        },
+                        status=status.HTTP_409_CONFLICT,
+                    )
+
+                if files_qs.exclude(
+                    review_status=MedicalRecordFile.ReviewStatus.APPROVED
+                ).exists():
+                    return Response(
+                        {
+                            "detail": "Cannot confirm follow-up: some files are not approved yet.",
+                            "order_id": order.id,
+                        },
+                        status=status.HTTP_409_CONFLICT,
+                    )
+
     appointment.status = "confirmed"
     appointment.save(update_fields=["status", "updated_at"])
 
-    return Response({"id": appointment.id, "status": appointment.status}, status=status.HTTP_200_OK)
-
+    return Response(
+        {"id": appointment.id, "status": appointment.status},
+        status=status.HTTP_200_OK,
+    )
 
 # -----------------------------
 # Slots (single day)
@@ -788,9 +871,29 @@ class MyAppointmentsView(APIView):
                 qs = qs.filter(date_time__lte=end_dt)
 
         qs = qs.order_by("-date_time")[:200]
+        appointments_list = list(qs)  # materialize once
+        appt_ids = [a.id for a in appointments_list]
 
+        # Any orders linked to these appointments
+        order_rows = ClinicalOrder.objects.filter(
+            appointment_id__in=appt_ids
+        ).values("appointment_id", "status")
+
+        orders_by_appt = {}
+        for row in order_rows:
+            aid = row["appointment_id"]
+            st = row["status"]
+            bucket = orders_by_appt.setdefault(aid, {"any": False, "open": False})
+            bucket["any"] = True
+            if st == ClinicalOrder.Status.OPEN:
+                bucket["open"] = True
+   
         results = []
-        for ap in qs:
+        for ap in appointments_list:
+            flags = orders_by_appt.get(ap.id, {"any": False, "open": False})
+            has_any_orders = bool(flags["any"])
+            has_open_orders = bool(flags["open"])
+
             results.append(
                 {
                     "id": ap.id,
@@ -805,8 +908,13 @@ class MyAppointmentsView(APIView):
                     "status": ap.status,
                     "notes": ap.notes,
                     "created_at": ap.created_at.astimezone(tz).isoformat(),
+
+                    # NEW flags
+                    "has_any_orders": has_any_orders,
+                    "has_open_orders": has_open_orders,
                 }
             )
+
 
         return Response({"results": results}, status=status.HTTP_200_OK)
 
