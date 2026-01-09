@@ -10,17 +10,22 @@ import '/utils/constants.dart';
 import '/utils/ui_helpers.dart';
 
 class OrderDetailsScreen extends StatefulWidget {
+  /// Final role determined by route builder (web-safe).
   final String role; // doctor | patient
   final int orderId;
 
-  // للطبيب: كي نرجع إلى /app/record?patientId=...
+  /// For doctor: used for back navigation to /app/record?patientId=...
   final int? doctorPatientId;
+
+  /// Optional: keep appointment context when returning back.
+  final int? appointmentId;
 
   const OrderDetailsScreen({
     super.key,
     required this.role,
     required this.orderId,
     this.doctorPatientId,
+    this.appointmentId,
   });
 
   @override
@@ -31,43 +36,58 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
   late final ClinicalService clinicalService;
 
   bool loading = true;
+  String? errorMessage;
+
   Map<String, dynamic>? order;
   List<Map<String, dynamic>> files = [];
 
-  bool get isDoctor => widget.role == "doctor";
-  bool get isPatient => widget.role == "patient";
+  bool get isDoctor => widget.role.trim().toLowerCase() == "doctor";
+  bool get isPatient => !isDoctor;
 
   @override
   void initState() {
     super.initState();
     clinicalService = ClinicalService(authService: AuthService());
-    loadAll();
+    _loadAll();
   }
 
-  Future<void> loadAll() async {
+  Future<void> _loadAll() async {
     if (!mounted) return;
-    setState(() => loading = true);
+    setState(() {
+      loading = true;
+      errorMessage = null;
+    });
 
     final orderRes = await clinicalService.getOrderDetails(widget.orderId);
     if (!mounted) return;
 
     if (orderRes.statusCode == 401) {
-      setState(() => loading = false);
-      showAppSnackBar(context, "انتهت الجلسة، يرجى تسجيل الدخول مجددًا.");
+      final msg = "انتهت الجلسة، يرجى تسجيل الدخول مجددًا.";
+      setState(() {
+        loading = false;
+        errorMessage = msg;
+      });
+      showAppSnackBar(context, msg, type: AppSnackBarType.error);
       return;
     }
+
     if (orderRes.statusCode == 403) {
-      setState(() => loading = false);
-      showAppSnackBar(context, "لا تملك الصلاحية لعرض تفاصيل هذا الطلب.");
+      final msg = "لا تملك الصلاحية لعرض تفاصيل هذا الطلب.";
+      setState(() {
+        loading = false;
+        errorMessage = msg;
+      });
+      showAppSnackBar(context, msg, type: AppSnackBarType.error);
       return;
     }
+
     if (orderRes.statusCode != 200) {
-      setState(() => loading = false);
-      showAppSnackBar(
-        context,
-        "فشل تحميل تفاصيل الطلب (${orderRes.statusCode}).",
-        type: AppSnackBarType.error,
-      );
+      final msg = "فشل تحميل تفاصيل الطلب (${orderRes.statusCode}).";
+      setState(() {
+        loading = false;
+        errorMessage = msg;
+      });
+      showAppSnackBar(context, msg, type: AppSnackBarType.error);
       return;
     }
 
@@ -78,22 +98,32 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     if (!mounted) return;
 
     if (filesRes.statusCode == 401) {
-      setState(() => loading = false);
-      showAppSnackBar(context, "انتهت الجلسة، يرجى تسجيل الدخول مجددًا.");
+      final msg = "انتهت الجلسة، يرجى تسجيل الدخول مجددًا.";
+      setState(() {
+        loading = false;
+        errorMessage = msg;
+      });
+      showAppSnackBar(context, msg, type: AppSnackBarType.error);
       return;
     }
+
     if (filesRes.statusCode == 403) {
-      setState(() => loading = false);
-      showAppSnackBar(context, "لا تملك الصلاحية لعرض ملفات هذا الطلب.");
+      final msg = "لا تملك الصلاحية لعرض ملفات هذا الطلب.";
+      setState(() {
+        loading = false;
+        errorMessage = msg;
+      });
+      showAppSnackBar(context, msg, type: AppSnackBarType.error);
       return;
     }
+
     if (filesRes.statusCode != 200) {
-      setState(() => loading = false);
-      showAppSnackBar(
-        context,
-        "فشل تحميل الملفات (${filesRes.statusCode}).",
-        type: AppSnackBarType.error,
-      );
+      final msg = "فشل تحميل الملفات (${filesRes.statusCode}).";
+      setState(() {
+        loading = false;
+        errorMessage = msg;
+      });
+      showAppSnackBar(context, msg, type: AppSnackBarType.error);
       return;
     }
 
@@ -108,10 +138,11 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
       order = orderJson;
       files = filesList;
       loading = false;
+      errorMessage = null;
     });
   }
 
-  // ----------- Helpers -----------
+  // ---------------- Helpers ----------------
 
   String _categoryLabel(String raw) {
     final v = raw.trim().toLowerCase();
@@ -134,7 +165,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     }
     if (v == "approved") return "approved";
     if (v == "rejected") return "rejected";
-    return raw;
+    return v.isNotEmpty ? v : "pending_review";
   }
 
   String _reviewStatusLabelAr(String normalized) {
@@ -164,9 +195,9 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
   bool _isDicom(String nameOrUrl) => nameOrUrl.toLowerCase().endsWith(".dcm");
 
   Map<String, int> _filesSummary() {
-    int pending = 0;
-    int approved = 0;
-    int rejected = 0;
+    var pending = 0;
+    var approved = 0;
+    var rejected = 0;
 
     for (final f in files) {
       final raw = f["review_status"]?.toString() ?? "";
@@ -193,43 +224,34 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
   Future<void> _openExternal(String url) async {
     final uri = Uri.tryParse(url);
     if (uri == null) {
-      showAppSnackBar(context, "رابط غير صالح.");
+      showAppSnackBar(context, "رابط غير صالح.", type: AppSnackBarType.error);
       return;
     }
     final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
     if (!mounted) return;
     if (!ok) {
-      showAppSnackBar(context, "تعذر فتح الرابط. انسخه وافتحه يدويًا.");
+      showAppSnackBar(
+        context,
+        "تعذر فتح الرابط. انسخه وافتحه يدويًا.",
+        type: AppSnackBarType.warning,
+      );
     }
   }
 
   Future<bool> _confirmDecision({required String actionLabel}) async {
-    final result = await showDialog<bool>(
-      context: context,
-      builder: (ctx) {
-        return AlertDialog(
-          title: const Text("تأكيد القرار"),
-          content: Text(
-            "هل أنت متأكد؟ لا يمكن التراجع.\nالإجراء: $actionLabel",
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text("إلغاء"),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text("تأكيد"),
-            ),
-          ],
-        );
-      },
+    return showConfirmDialog(
+      context,
+      title: "تأكيد القرار",
+      message: "هل أنت متأكد؟ لا يمكن التراجع.\nالإجراء: $actionLabel",
+      confirmText: "تأكيد",
+      cancelText: "إلغاء",
+      danger: true,
     );
-    return result == true;
   }
 
   Future<String?> _askRejectNote() async {
     final controller = TextEditingController();
+
     final result = await showDialog<String>(
       context: context,
       builder: (ctx) {
@@ -253,6 +275,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
         );
       },
     );
+
     controller.dispose();
     return result;
   }
@@ -266,19 +289,19 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     if (!mounted) return;
 
     if (res.statusCode == 200) {
-      showAppSnackBar(context, "تمت الموافقة.");
-      await loadAll();
+      showAppSnackBar(context, "تمت الموافقة.", type: AppSnackBarType.success);
+      await _loadAll();
       return;
     }
-    if (res.statusCode == 401) {
-      showAppSnackBar(context, "انتهت الجلسة، يرجى تسجيل الدخول مجددًا.");
-      return;
-    }
-    if (res.statusCode == 403) {
-      showAppSnackBar(context, "لا تملك الصلاحية لمراجعة هذا الملف.");
-      return;
-    }
-    showAppSnackBar(context, "فشل العملية (${res.statusCode}).");
+
+    final msg =
+        (res.statusCode == 401)
+            ? "انتهت الجلسة، يرجى تسجيل الدخول مجددًا."
+            : (res.statusCode == 403)
+            ? "لا تملك الصلاحية لمراجعة هذا الملف."
+            : "فشل العملية (${res.statusCode}).";
+
+    showAppSnackBar(context, msg, type: AppSnackBarType.error);
   }
 
   Future<void> _rejectFile(int fileId) async {
@@ -288,7 +311,11 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
 
     final trimmed = note.trim();
     if (trimmed.isEmpty) {
-      showAppSnackBar(context, "ملاحظة الرفض مطلوبة.");
+      showAppSnackBar(
+        context,
+        "ملاحظة الرفض مطلوبة.",
+        type: AppSnackBarType.warning,
+      );
       return;
     }
 
@@ -300,51 +327,63 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     if (!mounted) return;
 
     if (res.statusCode == 200) {
-      showAppSnackBar(context, "تم الرفض.");
-      await loadAll();
+      showAppSnackBar(context, "تم الرفض.", type: AppSnackBarType.success);
+      await _loadAll();
       return;
     }
-    if (res.statusCode == 401) {
-      showAppSnackBar(context, "انتهت الجلسة، يرجى تسجيل الدخول مجددًا.");
-      return;
-    }
-    if (res.statusCode == 403) {
-      showAppSnackBar(context, "لا تملك الصلاحية لمراجعة هذا الملف.");
-      return;
-    }
-    showAppSnackBar(context, "فشل العملية (${res.statusCode}).");
+
+    final msg =
+        (res.statusCode == 401)
+            ? "انتهت الجلسة، يرجى تسجيل الدخول مجددًا."
+            : (res.statusCode == 403)
+            ? "لا تملك الصلاحية لمراجعة هذا الملف."
+            : "فشل العملية (${res.statusCode}).";
+
+    showAppSnackBar(context, msg, type: AppSnackBarType.error);
   }
 
   void _goBackSmart() {
-    // الطبيب: يرجع إلى /record?patientId=...
+    final apptId = widget.appointmentId;
+
+    // Doctor -> back to record with patientId (+ keep appointmentId if exists)
     if (isDoctor && widget.doctorPatientId != null) {
-      context.go("/app/record?patientId=${widget.doctorPatientId}");
+      final qp = <String, String>{
+        "patientId": "${widget.doctorPatientId}",
+        "role": "doctor",
+      };
+      if (apptId != null && apptId > 0) qp["appointmentId"] = "$apptId";
+      context.go("/app/record?${Uri(queryParameters: qp).query}");
       return;
     }
 
-    // المريض: يرجع إلى /record
+    // Patient -> back to record (+ keep appointmentId if exists)
+    if (apptId != null && apptId > 0) {
+      context.go(
+        "/app/record?${Uri(queryParameters: {"appointmentId": "$apptId", "role": "patient"}).query}",
+      );
+      return;
+    }
+
     context.go("/app/record");
   }
 
-  // ----------- UI -----------
+  // ---------------- UI ----------------
 
   @override
   Widget build(BuildContext context) {
     final o = order;
     final summary = _filesSummary();
 
-    final orderTitle = o?["title"]?.toString().trim() ?? "";
+    final orderTitle = (o?["title"]?.toString() ?? "").trim();
     final doctorDisplayName =
-        o?["doctor_display_name"]?.toString().trim().isNotEmpty == true
-            ? o!["doctor_display_name"].toString().trim()
-            : o?["doctor"]?.toString().trim();
+        (o?["doctor_display_name"]?.toString() ?? "").trim().isNotEmpty
+            ? (o?["doctor_display_name"]?.toString() ?? "").trim()
+            : (o?["doctor"]?.toString() ?? "").trim();
 
     final doctorLabel =
-        (doctorDisplayName != null && doctorDisplayName.trim().isNotEmpty)
-            ? "د. $doctorDisplayName"
-            : "";
+        doctorDisplayName.isNotEmpty ? "د. $doctorDisplayName" : "";
 
-    final categoryRaw = o?["order_category"]?.toString() ?? "";
+    final categoryRaw = (o?["order_category"]?.toString() ?? "").trim();
     final orderIcon = _orderCategoryIcon(categoryRaw);
 
     return Scaffold(
@@ -357,10 +396,14 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
         actions: [
           IconButton(
             onPressed: () async {
-              final ctx = context;
-              await loadAll();
-              if (!mounted || !ctx.mounted) return;
-              showAppSnackBar(ctx, "تم التحديث.");
+              await _loadAll();
+              if (!mounted) return;
+              showAppSnackBar(
+                // ignore: use_build_context_synchronously
+                context,
+                "تم التحديث.",
+                type: AppSnackBarType.info,
+              );
             },
             icon: const Icon(Icons.refresh),
           ),
@@ -369,6 +412,29 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
       body:
           loading
               ? const Center(child: CircularProgressIndicator())
+              : (errorMessage != null)
+              ? Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.error_outline, size: 40),
+                      const SizedBox(height: 12),
+                      Text(errorMessage!, textAlign: TextAlign.center),
+                      const SizedBox(height: 16),
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          onPressed: _loadAll,
+                          icon: const Icon(Icons.refresh),
+                          label: const Text("إعادة المحاولة"),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              )
               : (o == null)
               ? const Center(child: Text("لا توجد بيانات لعرضها."))
               : ListView(
@@ -405,7 +471,9 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                           ),
                           const SizedBox(height: 10),
                           Text("النوع: ${_categoryLabel(categoryRaw)}"),
-                          Text("الحالة: ${o["status"]?.toString() ?? "open"}"),
+                          Text(
+                            "الحالة: ${(o["status"]?.toString() ?? "open")}",
+                          ),
                           Text(
                             "التاريخ: ${_formatDateTimeShort(o["created_at"]?.toString() ?? "")}",
                           ),
@@ -414,7 +482,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                               .trim()
                               .isNotEmpty)
                             Text(
-                              "تعليمات/شروط: ${o["details"]?.toString() ?? ""}",
+                              "تعليمات/شروط: ${(o["details"]?.toString() ?? "").trim()}",
                             ),
                           const SizedBox(height: 12),
                           Text(
@@ -446,15 +514,16 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                             final fileId = int.tryParse(
                               f["id"]?.toString() ?? "",
                             );
-                            final rawUrl = f["file"]?.toString() ?? "";
+
+                            final rawUrl = (f["file"]?.toString() ?? "");
                             final fileUrl = _resolveFileUrl(rawUrl);
 
                             final filename =
-                                f["original_filename"]
+                                (f["original_filename"]
                                             ?.toString()
                                             .trim()
                                             .isNotEmpty ==
-                                        true
+                                        true)
                                     ? f["original_filename"].toString()
                                     : rawUrl;
 
@@ -467,7 +536,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                             );
 
                             final doctorNote =
-                                f["doctor_note"]?.toString() ?? "";
+                                (f["doctor_note"]?.toString() ?? "").trim();
 
                             final isImg =
                                 _isImage(filename) || _isImage(fileUrl);
@@ -494,7 +563,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                                         CrossAxisAlignment.start,
                                     children: [
                                       Text("الحالة: $statusAr"),
-                                      if (doctorNote.trim().isNotEmpty)
+                                      if (doctorNote.isNotEmpty)
                                         Text(
                                           "ملاحظة الطبيب: $doctorNote",
                                           maxLines: 2,
@@ -602,10 +671,9 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                                           label: const Text("فتح / تحميل"),
                                         ),
                                       ],
-
                                       const SizedBox(height: 10),
 
-                                      // أزرار المراجعة تظهر فقط عند pending_review
+                                      // Review buttons (doctor + pending only)
                                       if (isDoctor &&
                                           normalizedStatus ==
                                               "pending_review") ...[

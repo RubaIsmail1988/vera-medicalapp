@@ -8,15 +8,21 @@ import '/services/clinical_service.dart';
 import '/utils/ui_helpers.dart';
 
 class OrdersTab extends StatefulWidget {
-  final String role;
+  final String role; // doctor | patient
   final int userId;
-  final int? selectedPatientId; // doctor context
+
+  /// doctor context: patient id (comes from UnifiedRecordScreen)
+  final int? selectedPatientId;
+
+  /// appointment context: appointment id (comes from UnifiedRecordScreen)
+  final int? selectedAppointmentId;
 
   const OrdersTab({
     super.key,
     required this.role,
     required this.userId,
     this.selectedPatientId,
+    this.selectedAppointmentId,
   });
 
   @override
@@ -28,19 +34,25 @@ class _OrdersTabState extends State<OrdersTab> {
   Future<List<Map<String, dynamic>>>? ordersFuture;
 
   bool get isDoctor => widget.role == "doctor";
+  bool get isPatient => widget.role == "patient";
 
   @override
   void initState() {
     super.initState();
     clinicalService = ClinicalService(authService: AuthService());
-    ordersFuture = fetchOrders();
+    ordersFuture = _fetchOrders();
   }
 
   @override
   void didUpdateWidget(covariant OrdersTab oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.selectedPatientId != widget.selectedPatientId) {
-      reload();
+
+    final pidChanged = oldWidget.selectedPatientId != widget.selectedPatientId;
+    final apptChanged =
+        oldWidget.selectedAppointmentId != widget.selectedAppointmentId;
+
+    if (pidChanged || apptChanged) {
+      _reload();
     }
   }
 
@@ -50,9 +62,10 @@ class _OrdersTabState extends State<OrdersTab> {
     return int.tryParse(v.toString());
   }
 
-  DateTime _parseDate(String s) {
-    final dt = DateTime.tryParse(s);
-    return dt ?? DateTime.fromMillisecondsSinceEpoch(0);
+  DateTime _parseCreatedAtOrMin(String raw) {
+    final s = raw.trim();
+    if (s.isEmpty) return DateTime.fromMillisecondsSinceEpoch(0);
+    return DateTime.tryParse(s) ?? DateTime.fromMillisecondsSinceEpoch(0);
   }
 
   String _formatDateShort(String raw) {
@@ -79,10 +92,10 @@ class _OrdersTabState extends State<OrdersTab> {
     if (v == "open") return "مفتوح";
     if (v == "fulfilled") return "مكتمل";
     if (v == "cancelled") return "ملغي";
-    return raw.isEmpty ? "open" : raw;
+    return raw.trim().isEmpty ? "open" : raw;
   }
 
-  Future<List<Map<String, dynamic>>> fetchOrders() async {
+  Future<List<Map<String, dynamic>>> _fetchOrders() async {
     final response = await clinicalService.listOrders();
 
     if (response.statusCode == 200) {
@@ -94,21 +107,35 @@ class _OrdersTabState extends State<OrdersTab> {
               : <Map<String, dynamic>>[];
 
       final selectedPid = widget.selectedPatientId;
-      List<Map<String, dynamic>> filtered = list;
+      final selectedApptId = widget.selectedAppointmentId;
 
-      if (widget.role == "doctor" && selectedPid != null) {
+      var filtered = list;
+
+      // Doctor context: filter by selected patient
+      if (isDoctor && selectedPid != null && selectedPid > 0) {
         filtered =
-            list.where((o) {
+            filtered.where((o) {
               final pid = _asInt(o["patient"]);
               return pid == selectedPid;
             }).toList();
       }
 
-      // الأحدث أولًا
+      // Appointment context: filter by appointmentId (doctor & patient)
+      if (selectedApptId != null && selectedApptId > 0) {
+        filtered =
+            filtered.where((o) {
+              final appt = _asInt(o["appointment"]);
+              return appt == selectedApptId;
+            }).toList();
+      }
+
+      // newest first
       filtered.sort((a, b) {
-        final da = _parseDate((a["created_at"] ?? "").toString());
-        final db = _parseDate((b["created_at"] ?? "").toString());
-        return db.compareTo(da);
+        final aRaw = a["created_at"]?.toString() ?? "";
+        final bRaw = b["created_at"]?.toString() ?? "";
+        final ad = _parseCreatedAtOrMin(aRaw);
+        final bd = _parseCreatedAtOrMin(bRaw);
+        return bd.compareTo(ad);
       });
 
       return filtered;
@@ -134,36 +161,43 @@ class _OrdersTabState extends State<OrdersTab> {
     }
   }
 
-  Future<void> reload() async {
+  Future<void> _reload() async {
+    final future = _fetchOrders();
     if (!mounted) return;
-    setState(() {
-      ordersFuture = fetchOrders();
-    });
+    setState(() => ordersFuture = future);
+    await future;
   }
 
-  Future<void> createOrderFlow() async {
+  Future<void> _createOrderFlow() async {
     if (!isDoctor) {
-      showAppSnackBar(context, "هذه العملية متاحة للطبيب فقط.");
+      showAppSnackBar(
+        context,
+        "هذه العملية متاحة للطبيب فقط.",
+        type: AppSnackBarType.warning,
+      );
       return;
     }
 
-    final selectedPid = widget.selectedPatientId;
-    if (selectedPid == null || selectedPid <= 0) {
-      showAppSnackBar(context, "اختر مريضًا أولاً لإنشاء طلب.");
+    final apptId = widget.selectedAppointmentId;
+    if (apptId == null || apptId <= 0) {
+      showAppSnackBar(
+        context,
+        "اختر موعدًا أولًا لإنشاء طلب مرتبط به.",
+        type: AppSnackBarType.warning,
+      );
       return;
     }
 
     final payload = await showDialog<_CreateOrderPayload>(
       context: context,
-      builder: (ctx) => const _CreateOrderDialog(),
+      builder: (_) => const _CreateOrderDialog(),
     );
 
     if (!mounted) return;
     if (payload == null) return;
 
     final response = await clinicalService.createOrder(
-      doctorId: widget.userId,
-      patientId: selectedPid, // مهم: لا نطلب إدخاله في UI
+      appointmentId: apptId,
       orderCategory: payload.orderCategory,
       title: payload.title,
       details: payload.details,
@@ -172,18 +206,30 @@ class _OrdersTabState extends State<OrdersTab> {
     if (!mounted) return;
 
     if (response.statusCode == 201) {
-      showAppSnackBar(context, "تم إنشاء الطلب بنجاح.");
-      await reload();
+      showAppSnackBar(
+        context,
+        "تم إنشاء الطلب بنجاح.",
+        type: AppSnackBarType.success,
+      );
+      await _reload();
       return;
     }
 
     if (response.statusCode == 401) {
-      showAppSnackBar(context, "انتهت الجلسة، يرجى تسجيل الدخول مجددًا.");
+      showAppSnackBar(
+        context,
+        "انتهت الجلسة، يرجى تسجيل الدخول مجددًا.",
+        type: AppSnackBarType.error,
+      );
       return;
     }
 
     if (response.statusCode == 403) {
-      showAppSnackBar(context, "لا تملك الصلاحية لإنشاء طلب.");
+      showAppSnackBar(
+        context,
+        "لا تملك الصلاحية لإنشاء طلب.",
+        type: AppSnackBarType.error,
+      );
       return;
     }
 
@@ -207,28 +253,49 @@ class _OrdersTabState extends State<OrdersTab> {
     }
   }
 
+  String _buildQuery({int? patientId, int? appointmentId, String? role}) {
+    final qp = <String, String>{};
+    if (role != null && role.trim().isNotEmpty) qp["role"] = role.trim();
+    if (patientId != null && patientId > 0) qp["patientId"] = "$patientId";
+    if (appointmentId != null && appointmentId > 0) {
+      qp["appointmentId"] = "$appointmentId";
+    }
+    if (qp.isEmpty) return "";
+    return "?${Uri(queryParameters: qp).query}";
+  }
+
   void _openOrderDetails(int orderId) {
     final pid = widget.selectedPatientId;
+    final apptId = widget.selectedAppointmentId;
 
     if (isDoctor) {
-      // الطبيب: نثبت patientId بالـ query حتى زر الرجوع يرجع لنفس المريض
       if (pid == null || pid <= 0) {
-        showAppSnackBar(context, "اختر مريضًا أولًا.");
+        showAppSnackBar(
+          context,
+          "اختر مريضًا أولًا.",
+          type: AppSnackBarType.warning,
+        );
         return;
       }
-      context.go(
-        "/app/record/orders/$orderId?patientId=$pid",
-        extra: {"role": widget.role},
+      final q = _buildQuery(
+        role: widget.role,
+        patientId: pid,
+        appointmentId: apptId,
       );
+      context.go("/app/record/orders/$orderId$q");
       return;
     }
 
-    // المريض: بدون query
-    context.go("/app/record/orders/$orderId", extra: {"role": widget.role});
+    final q = _buildQuery(role: widget.role, appointmentId: apptId);
+    context.go("/app/record/orders/$orderId$q");
   }
 
   @override
   Widget build(BuildContext context) {
+    final hasApptFilter =
+        widget.selectedAppointmentId != null &&
+        widget.selectedAppointmentId! > 0;
+
     return Column(
       children: [
         if (isDoctor)
@@ -237,7 +304,7 @@ class _OrdersTabState extends State<OrdersTab> {
             child: SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
-                onPressed: () => createOrderFlow(),
+                onPressed: _createOrderFlow,
                 icon: const Icon(Icons.add),
                 label: const Text("إنشاء طلب"),
               ),
@@ -253,7 +320,7 @@ class _OrdersTabState extends State<OrdersTab> {
 
               if (snapshot.hasError) {
                 final err = snapshot.error;
-                String message = "حدث خطأ.";
+                var message = "حدث خطأ.";
                 if (err is _HttpException) message = err.message;
 
                 return Center(
@@ -268,10 +335,14 @@ class _OrdersTabState extends State<OrdersTab> {
                         const SizedBox(height: 16),
                         ElevatedButton.icon(
                           onPressed: () async {
-                            await reload();
+                            await _reload();
                             if (!mounted) return;
-                            // ignore: use_build_context_synchronously
-                            showAppSnackBar(context, "تمت إعادة المحاولة.");
+                            showAppSnackBar(
+                              // ignore: use_build_context_synchronously
+                              context,
+                              "تمت إعادة المحاولة.",
+                              type: AppSnackBarType.info,
+                            );
                           },
                           icon: const Icon(Icons.refresh),
                           label: const Text("إعادة المحاولة"),
@@ -285,19 +356,29 @@ class _OrdersTabState extends State<OrdersTab> {
               final orders = snapshot.data ?? [];
 
               if (orders.isEmpty) {
-                return const Center(child: Text("لا توجد طلبات حتى الآن."));
+                return Center(
+                  child: Text(
+                    hasApptFilter
+                        ? "لا توجد طلبات مرتبطة بهذا الموعد."
+                        : "لا توجد طلبات حتى الآن.",
+                  ),
+                );
               }
 
               return RefreshIndicator(
-                onRefresh: () async => reload(),
+                onRefresh: () async => _reload(),
                 child: ListView.separated(
                   padding: const EdgeInsets.all(12),
                   itemCount: orders.length,
                   separatorBuilder: (_, __) => const SizedBox(height: 8),
                   itemBuilder: (context, index) {
                     final o = orders[index];
+
                     final oid = _asInt(o["id"]);
-                    final title = o["title"]?.toString() ?? "طلب بدون عنوان";
+                    final title = (o["title"]?.toString() ?? "").trim();
+                    final safeTitle =
+                        title.isNotEmpty ? title : "طلب بدون عنوان";
+
                     final doctorName =
                         (o["doctor_display_name"]?.toString() ?? "").trim();
 
@@ -322,7 +403,7 @@ class _OrdersTabState extends State<OrdersTab> {
                           ),
                         ),
                         title: Text(
-                          title,
+                          safeTitle,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
@@ -351,7 +432,11 @@ class _OrdersTabState extends State<OrdersTab> {
                         ),
                         onTap: () {
                           if (oid == null) {
-                            showAppSnackBar(context, "Invalid order id.");
+                            showAppSnackBar(
+                              context,
+                              "Invalid order id.",
+                              type: AppSnackBarType.error,
+                            );
                             return;
                           }
                           _openOrderDetails(oid);
@@ -471,7 +556,11 @@ class _CreateOrderDialogState extends State<_CreateOrderDialog> {
           onPressed: () {
             final title = titleController.text.trim();
             if (title.isEmpty) {
-              showAppSnackBar(context, "العنوان مطلوب.");
+              showAppSnackBar(
+                context,
+                "العنوان مطلوب.",
+                type: AppSnackBarType.warning,
+              );
               return;
             }
 

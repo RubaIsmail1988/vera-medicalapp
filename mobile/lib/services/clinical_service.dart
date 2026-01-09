@@ -1,3 +1,4 @@
+// -----------------lib/services/clinical_service.dart----------------
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -87,23 +88,28 @@ class ClinicalService {
     return first;
   }
 
-  // ---------------- Orders ----------------
+  // ---------------------------------------------------------------------------
+  // Orders
+  // ---------------------------------------------------------------------------
 
+  /// Backend contract (per ClinicalOrderListCreateView):
+  /// - appointment is REQUIRED
+  /// - client must NOT send patient (derived from appointment)
+  /// - doctor is derived from token (or appointment for admin)
+  ///
+  /// orderCategory: "lab_test" | "medical_imaging"
   Future<http.Response> createOrder({
-    required int doctorId,
-    required int patientId,
+    required int appointmentId,
     required String orderCategory, // "lab_test" | "medical_imaging"
     required String title,
     String? details,
   }) {
     final Map<String, dynamic> body = <String, dynamic>{
-      "doctor":
-          doctorId, // إن كان الـ backend يشتق doctor من token سيُتجاهل غالبًا
-      "patient": patientId,
+      "appointment": appointmentId,
       "order_category": orderCategory,
       "title": title,
       "details": details ?? "",
-      "appointment": null,
+      // DO NOT send: patient, doctor
     };
 
     return authorizedClinicalRequest("/orders/", "POST", body: body);
@@ -117,7 +123,9 @@ class ClinicalService {
     return authorizedClinicalRequest("/orders/$orderId/", "GET");
   }
 
-  // ---------------- Files ----------------
+  // ---------------------------------------------------------------------------
+  // Files
+  // ---------------------------------------------------------------------------
 
   Future<http.Response> listOrderFiles(int orderId) {
     return authorizedClinicalRequest("/orders/$orderId/files/", "GET");
@@ -146,6 +154,7 @@ class ClinicalService {
       request.headers["Authorization"] = "Bearer $bearerToken";
       request.headers["Accept"] = "application/json";
 
+      // Backend expects multipart file field name: "file"
       request.files.add(
         http.MultipartFile.fromBytes("file", bytes, filename: filename),
       );
@@ -183,12 +192,14 @@ class ClinicalService {
     );
   }
 
-  // المريض يحذف اذا رفع بالغلط والملف pending
+  /// Patient can delete ONLY pending files they uploaded (backend enforces).
   Future<http.Response> deleteMedicalFile(int fileId) {
     return authorizedClinicalRequest("/files/$fileId/", "DELETE");
   }
 
-  // ---------------- Prescriptions ----------------
+  // ---------------------------------------------------------------------------
+  // Prescriptions
+  // ---------------------------------------------------------------------------
 
   Future<http.Response> listPrescriptions() {
     return authorizedClinicalRequest("/prescriptions/", "GET");
@@ -198,43 +209,49 @@ class ClinicalService {
     return authorizedClinicalRequest("/prescriptions/$prescriptionId/", "GET");
   }
 
-  /// Create prescription with items in one request (recommended).
-  /// Expected backend body (based on your Phase D Postman result):
-  /// {
-  ///   "doctor": '<'id>,
-  ///   "patient": '<'id>,
-  ///   "appointment": null,
-  ///   "notes": "...",
-  ///   "items": [{medicine_name, dosage, frequency, start_date, end_date, instructions}, ...]
-  /// }
+  /// Backend contract (per PrescriptionListCreateView):
+  /// - appointment is REQUIRED
+  /// - client must NOT send patient (derived from appointment)
+  /// - doctor derived from token (or appointment for admin)
+  /// - items are nested list under "items"
+  ///
+  /// items payload example:
+  /// [
+  ///   {"medicine_name": "...", "dosage": "...", "frequency": "...", "start_date": "YYYY-MM-DD", "end_date": "YYYY-MM-DD", "instructions": "..."},
+  /// ]
   Future<http.Response> createPrescription({
-    required int doctorId,
-    required int patientId,
+    required int appointmentId,
     String? notes,
     required List<Map<String, dynamic>> items,
   }) {
     final Map<String, dynamic> body = {
-      "doctor": doctorId,
-      "patient": patientId,
-      "appointment": null,
+      "appointment": appointmentId,
       "notes": notes ?? "",
       "items": items,
+      // DO NOT send: patient, doctor
     };
 
     return authorizedClinicalRequest("/prescriptions/", "POST", body: body);
   }
 
-  Future<http.Response> addPrescriptionItems({
-    required int prescriptionId,
-    required List<Map<String, dynamic>> items,
-  }) {
-    final Map<String, dynamic> body = {"items": items};
-    return authorizedClinicalRequest(
-      "/prescriptions/$prescriptionId/items/",
-      "POST",
-      body: body,
-    );
-  }
+  // ملاحظة: هذا endpoint غير موجود في urls.py الحالية عندك
+  // لذا تركته مُعلّقًا كي لا تعتمد عليه بالخطأ.
+  //
+  // Future<http.Response> addPrescriptionItems({
+  //   required int prescriptionId,
+  //   required List<Map<String, dynamic>> items,
+  // }) {
+  //   final Map<String, dynamic> body = {"items": items};
+  //   return authorizedClinicalRequest(
+  //     "/prescriptions/$prescriptionId/items/",
+  //     "POST",
+  //     body: body,
+  //   );
+  // }
+
+  // ---------------------------------------------------------------------------
+  // Adherence
+  // ---------------------------------------------------------------------------
 
   Future<http.Response> listAdherence() {
     return authorizedClinicalRequest("/adherence/", "GET");
@@ -242,7 +259,7 @@ class ClinicalService {
 
   Future<http.Response> createAdherence({
     required int prescriptionItemId,
-    required String status,
+    required String status, // taken | skipped
     required DateTime takenAt,
     String? note,
   }) {
@@ -254,5 +271,15 @@ class ClinicalService {
     };
 
     return authorizedClinicalRequest("/adherence/", "POST", body: body);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Aggregation (optional but useful)
+  // GET /api/clinical/record/?patient_id=...
+  // ---------------------------------------------------------------------------
+
+  Future<http.Response> getClinicalRecordAggregation({required int patientId}) {
+    final qp = Uri(queryParameters: {"patient_id": patientId.toString()}).query;
+    return authorizedClinicalRequest("/record/?$qp", "GET");
   }
 }

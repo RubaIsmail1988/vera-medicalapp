@@ -14,11 +14,15 @@ class AdherenceTab extends StatefulWidget {
   final int userId;
   final int? selectedPatientId;
 
+  // NEW
+  final int? selectedAppointmentId;
+
   const AdherenceTab({
     super.key,
     required this.role,
     required this.userId,
     required this.selectedPatientId,
+    this.selectedAppointmentId,
   });
 
   @override
@@ -44,6 +48,11 @@ class _AdherenceTabState extends State<AdherenceTab> {
   bool get isDoctor => widget.role == "doctor";
   bool get isPatient => widget.role == "patient";
 
+  bool get _hasAppointmentFilter {
+    final apptId = widget.selectedAppointmentId;
+    return apptId != null && apptId > 0;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -59,9 +68,29 @@ class _AdherenceTabState extends State<AdherenceTab> {
   void didUpdateWidget(covariant AdherenceTab oldWidget) {
     super.didUpdateWidget(oldWidget);
 
-    if (oldWidget.selectedPatientId != widget.selectedPatientId) {
+    final patientChanged =
+        oldWidget.selectedPatientId != widget.selectedPatientId;
+    final apptChanged =
+        oldWidget.selectedAppointmentId != widget.selectedAppointmentId;
+
+    if (patientChanged || apptChanged) {
       setState(() {
+        // refresh adherence for both roles
         adherenceFuture = _fetchAdherence();
+
+        // refresh prescriptions for patient dropdown
+        if (isPatient) {
+          prescriptionsFuture = _fetchPrescriptions();
+        }
+
+        // clear selection if appointment filter changed to avoid stale selection
+        if (apptChanged) {
+          selectedPrescriptionItemId = null;
+          selectedItem = null;
+          selectedPrescription = null;
+          noteController.clear();
+          selectedStatus = "taken";
+        }
       });
     }
   }
@@ -487,16 +516,29 @@ class _AdherenceTabState extends State<AdherenceTab> {
   List<Map<String, dynamic>> _filterAndSortForView(
     List<Map<String, dynamic>> all,
   ) {
-    final view =
-        (isDoctor && widget.selectedPatientId != null)
-            ? all
-                .where(
-                  (a) =>
-                      _safeText(a["patient"]) ==
-                      widget.selectedPatientId.toString(),
-                )
-                .toList()
-            : all;
+    final pid = widget.selectedPatientId;
+    final apptId = widget.selectedAppointmentId;
+
+    List<Map<String, dynamic>> view = all;
+
+    // Doctor context: filter by selected patient
+    if (isDoctor && pid != null && pid > 0) {
+      view = view.where((a) => _asInt(a["patient"]) == pid).toList();
+    }
+
+    // Appointment context: filter by appointmentId (works for doctor & patient)
+    if (apptId != null && apptId > 0) {
+      view =
+          view.where((a) {
+            // NEW: backend sends appointment_id
+            final aApptId = _asInt(a["appointment_id"]);
+
+            // Backward-compat fallback (in case older payloads exist)
+            final legacy = _asInt(a["appointment"]);
+
+            return (aApptId ?? legacy) == apptId;
+          }).toList();
+    }
 
     view.sort((a, b) {
       final at = _parseDateOrMin(_safeText(a["taken_at"]));
@@ -624,7 +666,13 @@ class _AdherenceTabState extends State<AdherenceTab> {
 
   Widget _buildTimeList(List<Map<String, dynamic>> view) {
     if (view.isEmpty) {
-      return const Center(child: Text("لا توجد سجلات التزام."));
+      return Center(
+        child: Text(
+          _hasAppointmentFilter
+              ? "لا توجد سجلات التزام مرتبطة بهذا الموعد."
+              : "لا توجد سجلات التزام.",
+        ),
+      );
     }
 
     return ListView.separated(
@@ -673,7 +721,13 @@ class _AdherenceTabState extends State<AdherenceTab> {
 
   Widget _buildGroupedList(List<Map<String, dynamic>> view) {
     if (view.isEmpty) {
-      return const Center(child: Text("لا توجد سجلات التزام."));
+      return Center(
+        child: Text(
+          _hasAppointmentFilter
+              ? "لا توجد سجلات التزام مرتبطة بهذا الموعد."
+              : "لا توجد سجلات التزام.",
+        ),
+      );
     }
 
     final grouped = _groupByPrescriptionItem(view);
@@ -741,8 +795,17 @@ class _AdherenceTabState extends State<AdherenceTab> {
   // ---------------------------------------------------------------------------
 
   Widget _medicineDropdownTwoLines(List<Map<String, dynamic>> prescriptions) {
+    // NEW: apply appointment filter to prescriptions list (patient context)
+    final apptId = widget.selectedAppointmentId;
+    final List<Map<String, dynamic>> rxList =
+        (apptId != null && apptId > 0)
+            ? prescriptions
+                .where((p) => _asInt(p["appointment"]) == apptId)
+                .toList()
+            : prescriptions;
+
     final flattened = <Map<String, dynamic>>[];
-    for (final p in prescriptions) {
+    for (final p in rxList) {
       if (p["items"] is! List) continue;
       for (final it in (p["items"] as List)) {
         if (it is! Map) continue;
@@ -751,10 +814,12 @@ class _AdherenceTabState extends State<AdherenceTab> {
     }
 
     if (flattened.isEmpty) {
-      return const Padding(
-        padding: EdgeInsets.all(24),
+      return Padding(
+        padding: const EdgeInsets.all(24),
         child: Text(
-          "لا توجد وصفات طبية مسجّلة، لا يمكن تسجيل الالتزام الدوائي.",
+          _hasAppointmentFilter
+              ? "لا توجد أدوية ضمن هذا الموعد، لا يمكن تسجيل الالتزام الدوائي."
+              : "لا توجد وصفات طبية مسجّلة، لا يمكن تسجيل الالتزام الدوائي.",
           textAlign: TextAlign.center,
         ),
       );

@@ -34,41 +34,56 @@ class ClinicalOrderSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["id", "created_at", "updated_at", "doctor"]
+        read_only_fields = ["id", "created_at", "updated_at", "doctor", "patient"]
+        extra_kwargs = {
+            "appointment": {"required": True},
+        }
+
+    # -------------------------
+    # Display helpers
+    # -------------------------
 
     def get_doctor_display_name(self, obj):
         doctor = obj.doctor
         if not doctor:
             return None
-
-        full_name = getattr(doctor, "get_full_name", None)
-        if callable(full_name) and full_name():
-            return full_name()
-
-        if getattr(doctor, "username", None):
-            return doctor.username
-
-        if getattr(doctor, "email", None):
-            return doctor.email
-
-        return f"Doctor #{doctor.id}"
+        if callable(getattr(doctor, "get_full_name", None)) and doctor.get_full_name():
+            return doctor.get_full_name()
+        return getattr(doctor, "username", None) or getattr(doctor, "email", None)
 
     def get_patient_display_name(self, obj):
         patient = obj.patient
         if not patient:
             return None
+        if callable(getattr(patient, "get_full_name", None)) and patient.get_full_name():
+            return patient.get_full_name()
+        return getattr(patient, "username", None) or getattr(patient, "email", None)
 
-        full_name = getattr(patient, "get_full_name", None)
-        if callable(full_name) and full_name():
-            return full_name()
+    # -------------------------
+    # Validation
+    # -------------------------
 
-        if getattr(patient, "username", None):
-            return patient.username
+    def validate(self, attrs):
+        #  ممنوع إرسال patient من الـ client
+        if "patient" in getattr(self, "initial_data", {}) and not self.context.get("patient_from_appointment"):
+            raise serializers.ValidationError(
+                {"patient": "Do not send patient. It is derived from appointment."}
+            )
 
-        if getattr(patient, "email", None):
-            return patient.email
 
-        return f"Patient #{patient.id}"
+        appointment = attrs.get("appointment")
+        if appointment is None:
+            raise serializers.ValidationError({"appointment": "appointment is required."})
+
+        # اشتقاق المريض من الموعد
+        ap_patient = getattr(appointment, "patient", None)
+        if ap_patient is None:
+            raise serializers.ValidationError(
+                {"appointment": "appointment has no patient."}
+            )
+
+        attrs["patient"] = ap_patient
+        return attrs
 
 
 # ---------------------------------------------------------------------------
@@ -240,6 +255,20 @@ class PrescriptionSerializer(serializers.ModelSerializer):
 
         return instance
 
+    def validate(self, attrs):
+        appointment = attrs.get("appointment")
+        if appointment is None:
+            raise serializers.ValidationError({"appointment": "appointment is required."})
+
+        # allow patient ONLY if injected by server
+        if "patient" in attrs and not self.context.get("patient_from_appointment"):
+            raise serializers.ValidationError({
+                "patient": "Do not send patient. It is derived from appointment."
+            })
+
+        return attrs
+
+
 
 # ---------------------------------------------------------------------------
 # Medication Adherence
@@ -252,6 +281,10 @@ class MedicationAdherenceSerializer(serializers.ModelSerializer):
     frequency = serializers.SerializerMethodField()
     patient_display_name = serializers.SerializerMethodField()
 
+    # --- NEW: لتمكين فلتر appointment في Flutter ---
+    appointment_id = serializers.SerializerMethodField()
+    prescription_id = serializers.SerializerMethodField()
+
     class Meta:
         model = MedicationAdherence
         fields = [
@@ -259,6 +292,8 @@ class MedicationAdherenceSerializer(serializers.ModelSerializer):
             "patient",
             "patient_display_name",
             "prescription_item",
+            "prescription_id",   # NEW
+            "appointment_id",    # NEW
             "medicine_name",
             "dosage",
             "frequency",
@@ -266,11 +301,33 @@ class MedicationAdherenceSerializer(serializers.ModelSerializer):
             "taken_at",
             "created_at",
         ]
-        read_only_fields = ["id", "created_at", "patient"]
+        read_only_fields = [
+            "id",
+            "created_at",
+            "patient",
+            "patient_display_name",
+            "medicine_name",
+            "dosage",
+            "frequency",
+            "prescription_id",
+            "appointment_id",
+        ]
 
     # ----------------------------
     # Serializer methods
     # ----------------------------
+
+    def _rx(self, obj):
+        item = getattr(obj, "prescription_item", None)
+        return getattr(item, "prescription", None)
+
+    def get_prescription_id(self, obj):
+        rx = self._rx(obj)
+        return getattr(rx, "id", None)
+
+    def get_appointment_id(self, obj):
+        rx = self._rx(obj)
+        return getattr(rx, "appointment_id", None)
 
     def get_medicine_name(self, obj):
         item = getattr(obj, "prescription_item", None)
@@ -300,6 +357,7 @@ class MedicationAdherenceSerializer(serializers.ModelSerializer):
             return patient.email
 
         return f"Patient #{patient.id}"
+
     def validate(self, attrs):
         """
         Fix (D-2.5): منع المريض من تسجيل adherence لعنصر لا يخصه.
@@ -308,16 +366,19 @@ class MedicationAdherenceSerializer(serializers.ModelSerializer):
         request = self.context.get("request")
         user = getattr(request, "user", None)
 
-        # في حالة admin نسمح (حسب سياسة مشروعك الحالية أن admin = bypass)
+        # admin bypass
         if user and getattr(user, "is_authenticated", False):
-            if getattr(user, "is_staff", False) or getattr(user, "is_superuser", False) or getattr(user, "role", "") == "admin":
+            if (
+                getattr(user, "is_staff", False)
+                or getattr(user, "is_superuser", False)
+                or getattr(user, "role", "") == "admin"
+            ):
                 return attrs
 
         item = attrs.get("prescription_item")
         if not item:
             raise serializers.ValidationError({"prescription_item": "This field is required."})
 
-        # تحقق الملكية عبر Rx patient
         rx = getattr(item, "prescription", None)
         rx_patient_id = getattr(rx, "patient_id", None)
 
@@ -325,10 +386,8 @@ class MedicationAdherenceSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"detail": "Authentication required."})
 
         if rx_patient_id != user.id:
-            # لا تكشف وجود العنصر من عدمه ضمنيًا
             raise serializers.ValidationError({"detail": "Not found."})
 
-        # (اختياري بسيط) منع taken_at في المستقبل بشكل فادح
         taken_at = attrs.get("taken_at")
         if taken_at and taken_at > timezone.now():
             raise serializers.ValidationError({"taken_at": "taken_at cannot be in the future."})

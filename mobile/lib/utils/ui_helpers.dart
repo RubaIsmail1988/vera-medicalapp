@@ -18,17 +18,13 @@ void showAppSnackBar(
   bool clearPrevious = true,
 }) {
   final messenger = rootScaffoldMessengerKey.currentState;
-  if (messenger == null) {
-    // لا يوجد ScaffoldMessenger جاهز (حالة نادرة جداً أثناء bootstrap)
-    return;
-  }
+  if (messenger == null) return;
 
   if (clearPrevious) {
     messenger.clearSnackBars();
   }
 
-  final ColorScheme? cs =
-      context != null ? Theme.of(context).colorScheme : null;
+  final cs = context != null ? Theme.of(context).colorScheme : null;
 
   Color background;
   Color foreground;
@@ -82,7 +78,6 @@ void showAppSnackBar(
   );
 }
 
-/// اختصار شائع
 void showAppErrorSnackBar(BuildContext? context, String message) {
   showAppSnackBar(context, message, type: AppSnackBarType.error);
 }
@@ -102,6 +97,7 @@ Future<bool> showConfirmDialog(
 }) async {
   final result = await showDialog<bool>(
     context: context,
+    barrierDismissible: false,
     builder: (ctx) {
       return AlertDialog(
         title: Text(title),
@@ -111,7 +107,7 @@ Future<bool> showConfirmDialog(
             onPressed: () => Navigator.pop(ctx, false),
             child: Text(cancelText),
           ),
-          ElevatedButton(
+          FilledButton(
             onPressed: () => Navigator.pop(ctx, true),
             child: Text(confirmText),
           ),
@@ -121,4 +117,105 @@ Future<bool> showConfirmDialog(
   );
 
   return result == true;
+}
+
+// ---------------------------------------------------------------------------
+// API / Networking helpers
+// ---------------------------------------------------------------------------
+
+/// يحاول استخراج رسالة خطأ مفيدة من payload قادم من الـ API.
+/// يدعم الأنماط الشائعة:
+/// - {"detail": "..."}
+/// - {"detail": ["..."] }
+/// - {"field": ["msg1", "msg2"], "field2": ["msg"] }
+String extractApiErrorMessage(
+  Object? data, {
+  String fallback = 'تعذّر تنفيذ العملية. يرجى التحقق من البيانات.',
+}) {
+  if (data == null) return fallback;
+
+  if (data is String) {
+    final trimmed = data.trim();
+    return trimmed.isEmpty ? fallback : trimmed;
+  }
+
+  if (data is List) {
+    if (data.isEmpty) return fallback;
+    final first = data.first;
+    if (first is String && first.trim().isNotEmpty) return first.trim();
+    return first.toString();
+  }
+
+  if (data is Map) {
+    if (data.containsKey('detail')) {
+      final detail = data['detail'];
+      final msg = extractApiErrorMessage(detail, fallback: fallback);
+      if (msg.trim().isNotEmpty) return msg;
+    }
+
+    if (data.containsKey('non_field_errors')) {
+      final nfe = data['non_field_errors'];
+      final msg = extractApiErrorMessage(nfe, fallback: fallback);
+      if (msg.trim().isNotEmpty) return msg;
+    }
+
+    for (final entry in data.entries) {
+      final value = entry.value;
+
+      if (value is List && value.isNotEmpty) {
+        final first = value.first;
+        if (first is String && first.trim().isNotEmpty) return first.trim();
+        return first.toString();
+      }
+
+      if (value is String && value.trim().isNotEmpty) {
+        return value.trim();
+      }
+    }
+
+    return fallback;
+  }
+
+  final s = data.toString().trim();
+  return s.isEmpty ? fallback : s;
+}
+
+String mapHttpErrorToArabicMessage({required int? statusCode, Object? data}) {
+  if (statusCode == null) {
+    return 'تعذّر الاتصال بالخادم. تحقق من الإنترنت.';
+  }
+
+  if (statusCode == 401) {
+    return 'انتهت الجلسة، يرجى تسجيل الدخول مجددًا.';
+  }
+
+  if (statusCode == 403) {
+    return 'لا تملك صلاحية تنفيذ هذا الإجراء.';
+  }
+
+  if (statusCode == 404) {
+    return 'العنصر غير موجود.';
+  }
+
+  if (statusCode == 400) {
+    return extractApiErrorMessage(data);
+  }
+
+  if (statusCode >= 500) {
+    return 'حدث خطأ غير متوقع. حاول مرة أخرى لاحقًا.';
+  }
+
+  return extractApiErrorMessage(data, fallback: 'تعذّر تنفيذ العملية.');
+}
+
+void showApiErrorSnackBar(
+  BuildContext? context, {
+  required int? statusCode,
+  Object? data,
+}) {
+  final message = mapHttpErrorToArabicMessage(
+    statusCode: statusCode,
+    data: data,
+  );
+  showAppErrorSnackBar(context, message);
 }

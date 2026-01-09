@@ -30,7 +30,11 @@ import 'screens/user/clinical/order_details_screen.dart';
 import 'screens/doctor/doctor_scheduling_settings_screen.dart';
 import 'screens/doctor/doctor_availability_screen.dart';
 import 'screens/doctor/doctor_visit_types_screen.dart';
+import 'screens/doctor/doctor_absences_screen.dart';
 
+//aAppointment
+import 'screens/user/appointments/book_appointment_screen.dart';
+import 'screens/user/appointments/doctor_search_screen.dart';
 import 'utils/ui_helpers.dart';
 
 void main() {
@@ -166,6 +170,10 @@ class MyAppState extends State<MyApp> {
                 path: 'visit-types',
                 builder: (context, state) => const DoctorVisitTypesScreen(),
               ),
+              GoRoute(
+                path: 'absences',
+                builder: (context, state) => const DoctorAbsencesScreen(),
+              ),
             ],
           ),
 
@@ -174,7 +182,7 @@ class MyAppState extends State<MyApp> {
             path: 'record',
             builder:
                 (context, state) => UserShellScreen(
-                  key: ValueKey<String>(state.uri.path),
+                  key: ValueKey<String>(state.uri.toString()),
                   initialIndex: 1,
                 ),
             routes: [
@@ -190,19 +198,22 @@ class MyAppState extends State<MyApp> {
                     );
                   }
 
-                  final extra = state.extra;
+                  // WEB-SAFE: role from query (not extra)
                   final role =
-                      (extra is Map && extra['role'] != null)
-                          ? extra['role'].toString()
-                          : 'patient';
+                      (state.uri.queryParameters['role'] ?? 'patient').trim();
 
                   final patientIdRaw = state.uri.queryParameters['patientId'];
                   final patientId = int.tryParse(patientIdRaw ?? '');
+
+                  // (اختياري لكن مفيد) اذا بدنا نمرر appointmentId للشاشة لاحقًا
+                  final apptIdRaw = state.uri.queryParameters['appointmentId'];
+                  final appointmentId = int.tryParse(apptIdRaw ?? '');
 
                   return OrderDetailsScreen(
                     role: role,
                     orderId: orderId,
                     doctorPatientId: (role == 'doctor') ? patientId : null,
+                    appointmentId: appointmentId,
                   );
                 },
               ),
@@ -418,6 +429,55 @@ class MyAppState extends State<MyApp> {
                 path: 'deletion-status',
                 builder:
                     (context, state) => const AccountDeletionStatusScreen(),
+              ),
+            ],
+          ),
+
+          // ---------------- appointments ----------------
+          GoRoute(
+            path: 'appointments',
+            builder:
+                (context, state) => UserShellScreen(
+                  key: ValueKey<String>(state.uri.path),
+                  initialIndex: 5,
+                ),
+            routes: [
+              // /app/appointments/book
+              GoRoute(
+                path: 'book',
+                builder: (context, state) => const DoctorSearchScreen(),
+                routes: [
+                  // /app/appointments/book/:doctorId
+                  GoRoute(
+                    path: ':doctorId',
+                    builder: (context, state) {
+                      final raw = state.pathParameters['doctorId'];
+                      final doctorId = int.tryParse(raw ?? '');
+                      if (doctorId == null) {
+                        return const Scaffold(
+                          body: Center(child: Text('Invalid doctor id')),
+                        );
+                      }
+
+                      final extra = state.extra;
+                      final doctorName =
+                          (extra is Map && extra['doctorName'] != null)
+                              ? extra['doctorName'].toString()
+                              : 'طبيب';
+
+                      final doctorSpecialty =
+                          (extra is Map && extra['doctorSpecialty'] != null)
+                              ? extra['doctorSpecialty'].toString()
+                              : '';
+
+                      return BookAppointmentScreen(
+                        doctorId: doctorId,
+                        doctorName: doctorName,
+                        doctorSpecialty: doctorSpecialty,
+                      );
+                    },
+                  ),
+                ],
               ),
             ],
           ),

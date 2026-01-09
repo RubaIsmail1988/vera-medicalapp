@@ -1,11 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:go_router/go_router.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-
-import '/services/account_deletion_service.dart';
-
-// UI Helpers
-import '../../utils/ui_helpers.dart';
 
 class PatientHomeScreen extends StatefulWidget {
   final int userId;
@@ -22,8 +16,6 @@ class PatientHomeScreen extends StatefulWidget {
 }
 
 class _PatientHomeScreenState extends State<PatientHomeScreen> {
-  final AccountDeletionService deletionService = AccountDeletionService();
-
   String? userName;
   bool loadingName = true;
 
@@ -45,62 +37,6 @@ class _PatientHomeScreenState extends State<PatientHomeScreen> {
     });
   }
 
-  Future<void> requestAccountDeletion(BuildContext context) async {
-    final reasonController = TextEditingController();
-
-    final bool? confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          title: const Text('طلب حذف الحساب'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text(
-                'هل أنت متأكد من رغبتك في طلب حذف حسابك؟\n'
-                'سيتم مراجعة الطلب من قبل الإدارة.',
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: reasonController,
-                decoration: const InputDecoration(
-                  labelText: 'سبب الطلب (اختياري)',
-                ),
-                maxLines: 3,
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext, false),
-              child: const Text('إلغاء'),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.pop(dialogContext, true),
-              child: const Text('تأكيد الطلب'),
-            ),
-          ],
-        );
-      },
-    );
-
-    final reason = reasonController.text.trim();
-    reasonController.dispose();
-
-    if (!context.mounted) return;
-    if (confirmed != true) return;
-
-    final success = await deletionService.createDeletionRequest(reason: reason);
-
-    if (!context.mounted) return;
-
-    showAppSnackBar(
-      context,
-      success ? 'تم إرسال طلب حذف الحساب بنجاح.' : 'لديك طلب قيد المراجعة',
-      type: success ? AppSnackBarType.success : AppSnackBarType.error,
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final greeting =
@@ -108,10 +44,12 @@ class _PatientHomeScreenState extends State<PatientHomeScreen> {
             ? 'أهلاً بك يا ${userName!}'
             : 'أهلاً بك';
 
-    return Scaffold(
-      body: Center(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(24),
+    // ملاحظة: لا Scaffold هنا لأن UserShellScreen هو من يوفّر Scaffold
+    return Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(24),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 520),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -125,7 +63,7 @@ class _PatientHomeScreenState extends State<PatientHomeScreen> {
               ),
               const SizedBox(height: 8),
               Text(
-                'يمكنك من هنا إدارة بياناتك وطلباتك.',
+                'يمكنك من هنا متابعة حالتك الطبية وحجوزاتك.',
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   fontSize: 14,
@@ -133,36 +71,6 @@ class _PatientHomeScreenState extends State<PatientHomeScreen> {
                     context,
                   ).colorScheme.onSurface.withValues(alpha: 0.65),
                 ),
-              ),
-              const SizedBox(height: 32),
-
-              // عرض / تعديل البيانات -> يذهب لتبويب الحساب
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: () => context.go('/app/account'),
-                  child: const Text('عرض / تعديل البيانات'),
-                ),
-              ),
-
-              const SizedBox(height: 12),
-
-              // طلب حذف الحساب (AlertDialog موحّد)
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: () => requestAccountDeletion(context),
-                  child: const Text('طلب حذف الحساب'),
-                ),
-              ),
-
-              const SizedBox(height: 8),
-
-              TextButton(
-                onPressed: () {
-                  context.go('/app/account/deletion-status');
-                },
-                child: const Text('عرض حالة طلب حذف الحساب'),
               ),
             ],
           ),

@@ -12,6 +12,10 @@ urlpatterns = [
 
     # Clinical API (Phase D)
     path("api/clinical/", include("clinical.urls")),
+
+    # appointments
+    path("api/appointments/", include("appointments.urls")),
+
 ]
 
 if settings.DEBUG:

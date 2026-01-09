@@ -53,6 +53,7 @@ class DoctorSchedulingSettingsScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     const availabilityRoute = '/app/doctor/scheduling/availability';
     const visitTypesRoute = '/app/doctor/scheduling/visit-types';
+    const absencesRoute = '/app/doctor/scheduling/absences';
 
     return Scaffold(
       appBar: AppBar(title: const Text("إعدادات الجدولة")),
@@ -72,6 +73,14 @@ class DoctorSchedulingSettingsScreen extends StatelessWidget {
             title: "مدد أنواع الزيارة",
             subtitle: "حدد مدة كل نوع زيارة تقدمه للمرضى.",
             routeLocation: visitTypesRoute,
+          ),
+          _buildCard(
+            context: context,
+            icon: Icons.event_busy,
+            title: "غيابات الطبيب",
+            subtitle:
+                "إدارة فترات عدم التوفر (استراحة، طارئ) وتأثيرها على الحجز.",
+            routeLocation: absencesRoute,
           ),
         ],
       ),

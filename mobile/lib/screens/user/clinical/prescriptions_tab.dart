@@ -9,13 +9,15 @@ import '/utils/ui_helpers.dart';
 class PrescriptionsTab extends StatefulWidget {
   final String role;
   final int userId;
-  final int? selectedPatientId; // Phase D-2
+  final int? selectedPatientId; // doctor context
+  final int? selectedAppointmentId; // NEW: appointment context
 
   const PrescriptionsTab({
     super.key,
     required this.role,
     required this.userId,
     this.selectedPatientId,
+    this.selectedAppointmentId,
   });
 
   @override
@@ -37,7 +39,8 @@ class _PrescriptionsTabState extends State<PrescriptionsTab> {
   @override
   void didUpdateWidget(covariant PrescriptionsTab oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.selectedPatientId != widget.selectedPatientId) {
+    if (oldWidget.selectedPatientId != widget.selectedPatientId ||
+        oldWidget.selectedAppointmentId != widget.selectedAppointmentId) {
       reload();
     }
   }
@@ -51,6 +54,7 @@ class _PrescriptionsTabState extends State<PrescriptionsTab> {
     return int.tryParse(v.toString());
   }
 
+  // ✅ UPDATED: appointment filter inserted after patient filter
   Future<List<Map<String, dynamic>>> fetchPrescriptions() async {
     final response = await clinicalService.listPrescriptions();
 
@@ -62,16 +66,29 @@ class _PrescriptionsTabState extends State<PrescriptionsTab> {
               : <Map<String, dynamic>>[];
 
       final selectedPid = widget.selectedPatientId;
+      final selectedApptId = widget.selectedAppointmentId;
+
       List<Map<String, dynamic>> filtered = list;
 
-      if (isDoctor && selectedPid != null) {
+      // Doctor context: filter by selected patient
+      if (isDoctor && selectedPid != null && selectedPid > 0) {
         filtered =
-            list.where((p) {
+            filtered.where((p) {
               final pid = asInt(p["patient"]);
               return pid == selectedPid;
             }).toList();
       }
 
+      // Appointment context: filter by appointmentId (works for doctor & patient)
+      if (selectedApptId != null && selectedApptId > 0) {
+        filtered =
+            filtered.where((p) {
+              final appt = asInt(p["appointment"]);
+              return appt == selectedApptId;
+            }).toList();
+      }
+
+      // newest first
       filtered.sort((a, b) {
         final aRaw = a["created_at"]?.toString() ?? "";
         final bRaw = b["created_at"]?.toString() ?? "";
@@ -104,6 +121,7 @@ class _PrescriptionsTabState extends State<PrescriptionsTab> {
   }
 
   Future<void> reload() async {
+    if (!mounted) return;
     setState(() {
       prescriptionsFuture = fetchPrescriptions();
     });
@@ -137,7 +155,7 @@ class _PrescriptionsTabState extends State<PrescriptionsTab> {
   }
 
   // ---------------------------------------------------------------------------
-  // Prescription Details (Dialog) - UI only (كما عندك)
+  // Prescription Details (Dialog) - UI only
   // ---------------------------------------------------------------------------
   Future<void> openPrescriptionDetails(
     int prescriptionId, {
@@ -204,10 +222,8 @@ class _PrescriptionsTabState extends State<PrescriptionsTab> {
         final endDateRaw = it["end_date"]?.toString().trim() ?? "";
         final instructions = it["instructions"]?.toString().trim() ?? "";
 
-        final startDateFormatted =
-            startDateRaw.isNotEmpty ? formatDateTime(startDateRaw) : "";
-        final endDateFormatted =
-            endDateRaw.isNotEmpty ? formatDateTime(endDateRaw) : "";
+        final startDateFormatted = startDateRaw.isNotEmpty ? startDateRaw : "";
+        final endDateFormatted = endDateRaw.isNotEmpty ? endDateRaw : "";
 
         final lines = <Widget>[];
 
@@ -341,15 +357,20 @@ class _PrescriptionsTabState extends State<PrescriptionsTab> {
   }
 
   // ---------------------------------------------------------------------------
+  // ✅ UPDATED: create prescription must use appointmentId
   Future<void> createPrescriptionFlow() async {
     if (!isDoctor) {
       showAppSnackBar(context, "هذه العملية متاحة للطبيب فقط.");
       return;
     }
 
-    final patientId = widget.selectedPatientId;
-    if (patientId == null || patientId <= 0) {
-      showAppSnackBar(context, "يرجى اختيار مريض أولًا قبل إنشاء وصفة.");
+    final apptId = widget.selectedAppointmentId;
+    if (apptId == null || apptId <= 0) {
+      showAppSnackBar(
+        context,
+        "اختر موعدًا أولًا لإنشاء وصفة مرتبطة به.",
+        type: AppSnackBarType.warning,
+      );
       return;
     }
 
@@ -362,8 +383,7 @@ class _PrescriptionsTabState extends State<PrescriptionsTab> {
     if (payload == null) return;
 
     final response = await clinicalService.createPrescription(
-      doctorId: widget.userId,
-      patientId: patientId,
+      appointmentId: apptId,
       notes: payload.notes,
       items: payload.items,
     );
@@ -371,7 +391,11 @@ class _PrescriptionsTabState extends State<PrescriptionsTab> {
     if (!mounted) return;
 
     if (response.statusCode == 201) {
-      showAppSnackBar(context, "تم إنشاء الوصفة بنجاح.");
+      showAppSnackBar(
+        context,
+        "تم إنشاء الوصفة بنجاح.",
+        type: AppSnackBarType.success,
+      );
       await reload();
       return;
     }
@@ -395,14 +419,23 @@ class _PrescriptionsTabState extends State<PrescriptionsTab> {
       showAppSnackBar(
         context,
         detail ?? "فشل إنشاء الوصفة (${response.statusCode}).",
+        type: AppSnackBarType.error,
       );
     } catch (_) {
-      showAppSnackBar(context, "فشل إنشاء الوصفة (${response.statusCode}).");
+      showAppSnackBar(
+        context,
+        "فشل إنشاء الوصفة (${response.statusCode}).",
+        type: AppSnackBarType.error,
+      );
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final hasApptFilter =
+        widget.selectedAppointmentId != null &&
+        widget.selectedAppointmentId! > 0;
+
     return Column(
       children: [
         if (isDoctor)
@@ -444,10 +477,8 @@ class _PrescriptionsTabState extends State<PrescriptionsTab> {
                           onPressed: () async {
                             await reload();
                             if (!mounted) return;
-                            showAppSnackBar(
-                              this.context,
-                              "تمت إعادة المحاولة.",
-                            );
+                            // ignore: use_build_context_synchronously
+                            showAppSnackBar(context, "تمت إعادة المحاولة.");
                           },
                           icon: const Icon(Icons.refresh),
                           label: const Text("إعادة المحاولة"),
@@ -461,16 +492,18 @@ class _PrescriptionsTabState extends State<PrescriptionsTab> {
               final viewList = snapshot.data ?? [];
 
               if (viewList.isEmpty) {
-                return const Center(
+                return Center(
                   child: Padding(
-                    padding: EdgeInsets.all(24),
+                    padding: const EdgeInsets.all(24),
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Icon(Icons.inbox_outlined, size: 40),
-                        SizedBox(height: 12),
+                        const Icon(Icons.inbox_outlined, size: 40),
+                        const SizedBox(height: 12),
                         Text(
-                          "لا توجد وصفات طبية مسجّلة حتى الآن",
+                          hasApptFilter
+                              ? "لا توجد وصفات مرتبطة بهذا الموعد."
+                              : "لا توجد وصفات طبية مسجّلة حتى الآن",
                           textAlign: TextAlign.center,
                         ),
                       ],
@@ -525,10 +558,7 @@ class _PrescriptionsTabState extends State<PrescriptionsTab> {
                           icon: const Icon(Icons.visibility_outlined),
                           onPressed: () async {
                             if (prescriptionId == null) {
-                              showAppSnackBar(
-                                this.context,
-                                "تعذر فتح التفاصيل.",
-                              );
+                              showAppSnackBar(context, "تعذر فتح التفاصيل.");
                               return;
                             }
                             await openPrescriptionDetails(
@@ -568,7 +598,7 @@ class CreatePrescriptionPayload {
   CreatePrescriptionPayload({required this.notes, required this.items});
 }
 
-// Dialog إنشاء الوصفة للطبيب: بدون patientId
+// Dialog إنشاء الوصفة للطبيب: كما هو عندك (بدون تعديل جوهري)
 class CreatePrescriptionDialog extends StatefulWidget {
   const CreatePrescriptionDialog({super.key});
 
@@ -706,7 +736,7 @@ class CreatePrescriptionDialogState extends State<CreatePrescriptionDialog> {
   }
 }
 
-// PrescriptionItemDialog: كما هو عندك (بدون تعديل)
+// PrescriptionItemDialog: كما هو عندك
 class PrescriptionItemDialog extends StatefulWidget {
   const PrescriptionItemDialog({super.key});
 

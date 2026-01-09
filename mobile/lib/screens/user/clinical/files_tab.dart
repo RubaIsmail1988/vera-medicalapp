@@ -11,13 +11,17 @@ import '/utils/ui_helpers.dart';
 class FilesTab extends StatefulWidget {
   final String role;
   final int userId;
-  final int? selectedPatientId; // Phase D-2 (doctor context)
+  final int? selectedPatientId; // doctor context
+
+  // NEW: appointment context
+  final int? selectedAppointmentId;
 
   const FilesTab({
     super.key,
     required this.role,
     required this.userId,
     this.selectedPatientId,
+    this.selectedAppointmentId,
   });
 
   @override
@@ -42,6 +46,11 @@ class _FilesTabState extends State<FilesTab> {
   bool get isPatient => widget.role == "patient";
   bool get isDoctor => widget.role == "doctor";
 
+  bool get _hasAppointmentFilter {
+    final apptId = widget.selectedAppointmentId;
+    return apptId != null && apptId > 0;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -53,7 +62,12 @@ class _FilesTabState extends State<FilesTab> {
   void didUpdateWidget(covariant FilesTab oldWidget) {
     super.didUpdateWidget(oldWidget);
 
-    if (oldWidget.selectedPatientId != widget.selectedPatientId) {
+    final patientChanged =
+        oldWidget.selectedPatientId != widget.selectedPatientId;
+    final apptChanged =
+        oldWidget.selectedAppointmentId != widget.selectedAppointmentId;
+
+    if (patientChanged || apptChanged) {
       setState(() {
         selectedOrderId = null;
         orderFiles = [];
@@ -149,13 +163,21 @@ class _FilesTabState extends State<FilesTab> {
               ? decoded.cast<Map<String, dynamic>>()
               : <Map<String, dynamic>>[];
 
-      // Doctor context: filter by selected patient
       final selectedPid = widget.selectedPatientId;
+      final apptId = widget.selectedAppointmentId;
+
       List<Map<String, dynamic>> filtered = list;
 
-      if (isDoctor && selectedPid != null) {
+      // Doctor context: filter by selected patient
+      if (isDoctor && selectedPid != null && selectedPid > 0) {
         filtered =
-            list.where((o) => _asInt(o["patient"]) == selectedPid).toList();
+            filtered.where((o) => _asInt(o["patient"]) == selectedPid).toList();
+      }
+
+      // Appointment context: filter by appointment
+      if (apptId != null && apptId > 0) {
+        filtered =
+            filtered.where((o) => _asInt(o["appointment"]) == apptId).toList();
       }
 
       // newest first
@@ -165,9 +187,21 @@ class _FilesTabState extends State<FilesTab> {
         return db.compareTo(da);
       });
 
+      // Ensure selectedOrderId still exists after filtering
+      final currentSelected = selectedOrderId;
+      final stillExists =
+          currentSelected != null &&
+          filtered.any((o) => _asInt(o["id"]) == currentSelected);
+
       setState(() {
         orders = filtered;
         loadingOrders = false;
+
+        if (!stillExists) {
+          selectedOrderId = null;
+          orderFiles = [];
+          filesErrorMessage = null;
+        }
       });
 
       return;
@@ -538,6 +572,15 @@ class _FilesTabState extends State<FilesTab> {
     final canInteractWithDropdown = !loadingOrders && hasOrders;
     final uploadEnabled = _canUploadForPatient && !uploading;
 
+    final emptyOrdersMessage =
+        isDoctor
+            ? (_hasAppointmentFilter
+                ? "لا توجد طلبات لهذا المريض ضمن هذا الموعد."
+                : "لا توجد طلبات لهذا المريض.")
+            : (_hasAppointmentFilter
+                ? "لا توجد طلبات مرتبطة بهذا الموعد."
+                : "لا توجد طلبات طبية حتى الآن.");
+
     return Padding(
       padding: const EdgeInsets.all(12),
       child: Column(
@@ -572,12 +615,7 @@ class _FilesTabState extends State<FilesTab> {
             Card(
               child: Padding(
                 padding: const EdgeInsets.all(12),
-                child: Text(
-                  isDoctor
-                      ? "لا توجد طلبات لهذا المريض."
-                      : "لا توجد طلبات طبية حتى الآن.",
-                  textAlign: TextAlign.center,
-                ),
+                child: Text(emptyOrdersMessage, textAlign: TextAlign.center),
               ),
             )
           else
