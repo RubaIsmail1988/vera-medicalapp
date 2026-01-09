@@ -31,3 +31,4 @@ mobile/.flutter-plugins-dependencies
 mobile/**/flutter/generated_*
 mobile/**/Flutter/GeneratedPluginRegistrant.*
 mobile/**/flutter/generated_plugins.cmake
+mobile/devtools_options.yaml 
