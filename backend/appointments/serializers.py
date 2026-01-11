@@ -10,10 +10,47 @@ from accounts.models import (
     DoctorAppointmentType,
     CustomUser,
     DoctorAbsence,
-
+    TriageAssessment,
 )
 
 from clinical.models import ClinicalOrder, MedicalRecordFile
+from accounts.triage import compute_triage_score
+
+
+class TriageInputSerializer(serializers.Serializer):
+    symptoms_text = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    temperature_c = serializers.DecimalField(required=False, allow_null=True, max_digits=4, decimal_places=1)
+    bp_systolic = serializers.IntegerField(required=False, allow_null=True, min_value=50, max_value=260)
+    bp_diastolic = serializers.IntegerField(required=False, allow_null=True, min_value=30, max_value=160)
+    heart_rate = serializers.IntegerField(required=False, allow_null=True, min_value=30, max_value=240)
+
+    def validate(self, attrs):
+        sys = attrs.get("bp_systolic")
+        dia = attrs.get("bp_diastolic")
+        if (sys is None) ^ (dia is None):
+            raise serializers.ValidationError(
+                "Both bp_systolic and bp_diastolic must be provided together."
+            )
+        return attrs
+
+
+class TriageReadSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = TriageAssessment
+        fields = [
+            "id",
+            "symptoms_text",
+            "temperature_c",
+            "bp_systolic",
+            "bp_diastolic",
+            "heart_rate",
+            "score",
+            "confidence",
+            "missing_fields",
+            "score_version",
+            "created_at",
+        ]
+        read_only_fields = fields
 
 
 class AppointmentCreateSerializer(serializers.Serializer):
@@ -21,6 +58,9 @@ class AppointmentCreateSerializer(serializers.Serializer):
     appointment_type_id = serializers.IntegerField()  # REQUIRED (central only)
     date_time = serializers.DateTimeField()
     notes = serializers.CharField(required=False, allow_blank=True)
+
+    triage = TriageInputSerializer(required=False)
+
 
     # If sent by mistake, we will reject it explicitly (future feature).
     doctor_specific_visit_type_id = serializers.IntegerField(required=False)
@@ -177,6 +217,8 @@ class AppointmentCreateSerializer(serializers.Serializer):
         appt_type = validated_data["appointment_type_obj"]
         start_dt = validated_data["date_time"]
 
+        triage_data = validated_data.get("triage") or {}
+
         appointment = Appointment.objects.create(
             patient=patient,
             doctor=doctor,
@@ -186,7 +228,32 @@ class AppointmentCreateSerializer(serializers.Serializer):
             status="pending",
             notes=validated_data.get("notes", ""),
         )
+
+        # Create triage only if at least one triage field is provided
+        if triage_data:
+            has_any = any(
+                triage_data.get(k) not in (None, "", [])
+                for k in ["symptoms_text", "temperature_c", "bp_systolic", "bp_diastolic", "heart_rate"]
+            )
+            if has_any:
+                result = compute_triage_score(triage_data)
+
+                TriageAssessment.objects.create(
+                    appointment=appointment,
+                    patient=patient,
+                    symptoms_text=(triage_data.get("symptoms_text") or "").strip() or None,
+                    temperature_c=triage_data.get("temperature_c"),
+                    bp_systolic=triage_data.get("bp_systolic"),
+                    bp_diastolic=triage_data.get("bp_diastolic"),
+                    heart_rate=triage_data.get("heart_rate"),
+                    score=result.score,
+                    confidence=result.confidence,
+                    missing_fields=result.missing_fields,
+                    score_version=result.score_version,
+                )
+
         return appointment
+
 
 
 class DoctorSlotsQuerySerializer(serializers.Serializer):

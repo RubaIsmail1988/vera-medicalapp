@@ -2,7 +2,7 @@ from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin, BaseU
 from django.db import models
 from django.utils import timezone
 from django.conf import settings
-from django.core.validators import MinValueValidator
+from django.core.validators import MaxValueValidator, MinValueValidator
 
 # نموذج المحافظة المرجعية
 class Governorate(models.Model):
@@ -338,6 +338,83 @@ class Appointment(models.Model):
 
     def __str__(self):
         return f"{self.patient.username} with {self.doctor.username} on {self.date_time}"
+
+#-----------------------------
+# التقييم الأولي
+#-----------------------------
+class TriageAssessment(models.Model):
+    SCORE_VERSION_V1 = "triage_v1"
+
+    appointment = models.OneToOneField(
+        Appointment,
+        on_delete=models.CASCADE,
+        related_name="triage",
+    )
+
+    # redundancy مفيدة للفلترة/القراءة السريعة (ويمكن استنتاجها من appointment.patient)
+    patient = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="triage_assessments",
+        limit_choices_to={"role": "patient"},
+    )
+
+    symptoms_text = models.TextField(blank=True, null=True)
+
+    temperature_c = models.DecimalField(
+        max_digits=4,
+        decimal_places=1,
+        blank=True,
+        null=True,
+        validators=[MinValueValidator(30.0), MaxValueValidator(45.0)],
+    )
+
+    bp_systolic = models.PositiveSmallIntegerField(
+        blank=True,
+        null=True,
+        validators=[MinValueValidator(50), MaxValueValidator(260)],
+    )
+    bp_diastolic = models.PositiveSmallIntegerField(
+        blank=True,
+        null=True,
+        validators=[MinValueValidator(30), MaxValueValidator(160)],
+    )
+
+    heart_rate = models.PositiveSmallIntegerField(
+        blank=True,
+        null=True,
+        validators=[MinValueValidator(30), MaxValueValidator(240)],
+    )
+
+    score = models.PositiveSmallIntegerField(
+        validators=[MinValueValidator(1), MaxValueValidator(10)]
+    )
+
+    confidence = models.PositiveSmallIntegerField(
+        blank=True,
+        null=True,
+        validators=[MinValueValidator(0), MaxValueValidator(100)],
+        help_text="Confidence based on completeness of inputs.",
+    )
+
+    missing_fields = models.JSONField(default=list, blank=True)
+
+    score_version = models.CharField(
+        max_length=32,
+        default=SCORE_VERSION_V1,
+    )
+
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["patient", "created_at"]),
+            models.Index(fields=["score", "created_at"]),
+        ]
+
+    def __str__(self):
+        return f"Triage(appointment_id={self.appointment_id}, score={self.score})"
+
 
 class Hospital(models.Model):
     name = models.CharField(max_length=200)

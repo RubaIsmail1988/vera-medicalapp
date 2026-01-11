@@ -72,6 +72,15 @@ class AppointmentCreateView(APIView):
         )
         serializer.is_valid(raise_exception=True)
         appointment = serializer.save()
+        triage = getattr(appointment, "triage", None)
+
+        tz = timezone.get_current_timezone()
+
+        def iso_local(dt):
+            if timezone.is_naive(dt):
+                dt = timezone.make_aware(dt, tz)
+            return dt.astimezone(tz).isoformat()
+
 
         return Response(
             {
@@ -79,11 +88,29 @@ class AppointmentCreateView(APIView):
                 "patient": appointment.patient_id,
                 "doctor": appointment.doctor_id,
                 "appointment_type": appointment.appointment_type_id,
-                "date_time": appointment.date_time.isoformat().replace("+00:00", "Z"),
+                "date_time": iso_local(appointment.date_time),
                 "duration_minutes": appointment.duration_minutes,
                 "status": appointment.status,
                 "notes": appointment.notes,
-                "created_at": appointment.created_at.isoformat().replace("+00:00", "Z"),
+                "created_at": iso_local(appointment.created_at),
+                "triage": (
+                    {
+                        "id": triage.id,
+                        "symptoms_text": triage.symptoms_text,
+                        "temperature_c": str(triage.temperature_c) if triage.temperature_c is not None else None,
+                        "bp_systolic": triage.bp_systolic,
+                        "bp_diastolic": triage.bp_diastolic,
+                        "heart_rate": triage.heart_rate,
+                        "score": triage.score,
+                        "confidence": triage.confidence,
+                        "missing_fields": triage.missing_fields,
+                        "score_version": triage.score_version,
+                        "created_at": iso_local(triage.created_at),
+                    }
+                    if triage is not None
+                    else None
+                ),
+
             },
             status=status.HTTP_201_CREATED,
         )
@@ -763,7 +790,7 @@ class MyAppointmentsView(APIView):
         user = request.user
         role = getattr(user, "role", "")
 
-        qs = Appointment.objects.select_related("appointment_type", "doctor", "patient")
+        qs = Appointment.objects.select_related("appointment_type", "doctor", "patient", "triage")
 
         if role == "patient":
             qs = qs.filter(patient_id=user.id)
@@ -893,6 +920,24 @@ class MyAppointmentsView(APIView):
             flags = orders_by_appt.get(ap.id, {"any": False, "open": False})
             has_any_orders = bool(flags["any"])
             has_open_orders = bool(flags["open"])
+            
+            triage_obj = getattr(ap, "triage", None)
+
+            triage_payload = None
+            if role == "doctor" and triage_obj is not None:
+                triage_payload = {
+                    "symptoms_text": triage_obj.symptoms_text,
+                    "temperature_c": str(triage_obj.temperature_c) if triage_obj.temperature_c is not None else None,
+                    "bp_systolic": triage_obj.bp_systolic,
+                    "bp_diastolic": triage_obj.bp_diastolic,
+                    "heart_rate": triage_obj.heart_rate,
+                    "score": triage_obj.score,
+                    "confidence": triage_obj.confidence,
+                    "missing_fields": triage_obj.missing_fields,
+                    "score_version": triage_obj.score_version,
+                    "created_at": triage_obj.created_at.astimezone(tz).isoformat(),
+                }
+
 
             results.append(
                 {
@@ -912,6 +957,7 @@ class MyAppointmentsView(APIView):
                     # NEW flags
                     "has_any_orders": has_any_orders,
                     "has_open_orders": has_open_orders,
+                    "triage": triage_payload,
                 }
             )
 
