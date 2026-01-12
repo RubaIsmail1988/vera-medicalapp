@@ -27,10 +27,14 @@ class CustomUserManager(BaseUserManager):
         extra_fields.setdefault('is_superuser', True)
         extra_fields.setdefault('is_active', True)
 
+        # ضمان أن أي superuser يكون دوره admin (حتى لا يذهب إلى /app)
+        extra_fields.setdefault('role', 'admin')
+
         if extra_fields.get('is_staff') is not True:
             raise ValueError('يجب أن يكون المشرف موظفاً')
         if extra_fields.get('is_superuser') is not True:
             raise ValueError('يجب أن يكون المشرف مسؤولاً')
+
         return self.create_user(email, password, **extra_fields)
 
 # نموذج المستخدم المخصص
