@@ -924,7 +924,7 @@ class MyAppointmentsView(APIView):
             triage_obj = getattr(ap, "triage", None)
 
             triage_payload = None
-            if role == "doctor" and triage_obj is not None:
+            if triage_obj is not None:
                 triage_payload = {
                     "symptoms_text": triage_obj.symptoms_text,
                     "temperature_c": str(triage_obj.temperature_c) if triage_obj.temperature_c is not None else None,

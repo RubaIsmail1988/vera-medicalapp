@@ -19,6 +19,9 @@ class Appointment {
   final bool hasAnyOrders; // أي طلبات (تحاليل/صور) مرتبطة بالموعد
   final bool hasOpenOrders; // هل يوجد طلبات بحالة open
 
+  // NEW: triage (optional; doctor sees it, patient might get null)
+  final TriageAssessmentDto? triage;
+
   Appointment({
     required this.id,
     required this.patient,
@@ -34,6 +37,7 @@ class Appointment {
     required this.createdAt,
     required this.hasAnyOrders,
     required this.hasOpenOrders,
+    required this.triage,
   });
 
   factory Appointment.fromJson(Map<String, dynamic> json) {
@@ -44,6 +48,14 @@ class Appointment {
       if (v is num) return v != 0;
       final s = (v?.toString() ?? '').trim().toLowerCase();
       return s == 'true' || s == '1' || s == 'yes';
+    }
+
+    TriageAssessmentDto? triage;
+    final triageRaw = json['triage'];
+    if (triageRaw is Map) {
+      triage = TriageAssessmentDto.fromJson(
+        Map<String, dynamic>.from(triageRaw),
+      );
     }
 
     return Appointment(
@@ -64,6 +76,59 @@ class Appointment {
       // NEW: support both snake_case and camelCase just in case
       hasAnyOrders: asBool(json['has_any_orders'] ?? json['hasAnyOrders']),
       hasOpenOrders: asBool(json['has_open_orders'] ?? json['hasOpenOrders']),
+
+      triage: triage,
+    );
+  }
+}
+
+class TriageAssessmentDto {
+  final String? symptomsText;
+  final String? temperatureC; // backend sends "38.2" or null
+  final int? bpSystolic;
+  final int? bpDiastolic;
+  final int? heartRate;
+
+  final int score; // 1..10
+  final int? confidence; // 0..100 (nullable in backend)
+  final List<dynamic> missingFields;
+  final String scoreVersion;
+  final DateTime createdAt;
+
+  TriageAssessmentDto({
+    required this.symptomsText,
+    required this.temperatureC,
+    required this.bpSystolic,
+    required this.bpDiastolic,
+    required this.heartRate,
+    required this.score,
+    required this.confidence,
+    required this.missingFields,
+    required this.scoreVersion,
+    required this.createdAt,
+  });
+
+  factory TriageAssessmentDto.fromJson(Map<String, dynamic> json) {
+    int? asIntOrNull(dynamic v) {
+      if (v == null) return null;
+      if (v is num) return v.toInt();
+      return int.tryParse(v.toString());
+    }
+
+    return TriageAssessmentDto(
+      symptomsText: json['symptoms_text'] as String?,
+      temperatureC: json['temperature_c']?.toString(),
+      bpSystolic: asIntOrNull(json['bp_systolic']),
+      bpDiastolic: asIntOrNull(json['bp_diastolic']),
+      heartRate: asIntOrNull(json['heart_rate']),
+      score: (json['score'] as num).toInt(),
+      confidence: asIntOrNull(json['confidence']),
+      missingFields:
+          (json['missing_fields'] is List)
+              ? (json['missing_fields'] as List)
+              : const [],
+      scoreVersion: (json['score_version'] as String?) ?? 'triage_v1',
+      createdAt: DateTime.parse(json['created_at'] as String),
     );
   }
 }

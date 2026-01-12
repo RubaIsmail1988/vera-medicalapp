@@ -8,6 +8,7 @@ from .models import (
     DoctorAppointmentType,
     DoctorAvailability,
     Appointment,
+    TriageAssessment,
     Governorate,
     Hospital,
     Lab,
@@ -17,8 +18,6 @@ from .models import (
 # ================================
 # Custom User Admin
 # ================================
-from django.contrib import admin
-from django.contrib.auth.admin import UserAdmin
 from .models import CustomUser, PatientDetails, DoctorDetails
 
 @admin.register(CustomUser)
@@ -94,6 +93,13 @@ class DoctorAvailabilityAdmin(admin.ModelAdmin):
     search_fields = ('doctor__username',)
 
 
+class TriageAssessmentInline(admin.StackedInline):
+    model = TriageAssessment
+    extra = 0
+    can_delete = False
+    readonly_fields = ("created_at",)
+
+
 # ================================
 # Appointment
 # ================================
@@ -103,6 +109,27 @@ class AppointmentAdmin(admin.ModelAdmin):
     list_filter = ('status', 'appointment_type')
     search_fields = ('patient__username', 'doctor__username')
     ordering = ('-date_time',)
+    inlines = [TriageAssessmentInline]
+
+
+
+# ================================
+# TriageAssessment
+# ================================
+@admin.register(TriageAssessment)
+class TriageAssessmentAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "appointment",
+        "patient",
+        "score",
+        "confidence",
+        "score_version",
+        "created_at",
+    )
+    list_filter = ("score_version", "score", "created_at")
+    search_fields = ("appointment__id", "patient__username", "patient__email")
+    ordering = ("-created_at",)
 
 
 # ================================

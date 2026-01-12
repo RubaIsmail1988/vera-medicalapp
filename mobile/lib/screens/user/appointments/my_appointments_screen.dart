@@ -101,23 +101,18 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
   bool _canCancel(Appointment a) {
     final s = _normStatus(a.status);
 
-    // never cancel
     if (s == 'no_show') return false;
     if (s == 'cancelled') return false;
 
-    // only pending/confirmed
     final isCancelableStatus = s == 'pending' || s == 'confirmed';
     if (!isCancelableStatus) return false;
 
-    // NEW: hide cancel if clinical orders exist (orders only; prescriptions are irrelevant here)
     if (a.hasAnyOrders) return false;
 
-    // Patient UX rule: do NOT allow cancel within 1 hour of start (and after start)
     if (role == 'patient') {
       return _isMoreThanOneHourBeforeStart(a);
     }
 
-    // Doctor/Admin: allow by status (backend still enforces hard rules)
     return true;
   }
 
@@ -127,10 +122,8 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
     final s = _normStatus(a.status);
     if (s == 'cancelled' || s == 'no_show') return false;
 
-    // NEW: no_show only for confirmed (your latest policy)
     if (s != 'confirmed') return false;
 
-    // NEW: hide if clinical orders exist (orders only)
     if (a.hasAnyOrders) return false;
 
     final now = DateTime.now();
@@ -514,6 +507,68 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
     }
   }
 
+  // -----------------------------
+  // Triage chips builders
+  // -----------------------------
+  List<String> _buildPatientTriageChips(Appointment a) {
+    if (role != 'patient') return const [];
+    final t = a.triage;
+    if (t == null) return const [];
+
+    final items = <String>[];
+
+    final symptoms = (t.symptomsText ?? '').trim();
+    if (symptoms.isNotEmpty) items.add('الأعراض: $symptoms');
+
+    final temp = (t.temperatureC ?? '').trim();
+    if (temp.isNotEmpty) items.add('الحرارة: $temp°C');
+
+    if (t.bpSystolic != null && t.bpDiastolic != null) {
+      items.add('الضغط: ${t.bpSystolic}/${t.bpDiastolic}');
+    }
+
+    if (t.heartRate != null) {
+      items.add('النبض: ${t.heartRate} bpm');
+    }
+
+    return items;
+  }
+
+  List<String> _buildDoctorTriageChips(Appointment a) {
+    if (role != 'doctor') return const [];
+    final t = a.triage;
+    if (t == null) return const [];
+
+    final items = <String>[];
+
+    final symptoms = (t.symptomsText ?? '').trim();
+    if (symptoms.isNotEmpty) items.add('الأعراض: $symptoms');
+
+    final temp = (t.temperatureC ?? '').trim();
+    if (temp.isNotEmpty) items.add('T: $temp°C');
+
+    if (t.bpSystolic != null && t.bpDiastolic != null) {
+      items.add('BP: ${t.bpSystolic}/${t.bpDiastolic}');
+    }
+
+    if (t.heartRate != null) items.add('HR: ${t.heartRate}');
+
+    items.add('Score: ${t.score}');
+    if (t.confidence != null) items.add('Conf: ${t.confidence}%');
+
+    final missing =
+        t.missingFields
+            .map((e) => e.toString())
+            .where((s) => s.isNotEmpty)
+            .toList();
+    if (missing.isNotEmpty) items.add('Missing: ${missing.join(", ")}');
+
+    final ver = (t.scoreVersion).trim();
+    if (ver.isNotEmpty) items.add(ver);
+
+    return items;
+  }
+
   @override
   Widget build(BuildContext context) {
     return SafeArea(
@@ -549,7 +604,6 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
                 ),
                 const SizedBox(height: 12),
 
-                // -------- Time filter --------
                 Text('الوقت', style: Theme.of(context).textTheme.titleSmall),
                 const SizedBox(height: 8),
                 Wrap(
@@ -576,7 +630,6 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
 
                 const SizedBox(height: 14),
 
-                // -------- Status filter --------
                 Text('الحالة', style: Theme.of(context).textTheme.titleSmall),
                 const SizedBox(height: 8),
                 Wrap(
@@ -613,7 +666,6 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
 
                 const SizedBox(height: 14),
 
-                // -------- Date preset filter --------
                 Text('التاريخ', style: Theme.of(context).textTheme.titleSmall),
                 const SizedBox(height: 8),
                 Wrap(
@@ -686,7 +738,7 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
                         role == 'doctor' &&
                         (canConfirm || canNoShow || canCancel);
 
-                    Widget? trailing;
+                    Widget trailing;
 
                     if (role == 'doctor') {
                       trailing = PopupMenuButton<String>(
@@ -722,7 +774,6 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
                             ],
                       );
                     } else {
-                      // patient
                       trailing = PopupMenuButton<String>(
                         onSelected: (v) {
                           if (v == 'record') _openRecordForAppointment(a);
@@ -743,6 +794,9 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
                       );
                     }
 
+                    final patientChips = _buildPatientTriageChips(a);
+                    final doctorChips = _buildDoctorTriageChips(a);
+
                     return Padding(
                       padding: const EdgeInsets.only(bottom: 8),
                       child: Card(
@@ -755,14 +809,49 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
                             title,
                             style: const TextStyle(fontWeight: FontWeight.w700),
                           ),
-                          subtitle: Text(
-                            '$counterpartLine\n'
-                            'الوقت: ${_fmtDateTime(a.dateTime)}\n'
-                            'الحالة: $statusLabel'
-                            '${notes.isNotEmpty ? "\nملاحظات: $notes" : ""}',
+                          subtitle: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                [
+                                  counterpartLine,
+                                  'الوقت: ${_fmtDateTime(a.dateTime)}',
+                                  'الحالة: $statusLabel',
+                                  if (notes.isNotEmpty) 'ملاحظات: $notes',
+                                ].join('\n'),
+                              ),
+                              if (role == 'patient' &&
+                                  patientChips.isNotEmpty) ...[
+                                const SizedBox(height: 10),
+                                const Text('بيانات الحالة التي أدخلتها:'),
+                                const SizedBox(height: 6),
+                                Wrap(
+                                  spacing: 8,
+                                  runSpacing: 8,
+                                  children:
+                                      patientChips
+                                          .map((t) => Chip(label: Text(t)))
+                                          .toList(),
+                                ),
+                              ],
+                              if (role == 'doctor' &&
+                                  doctorChips.isNotEmpty) ...[
+                                const SizedBox(height: 10),
+                                const Text('Triage (قبل الزيارة):'),
+                                const SizedBox(height: 6),
+                                Wrap(
+                                  spacing: 8,
+                                  runSpacing: 8,
+                                  children:
+                                      doctorChips
+                                          .map((t) => Chip(label: Text(t)))
+                                          .toList(),
+                                ),
+                              ],
+                            ],
                           ),
                           trailing: trailing,
-                          isThreeLine: true,
+                          isThreeLine: false,
                         ),
                       ),
                     );

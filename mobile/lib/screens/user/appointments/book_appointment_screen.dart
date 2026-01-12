@@ -50,11 +50,26 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
   Map<String, String>? availability; // {"start":"..","end":".."}
   int resolvedDurationMinutes = 0;
 
+  // Notes
   final TextEditingController notesController = TextEditingController();
+
+  // NEW: Triage (optional)
+  final TextEditingController symptomsController = TextEditingController();
+  final TextEditingController temperatureController = TextEditingController();
+  final TextEditingController bpSysController = TextEditingController();
+  final TextEditingController bpDiaController = TextEditingController();
+  final TextEditingController heartRateController = TextEditingController();
 
   @override
   void dispose() {
     notesController.dispose();
+
+    symptomsController.dispose();
+    temperatureController.dispose();
+    bpSysController.dispose();
+    bpDiaController.dispose();
+    heartRateController.dispose();
+
     super.dispose();
   }
 
@@ -134,6 +149,51 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
     // slot is shown in local time => build local then convert to UTC
     final local = DateTime(date.year, date.month, date.day, hh, mi);
     return local.toUtc();
+  }
+
+  double? _parseDoubleOrNull(String v) {
+    final t = v.trim();
+    if (t.isEmpty) return null;
+    return double.tryParse(t.replaceAll(',', '.'));
+  }
+
+  int? _parseIntOrNull(String v) {
+    final t = v.trim();
+    if (t.isEmpty) return null;
+    return int.tryParse(t);
+  }
+
+  Map<String, dynamic>? _buildTriagePayloadOrNull() {
+    final symptoms = symptomsController.text.trim();
+    final temp = _parseDoubleOrNull(temperatureController.text);
+    final sys = _parseIntOrNull(bpSysController.text);
+    final dia = _parseIntOrNull(bpDiaController.text);
+    final hr = _parseIntOrNull(heartRateController.text);
+
+    final hasSys = sys != null;
+    final hasDia = dia != null;
+
+    // rule: BP must be provided as a pair
+    if (hasSys != hasDia) {
+      return {
+        '__error__':
+            'يرجى إدخال الضغط الانقباضي والانبساطي معاً أو تركهما فارغين.',
+      };
+    }
+
+    final payload = <String, dynamic>{};
+
+    if (symptoms.isNotEmpty) payload['symptoms_text'] = symptoms;
+    if (temp != null) payload['temperature_c'] = temp;
+
+    if (sys != null && dia != null) {
+      payload['bp_systolic'] = sys;
+      payload['bp_diastolic'] = dia;
+    }
+
+    if (hr != null) payload['heart_rate'] = hr;
+
+    return payload.isEmpty ? null : payload;
   }
 
   Future<void> loadTypes() async {
@@ -333,14 +393,12 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
                   .toList()
               : <Map<String, dynamic>>[];
 
-      // Backend should return only days with slots; still guard.
       final daysWithSlots =
           daysRaw.where((d) {
             final s = d['slots'];
             return (s is List) && s.isNotEmpty;
           }).toList();
 
-      // Auto select first available day
       String? firstDay;
       if (daysWithSlots.isNotEmpty) {
         final d = (daysWithSlots.first['date'] ?? '').toString().trim();
@@ -470,6 +528,16 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
       return;
     }
 
+    final triagePayload = _buildTriagePayloadOrNull();
+    if (triagePayload != null && triagePayload.containsKey('__error__')) {
+      showAppSnackBar(
+        context,
+        triagePayload['__error__'].toString(),
+        type: AppSnackBarType.warning,
+      );
+      return;
+    }
+
     if (!mounted) return;
     setState(() => booking = true);
 
@@ -481,6 +549,7 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
         appointmentTypeId: appointmentTypeId,
         dateTime: dt,
         notes: notesController.text.trim(),
+        triage: triagePayload, // NEW
       );
 
       final appointment = await appointmentsService.createAppointment(
@@ -700,6 +769,86 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
                       );
                     }).toList(),
               ),
+
+            // -----------------------------
+            // NEW: Triage (optional)
+            // -----------------------------
+            const SizedBox(height: 16),
+            Text('تقييم الحالة (اختياري)', style: theme.textTheme.titleMedium),
+            const SizedBox(height: 8),
+
+            TextField(
+              controller: symptomsController,
+              maxLines: 3,
+              decoration: const InputDecoration(
+                hintText: 'اكتب الأعراض بإيجاز...',
+                border: OutlineInputBorder(),
+              ),
+            ),
+
+            const SizedBox(height: 10),
+
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: temperatureController,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    decoration: const InputDecoration(
+                      hintText: 'الحرارة (°C)',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: TextField(
+                    controller: heartRateController,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      hintText: 'النبض (bpm)',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+
+            const SizedBox(height: 10),
+
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: bpSysController,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      hintText: 'الضغط الانقباضي',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: TextField(
+                    controller: bpDiaController,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      hintText: 'الضغط الانبساطي',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+
+            const SizedBox(height: 6),
+            Text(
+              'ملاحظة: إدخال هذه المعلومات اختياري، ويساعد الطبيب على تقدير أولوية الحالة.',
+              style: theme.textTheme.bodySmall,
+            ),
 
             const SizedBox(height: 16),
             Text('ملاحظات (اختياري)', style: theme.textTheme.titleMedium),
