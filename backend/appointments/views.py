@@ -14,7 +14,9 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from clinical.permissions import IsPatient, IsDoctor
-from clinical.models import ClinicalOrder, MedicalRecordFile, Prescription, MedicationAdherence, Prescription
+from clinical.models import ClinicalOrder, MedicalRecordFile, Prescription, MedicationAdherence, Prescription, OutboxEvent
+from notifications.services.outbox import try_send_event
+
 
 from accounts.models import (
     Appointment,
@@ -72,6 +74,33 @@ class AppointmentCreateView(APIView):
         )
         serializer.is_valid(raise_exception=True)
         appointment = serializer.save()
+        # -----------------------------
+        # Notifications: Outbox + (Mock) Push
+        # Event: appointment_created (pending)
+        # -----------------------------
+        try:
+            ev = OutboxEvent.objects.create(
+                event_type="appointment_created",
+                actor=request.user,
+                patient=appointment.doctor,
+                object_id=str(appointment.id),
+                payload={
+                    "type": "appointment_created",
+                    "entity_id": appointment.id,
+                    "status": appointment.status,
+                    "patient_id": appointment.patient_id,
+                    "doctor_id": appointment.doctor_id,
+                    "timestamp": timezone.now().isoformat(),
+                },
+                status=OutboxEvent.Status.PENDING,
+            )
+
+            # مبدئيًا: إرسال Mock + تحديث status (sent/failed)
+            try_send_event(ev)
+        except Exception:
+            # fail-safe: لا نفشل إنشاء الموعد
+            pass
+
         triage = getattr(appointment, "triage", None)
 
         tz = timezone.get_current_timezone()
@@ -278,6 +307,31 @@ def mark_no_show(request, pk: int):
     appointment.status = "no_show"
     appointment.save(update_fields=["status", "updated_at"])
 
+    # -----------------------------
+    # Notifications: appointment_no_show
+    # recipient = patient
+    # -----------------------------
+    try:
+        ev = OutboxEvent.objects.create(
+            event_type="appointment_no_show",
+            actor=request.user,
+            patient=appointment.patient,  # recipient
+            object_id=str(appointment.id),
+            payload={
+                "type": "appointment_no_show",
+                "entity_id": appointment.id,
+                "status": appointment.status,
+                "patient_id": appointment.patient_id,
+                "doctor_id": appointment.doctor_id,
+                "timestamp": timezone.now().isoformat(),
+            },
+            status=OutboxEvent.Status.PENDING,
+        )
+        try_send_event(ev)
+    except Exception:
+        pass
+
+
     return Response({"id": appointment.id, "status": appointment.status}, status=status.HTTP_200_OK)
 
 # -----------------------------
@@ -321,6 +375,46 @@ def cancel_appointment(request, pk: int):
 
     appointment.status = "cancelled"
     appointment.save(update_fields=["status", "updated_at"])
+
+    # -----------------------------
+    # Notifications: appointment_cancelled
+    # recipient = other party
+    # -----------------------------
+    try:
+        actor = request.user
+
+        # Determine recipients
+        recipients = []
+
+        if getattr(actor, "role", "") == "patient":
+            recipients = [appointment.doctor]   # patient cancelled -> notify doctor
+        elif getattr(actor, "role", "") == "doctor":
+            recipients = [appointment.patient]  # doctor cancelled -> notify patient
+        else:
+            # admin (or unknown): notify both (simplest)
+            recipients = [appointment.patient, appointment.doctor]
+
+        for recipient in recipients:
+            ev = OutboxEvent.objects.create(
+                event_type="appointment_cancelled",
+                actor=actor,
+                patient=recipient,  # recipient
+                object_id=str(appointment.id),
+                payload={
+                    "type": "appointment_cancelled",
+                    "entity_id": appointment.id,
+                    "status": appointment.status,
+                    "patient_id": appointment.patient_id,
+                    "doctor_id": appointment.doctor_id,
+                    "cancelled_by_role": getattr(actor, "role", None),
+                    "timestamp": timezone.now().isoformat(),
+                },
+                status=OutboxEvent.Status.PENDING,
+            )
+            try_send_event(ev)
+    except Exception:
+        pass
+
 
     return Response({"id": appointment.id, "status": appointment.status}, status=status.HTTP_200_OK)
 
@@ -401,6 +495,31 @@ def confirm_appointment(request, pk: int):
 
     appointment.status = "confirmed"
     appointment.save(update_fields=["status", "updated_at"])
+    
+    # -----------------------------
+    # Notifications: appointment_confirmed
+    # recipient = patient
+    # -----------------------------
+    try:
+        ev = OutboxEvent.objects.create(
+            event_type="appointment_confirmed",
+            actor=request.user,
+            patient=appointment.patient,  # recipient
+            object_id=str(appointment.id),
+            payload={
+                "type": "appointment_confirmed",
+                "entity_id": appointment.id,
+                "status": appointment.status,
+                "patient_id": appointment.patient_id,
+                "doctor_id": appointment.doctor_id,
+                "timestamp": timezone.now().isoformat(),
+            },
+            status=OutboxEvent.Status.PENDING,
+        )
+        try_send_event(ev)
+    except Exception:
+        pass
+
 
     return Response(
         {"id": appointment.id, "status": appointment.status},

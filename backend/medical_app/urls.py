@@ -16,6 +16,9 @@ urlpatterns = [
     # appointments
     path("api/appointments/", include("appointments.urls")),
 
+    #notifications
+    path("api/notifications/", include("notifications.urls"))
+
 ]
 
 if settings.DEBUG:

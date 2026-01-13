@@ -1,6 +1,6 @@
 from django.conf import settings
 from django.db import models
-
+from django.utils import timezone
 
 class ClinicalOrder(models.Model):
     class OrderCategory(models.TextChoices):
@@ -165,10 +165,11 @@ class MedicationAdherence(models.Model):
         return f"Adherence #{self.pk} ({self.status})"
 
 
-# Outbox/Event model: تسجيل أحداث فقط (PENDING دائمًا في هذه المرحلة)
 class OutboxEvent(models.Model):
     class Status(models.TextChoices):
         PENDING = "pending", "Pending"
+        SENT = "sent", "Sent"
+        FAILED = "failed", "Failed"
 
     event_type = models.CharField(max_length=64)
     actor = models.ForeignKey(
@@ -186,13 +187,30 @@ class OutboxEvent(models.Model):
         related_name="outbox_events_as_patient",
     )
 
-    # Generic reference to domain object
     object_id = models.CharField(max_length=64, blank=True)
     payload = models.JSONField(default=dict, blank=True)
 
-    status = models.CharField(max_length=16, choices=Status.choices, default=Status.PENDING)
+    status = models.CharField(
+        max_length=16,
+        choices=Status.choices,
+        default=Status.PENDING,
+    )
+
+    attempts = models.PositiveIntegerField(default=0)
+    last_error = models.TextField(blank=True, null=True)
+    sent_at = models.DateTimeField(blank=True, null=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
 
+    def mark_sent(self):
+        self.status = self.Status.SENT
+        self.sent_at = timezone.now()
+        self.last_error = None
+
+    def mark_failed(self, error: str):
+        self.status = self.Status.FAILED
+        self.last_error = (error or "")[:2000]
+
     def __str__(self) -> str:
         return f"{self.event_type} ({self.status})"
+

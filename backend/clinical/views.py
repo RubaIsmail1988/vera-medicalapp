@@ -25,12 +25,13 @@ from .serializers import (
     OutboxEventSerializer,
 )
 from accounts.models import Appointment
+from notifications.services.outbox import try_send_event
 
 
 def _create_outbox_event(*, event_type: str, actor, patient=None, obj=None, payload=None):
-    # تسجيل فقط، دائماً PENDING
+    # سجل الحدث ثم حاول الإرسال (Mock) بدون كسر العملية الأساسية
     try:
-        OutboxEvent.objects.create(
+        ev = OutboxEvent.objects.create(
             event_type=event_type,
             actor=actor if getattr(actor, "is_authenticated", False) else None,
             patient=patient,
@@ -38,9 +39,17 @@ def _create_outbox_event(*, event_type: str, actor, patient=None, obj=None, payl
             payload=payload or {},
             status=OutboxEvent.Status.PENDING,
         )
+
+        try:
+            try_send_event(ev)
+        except Exception:
+            # لا نفشل حتى لو فشل الإرسال
+            pass
+
     except Exception:
         # Fail-safe: لا نفشل العملية الأساسية إذا فشل تسجيل الحدث
         pass
+
 
 
 def _is_pending_review_status(value: str) -> bool:
@@ -257,13 +266,30 @@ class OrderFileUploadView(generics.CreateAPIView):
         serializer.is_valid(raise_exception=True)
         file_obj = serializer.save()
 
-        _create_outbox_event(
-            event_type="MEDICAL_FILE_UPLOADED",
-            actor=request.user,
-            patient=order.patient,
-            obj=file_obj,
-            payload={"order_id": order.id, "filename": file_obj.original_filename},
-        )
+        # -----------------------------
+        # Notifications: file_uploaded
+        # recipient = doctor
+        # -----------------------------
+        try:
+            ev = OutboxEvent.objects.create(
+                event_type="file_uploaded",
+                actor=request.user,          # المريض
+                patient=order.doctor,        # recipient = الطبيب
+                object_id=str(file_obj.id),
+                payload={
+                    "type": "file_uploaded",
+                    "entity_id": file_obj.id,
+                    "order_id": order.id,
+                    "patient_id": order.patient_id,
+                    "doctor_id": order.doctor_id,
+                    "filename": file_obj.original_filename,
+                    "timestamp": timezone.now().isoformat(),
+                },
+                status=OutboxEvent.Status.PENDING,
+            )
+            try_send_event(ev)
+        except Exception:
+            pass
 
         return Response(MedicalRecordFileSerializer(file_obj).data, status=status.HTTP_201_CREATED)
 
@@ -372,13 +398,31 @@ def approve_medical_record_file(request, file_id: int):
         order.status = ClinicalOrder.Status.FULFILLED
         order.save(update_fields=["status", "updated_at"])
    
-    _create_outbox_event(
-        event_type="MEDICAL_FILE_REVIEWED",
-        actor=request.user,
-        patient=f.order.patient,
-        obj=f,
-        payload={"review_status": f.review_status, "order_id": f.order_id},
-    )
+    # -----------------------------
+    # Notifications: file_reviewed (approved)
+    # recipient = patient
+    # -----------------------------
+    try:
+        ev = OutboxEvent.objects.create(
+            event_type="file_reviewed",
+            actor=request.user,          # doctor
+            patient=f.order.patient,     # recipient = patient
+            object_id=str(f.id),
+            payload={
+                "type": "file_reviewed",
+                "entity_id": f.id,
+                "order_id": f.order_id,
+                "patient_id": f.order.patient_id,
+                "doctor_id": f.order.doctor_id,
+                "review_status": f.review_status,
+                "timestamp": timezone.now().isoformat(),
+            },
+            status=OutboxEvent.Status.PENDING,
+        )
+        try_send_event(ev)
+    except Exception:
+        pass
+
 
     return Response(MedicalRecordFileSerializer(f).data)
 
@@ -407,13 +451,31 @@ def reject_medical_record_file(request, file_id: int):
     f.doctor_note = doctor_note
     f.save(update_fields=["review_status", "reviewed_by", "reviewed_at", "doctor_note"])
 
-    _create_outbox_event(
-        event_type="MEDICAL_FILE_REVIEWED",
-        actor=request.user,
-        patient=f.order.patient,
-        obj=f,
-        payload={"review_status": f.review_status, "order_id": f.order_id},
-    )
+    # -----------------------------
+    # Notifications: file_reviewed (approved)
+    # recipient = patient
+    # -----------------------------
+    try:
+        ev = OutboxEvent.objects.create(
+            event_type="file_reviewed",
+            actor=request.user,          # doctor
+            patient=f.order.patient,     # recipient = patient
+            object_id=str(f.id),
+            payload={
+                "type": "file_reviewed",
+                "entity_id": f.id,
+                "order_id": f.order_id,
+                "patient_id": f.order.patient_id,
+                "doctor_id": f.order.doctor_id,
+                "review_status": f.review_status,
+                "timestamp": timezone.now().isoformat(),
+            },
+            status=OutboxEvent.Status.PENDING,
+        )
+        try_send_event(ev)
+    except Exception:
+        pass
+
 
     return Response(MedicalRecordFileSerializer(f).data)
 
