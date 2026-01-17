@@ -179,6 +179,7 @@ class OutboxEvent(models.Model):
         blank=True,
         related_name="outbox_events_as_actor",
     )
+    #outbpx.patient= recipient user (patient or doctor)
     patient = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,

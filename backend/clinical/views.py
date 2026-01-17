@@ -1,12 +1,12 @@
-from django.shortcuts import render
 from django.utils import timezone
+from django.shortcuts import get_object_or_404
+
 from rest_framework import generics, status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from django.shortcuts import get_object_or_404
 
 from .models import (
     ClinicalOrder,
@@ -28,28 +28,76 @@ from accounts.models import Appointment
 from notifications.services.outbox import try_send_event
 
 
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _display_name(u):
+    if not u:
+        return None
+
+    full_name = getattr(u, "get_full_name", None)
+    if callable(full_name) and full_name():
+        return full_name()
+
+    return getattr(u, "username", None) or getattr(u, "email", None) or f"User #{u.id}"
+
+
 def _create_outbox_event(*, event_type: str, actor, patient=None, obj=None, payload=None):
-    # سجل الحدث ثم حاول الإرسال (Mock) بدون كسر العملية الأساسية
+    """
+    Create Outbox event safely (fail-safe, does not break main flow).
+
+    NOTE:
+    - OutboxEvent.patient = recipient (may be patient OR doctor).
+    - This helper enriches payload with display names and unified keys for Flutter.
+    """
     try:
+        actor_user = actor if getattr(actor, "is_authenticated", False) else None
+        recipient_user = patient
+
+        base = payload.copy() if isinstance(payload, dict) else {}
+
+        # Unified keys
+        base.setdefault("type", event_type)
+        base.setdefault("entity_id", getattr(obj, "id", None) if obj is not None else None)
+
+        base.setdefault("actor_id", getattr(actor_user, "id", None))
+        base.setdefault("actor_name", _display_name(actor_user))
+
+        base.setdefault("recipient_id", getattr(recipient_user, "id", None))
+        base.setdefault("recipient_name", _display_name(recipient_user))
+
+        # Optional roles (if CustomUser.role exists)
+        if actor_user is not None:
+            base.setdefault("actor_role", getattr(actor_user, "role", None))
+        if recipient_user is not None:
+            base.setdefault("recipient_role", getattr(recipient_user, "role", None))
+
+        base.setdefault("timestamp", timezone.now().isoformat())
+
+        # Ready-to-show defaults
+        if not str(base.get("title") or "").strip():
+            base["title"] = event_type
+        if not str(base.get("message") or "").strip():
+            base["message"] = "تفاصيل غير متوفرة."
+
         ev = OutboxEvent.objects.create(
             event_type=event_type,
-            actor=actor if getattr(actor, "is_authenticated", False) else None,
-            patient=patient,
+            actor=actor_user,
+            patient=recipient_user,
             object_id=str(getattr(obj, "id", "")) if obj is not None else "",
-            payload=payload or {},
+            payload=base,
             status=OutboxEvent.Status.PENDING,
         )
 
         try:
             try_send_event(ev)
         except Exception:
-            # لا نفشل حتى لو فشل الإرسال
             pass
 
     except Exception:
-        # Fail-safe: لا نفشل العملية الأساسية إذا فشل تسجيل الحدث
+        # Fail-safe
         pass
-
 
 
 def _is_pending_review_status(value: str) -> bool:
@@ -60,6 +108,7 @@ def _is_pending_review_status(value: str) -> bool:
     """
     v = (value or "").strip().lower()
     return v in ("pending", "pending_review", "pending-review")
+
 
 def _doctor_is_linked_to_patient(*, doctor, patient_id: int) -> bool:
     # 1) Existing clinical relationship via previous Orders
@@ -72,16 +121,17 @@ def _doctor_is_linked_to_patient(*, doctor, patient_id: int) -> bool:
 
     # 3) Optional: if Appointment exists already, use it as a stronger link
     try:
-        from accounts.models import Appointment  # عدّل المسار إذا لزم
         if Appointment.objects.filter(doctor_id=doctor.id, patient_id=patient_id).exists():
             return True
     except Exception:
-        # Appointment model may not exist / import path differs; ignore safely
         pass
 
     return False
 
 
+# ---------------------------------------------------------------------------
+# Clinical Orders
+# ---------------------------------------------------------------------------
 
 class ClinicalOrderListCreateView(generics.ListCreateAPIView):
     serializer_class = ClinicalOrderSerializer
@@ -98,7 +148,6 @@ class ClinicalOrderListCreateView(generics.ListCreateAPIView):
         if is_patient(user):
             return qs.filter(patient=user)
 
-        # If role is unknown, restrict to none for safety
         return qs.none()
 
     def create(self, request, *args, **kwargs):
@@ -129,8 +178,9 @@ class ClinicalOrderListCreateView(generics.ListCreateAPIView):
         else:
             resolved_doctor = request.user
             if appt.doctor_id != resolved_doctor.id:
-                return Response({"detail": "Not found."}, status=404)  
-         # Gate: must be confirmed to create clinical activity
+                return Response({"detail": "Not found."}, status=404)
+
+        # Gate: must be confirmed to create clinical activity
         if appt.status in ["cancelled", "no_show"]:
             return Response(
                 {"detail": f"Cannot create order for appointment in status '{appt.status}'."},
@@ -153,17 +203,13 @@ class ClinicalOrderListCreateView(generics.ListCreateAPIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # if key exists but empty, drop it to avoid confusion
         data.pop("patient", None)
 
         forced_patient = appt.patient
 
-        # Force patient + appointment
         data["patient"] = str(forced_patient.id)
         data["appointment"] = str(appt.id)
 
-
-        # IMPORTANT: tell serializer that patient was injected by server (so it won't reject it)
         serializer = self.get_serializer(
             data=data,
             context={**self.get_serializer_context(), "patient_from_appointment": True},
@@ -183,8 +229,13 @@ class ClinicalOrderListCreateView(generics.ListCreateAPIView):
             obj=order,
             payload={
                 "order_category": order.order_category,
-                "title": order.title,
+                "title": "طلب تحليل/صورة",
+                "message": f"طلب: {order.title}",
                 "appointment_id": appt.id,
+                "order_id": order.id,
+                "patient_id": order.patient_id,
+                "doctor_id": order.doctor_id,
+                "route": f"/app/record/orders/{order.id}?role=doctor",
             },
         )
 
@@ -215,6 +266,10 @@ class ClinicalOrderRetrieveView(generics.RetrieveAPIView):
         return Response({"detail": "Not found."}, status=404)
 
 
+# ---------------------------------------------------------------------------
+# Files
+# ---------------------------------------------------------------------------
+
 class OrderFilesListView(generics.ListAPIView):
     serializer_class = MedicalRecordFileSerializer
     permission_classes = [IsAuthenticated]
@@ -229,7 +284,6 @@ class OrderFilesListView(generics.ListAPIView):
         if is_admin(user):
             return qs
 
-        # Owner access via order ownership
         order = ClinicalOrder.objects.filter(id=order_id).first()
         if not order:
             return MedicalRecordFile.objects.none()
@@ -254,7 +308,6 @@ class OrderFileUploadView(generics.CreateAPIView):
         if not order:
             return Response({"detail": "Clinical order not found."}, status=404)
 
-        # Ensure patient owns the order
         if not (is_admin(request.user) or (order.patient_id == request.user.id)):
             return Response({"detail": "You can only upload files for your own orders."}, status=403)
 
@@ -266,30 +319,22 @@ class OrderFileUploadView(generics.CreateAPIView):
         serializer.is_valid(raise_exception=True)
         file_obj = serializer.save()
 
-        # -----------------------------
-        # Notifications: file_uploaded
-        # recipient = doctor
-        # -----------------------------
-        try:
-            ev = OutboxEvent.objects.create(
-                event_type="file_uploaded",
-                actor=request.user,          # المريض
-                patient=order.doctor,        # recipient = الطبيب
-                object_id=str(file_obj.id),
-                payload={
-                    "type": "file_uploaded",
-                    "entity_id": file_obj.id,
-                    "order_id": order.id,
-                    "patient_id": order.patient_id,
-                    "doctor_id": order.doctor_id,
-                    "filename": file_obj.original_filename,
-                    "timestamp": timezone.now().isoformat(),
-                },
-                status=OutboxEvent.Status.PENDING,
-            )
-            try_send_event(ev)
-        except Exception:
-            pass
+        # Notifications: file_uploaded -> recipient = doctor
+        _create_outbox_event(
+            event_type="file_uploaded",
+            actor=request.user,          # patient
+            patient=order.doctor,        # recipient doctor
+            obj=file_obj,
+            payload={
+                "title": "تم رفع ملف طبي",
+                "message": f"تم رفع الملف: {file_obj.original_filename or 'ملف جديد'}",
+                "order_id": order.id,
+                "patient_id": order.patient_id,
+                "doctor_id": order.doctor_id,
+                "filename": file_obj.original_filename,
+                "route": "/app/record/files",
+            },
+        )
 
         return Response(MedicalRecordFileSerializer(file_obj).data, status=status.HTTP_201_CREATED)
 
@@ -304,16 +349,14 @@ class OrderFileDeleteView(APIView):
         - file.review_status == pending (يدعم pending / pending_review)
       غير ذلك: 403
     - عند الحذف: حذف من storage ثم حذف السجل
-    - (اختياري) تسجيل OutboxEvent MEDICAL_FILE_DELETED (Pending)
+    - تسجيل OutboxEvent MEDICAL_FILE_DELETED (Pending)
     """
     permission_classes = [IsAuthenticated]
 
     def delete(self, request, file_id):
         record_file = get_object_or_404(MedicalRecordFile, pk=file_id)
-
         user = request.user
 
-        # admin مسموح دائمًا
         if is_admin(user):
             if getattr(record_file, "file", None):
                 record_file.file.delete(save=False)
@@ -324,12 +367,15 @@ class OrderFileDeleteView(APIView):
                 actor=user,
                 patient=getattr(record_file, "patient", None),
                 obj=record_file,
-                payload={"reason": "deleted_by_admin"},
+                payload={
+                    "reason": "deleted_by_admin",
+                    "title": "تم حذف ملف",
+                    "message": "تم حذف الملف بواسطة الإدارة.",
+                    "route": "/app/record/files",
+                },
             )
-
             return Response(status=status.HTTP_204_NO_CONTENT)
 
-        # patient مسموح فقط إذا الملف له + pending
         if is_patient(user):
             if getattr(record_file, "patient_id", None) != getattr(user, "id", None):
                 return Response(
@@ -352,9 +398,13 @@ class OrderFileDeleteView(APIView):
                 actor=user,
                 patient=getattr(record_file, "patient", None),
                 obj=record_file,
-                payload={"reason": "deleted_by_patient"},
+                payload={
+                    "reason": "deleted_by_patient",
+                    "title": "تم حذف ملف",
+                    "message": "تم حذف الملف بنجاح.",
+                    "route": "/app/record/files",
+                },
             )
-
             return Response(status=status.HTTP_204_NO_CONTENT)
 
         return Response(
@@ -370,11 +420,9 @@ def approve_medical_record_file(request, file_id: int):
     if not f:
         return Response({"detail": "File not found."}, status=404)
 
-    # Doctor must own the related order
     if not (is_admin(request.user) or f.order.doctor_id == request.user.id):
         return Response({"detail": "You can only review files for your own orders."}, status=403)
 
-    # Lock decision: لا يسمح بالمراجعة إذا الملف لم يعد pending
     if not _is_pending_review_status(getattr(f, "review_status", "")):
         return Response({"detail": "File already reviewed."}, status=status.HTTP_409_CONFLICT)
 
@@ -383,9 +431,7 @@ def approve_medical_record_file(request, file_id: int):
     f.reviewed_at = timezone.now()
     f.doctor_note = request.data.get("doctor_note", "") or ""
     f.save(update_fields=["review_status", "reviewed_by", "reviewed_at", "doctor_note"])
-    
-    # After approving a file, auto-fulfill the order if there is at least one approved file
-    # (MVP rule: 1 approved file is enough to fulfill the order)
+
     order = f.order
 
     has_approved = MedicalRecordFile.objects.filter(
@@ -397,32 +443,23 @@ def approve_medical_record_file(request, file_id: int):
     if has_approved and order.status != ClinicalOrder.Status.FULFILLED:
         order.status = ClinicalOrder.Status.FULFILLED
         order.save(update_fields=["status", "updated_at"])
-   
-    # -----------------------------
-    # Notifications: file_reviewed (approved)
-    # recipient = patient
-    # -----------------------------
-    try:
-        ev = OutboxEvent.objects.create(
-            event_type="file_reviewed",
-            actor=request.user,          # doctor
-            patient=f.order.patient,     # recipient = patient
-            object_id=str(f.id),
-            payload={
-                "type": "file_reviewed",
-                "entity_id": f.id,
-                "order_id": f.order_id,
-                "patient_id": f.order.patient_id,
-                "doctor_id": f.order.doctor_id,
-                "review_status": f.review_status,
-                "timestamp": timezone.now().isoformat(),
-            },
-            status=OutboxEvent.Status.PENDING,
-        )
-        try_send_event(ev)
-    except Exception:
-        pass
 
+    # Notifications: file_reviewed -> recipient = patient
+    _create_outbox_event(
+        event_type="file_reviewed",
+        actor=request.user,
+        patient=f.order.patient,
+        obj=f,
+        payload={
+            "title": "تمت مراجعة ملف",
+            "message": f"حالة المراجعة: {f.review_status}",
+            "order_id": f.order_id,
+            "patient_id": f.order.patient_id,
+            "doctor_id": f.order.doctor_id,
+            "review_status": f.review_status,
+            "route": "/app/record/files",
+        },
+    )
 
     return Response(MedicalRecordFileSerializer(f).data)
 
@@ -437,7 +474,6 @@ def reject_medical_record_file(request, file_id: int):
     if not (is_admin(request.user) or f.order.doctor_id == request.user.id):
         return Response({"detail": "You can only review files for your own orders."}, status=403)
 
-    # Lock decision: لا يسمح بالمراجعة إذا الملف لم يعد pending
     if not _is_pending_review_status(getattr(f, "review_status", "")):
         return Response({"detail": "File already reviewed."}, status=status.HTTP_409_CONFLICT)
 
@@ -451,34 +487,29 @@ def reject_medical_record_file(request, file_id: int):
     f.doctor_note = doctor_note
     f.save(update_fields=["review_status", "reviewed_by", "reviewed_at", "doctor_note"])
 
-    # -----------------------------
-    # Notifications: file_reviewed (approved)
-    # recipient = patient
-    # -----------------------------
-    try:
-        ev = OutboxEvent.objects.create(
-            event_type="file_reviewed",
-            actor=request.user,          # doctor
-            patient=f.order.patient,     # recipient = patient
-            object_id=str(f.id),
-            payload={
-                "type": "file_reviewed",
-                "entity_id": f.id,
-                "order_id": f.order_id,
-                "patient_id": f.order.patient_id,
-                "doctor_id": f.order.doctor_id,
-                "review_status": f.review_status,
-                "timestamp": timezone.now().isoformat(),
-            },
-            status=OutboxEvent.Status.PENDING,
-        )
-        try_send_event(ev)
-    except Exception:
-        pass
-
+    # Notifications: file_reviewed -> recipient = patient
+    _create_outbox_event(
+        event_type="file_reviewed",
+        actor=request.user,
+        patient=f.order.patient,
+        obj=f,
+        payload={
+            "title": "تمت مراجعة ملف",
+            "message": f"حالة المراجعة: {f.review_status}",
+            "order_id": f.order_id,
+            "patient_id": f.order.patient_id,
+            "doctor_id": f.order.doctor_id,
+            "review_status": f.review_status,
+            "route": "/app/record/files",
+        },
+    )
 
     return Response(MedicalRecordFileSerializer(f).data)
 
+
+# ---------------------------------------------------------------------------
+# Prescriptions
+# ---------------------------------------------------------------------------
 
 class PrescriptionListCreateView(generics.ListCreateAPIView):
     serializer_class = PrescriptionSerializer
@@ -517,7 +548,6 @@ class PrescriptionListCreateView(generics.ListCreateAPIView):
         if not appt:
             return Response({"detail": "Appointment not found."}, status=404)
 
-        # Resolve actor doctor
         if is_admin(request.user):
             resolved_doctor = appt.doctor
         else:
@@ -537,25 +567,19 @@ class PrescriptionListCreateView(generics.ListCreateAPIView):
                 status=status.HTTP_409_CONFLICT,
             )
 
-
-        # Client must NOT send patient (derived from appointment)
         raw_patient = request.data.get("patient", None)
         if raw_patient is not None and str(raw_patient).strip() != "":
             return Response(
                 {"patient": ["Do not send patient. It is derived from appointment."]},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        # إذا كان موجود لكن فاضي (شائع مع form-data) نعتبره غير مرسل
-        # ولا نعمل return error
 
         forced_patient = appt.patient
 
-        # Build data copy: force patient + appointment
         data = request.data.copy()
         data["patient"] = str(forced_patient.id)
         data["appointment"] = str(appt.id)
 
-        # IMPORTANT: tell serializer that patient was injected by server
         serializer = self.get_serializer(
             data=data,
             context={**self.get_serializer_context(), "patient_from_appointment": True},
@@ -573,11 +597,17 @@ class PrescriptionListCreateView(generics.ListCreateAPIView):
             actor=resolved_doctor,
             patient=rx.patient,
             obj=rx,
-            payload={"items_count": rx.items.count(), "appointment_id": appt.id},
+            payload={
+                "title": "وصفة جديدة",
+                "message": f"تم إنشاء وصفة جديدة. عدد الأدوية: {rx.items.count()}",
+                "items_count": rx.items.count(),
+                "appointment_id": appt.id,
+                "prescription_id": rx.id,
+                "route": "/app/record/prescripts",
+            },
         )
 
         return Response(PrescriptionSerializer(rx).data, status=status.HTTP_201_CREATED)
-
 
 
 class PrescriptionRetrieveView(generics.RetrieveAPIView):
@@ -601,6 +631,10 @@ class PrescriptionRetrieveView(generics.RetrieveAPIView):
         return Response({"detail": "Not found."}, status=404)
 
 
+# ---------------------------------------------------------------------------
+# Medication Adherence
+# ---------------------------------------------------------------------------
+
 class MedicationAdherenceListCreateView(generics.ListCreateAPIView):
     serializer_class = MedicationAdherenceSerializer
     permission_classes = [IsAuthenticated]
@@ -618,7 +652,6 @@ class MedicationAdherenceListCreateView(generics.ListCreateAPIView):
             return qs.filter(patient=user)
 
         if is_doctor(user):
-            # Doctor sees adherence for prescriptions they created
             return qs.filter(prescription_item__prescription__doctor=user)
 
         return qs.none()
@@ -630,7 +663,6 @@ class MedicationAdherenceListCreateView(generics.ListCreateAPIView):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        #  Force patient من السيرفر دائمًا
         log = serializer.save(patient=request.user)
 
         _create_outbox_event(
@@ -638,20 +670,29 @@ class MedicationAdherenceListCreateView(generics.ListCreateAPIView):
             actor=request.user,
             patient=request.user,
             obj=log,
-            payload={"prescription_item_id": log.prescription_item_id, "status": log.status},
+            payload={
+                "title": "تسجيل التزام دوائي",
+                "message": f"تم تسجيل الحالة: {log.status}",
+                "prescription_item_id": log.prescription_item_id,
+                "status": log.status,
+                "route": "/app/record/adherence",
+            },
         )
 
-        return Response(MedicationAdherenceSerializer(log, context={"request": request}).data, status=status.HTTP_201_CREATED)
+        return Response(
+            MedicationAdherenceSerializer(log, context={"request": request}).data,
+            status=status.HTTP_201_CREATED,
+        )
 
+
+# ---------------------------------------------------------------------------
+# Aggregation
+# ---------------------------------------------------------------------------
 
 class ClinicalRecordAggregationView(APIView):
     """
     GET /api/clinical/record/?patient_id=...
     Read-only aggregation within role scope.
-
-    - Admin: sees all data for patient
-    - Doctor: sees only data created by that doctor for the patient
-    - Patient: (option A) only self
     """
     permission_classes = [IsAuthenticated]
 
@@ -667,9 +708,6 @@ class ClinicalRecordAggregationView(APIView):
 
         user = request.user
 
-        # -------------------------
-        # Scope resolution
-        # -------------------------
         if is_admin(user):
             orders_qs = ClinicalOrder.objects.filter(patient_id=patient_id).select_related("doctor", "patient", "appointment")
             rx_qs = Prescription.objects.filter(patient_id=patient_id).select_related("doctor", "patient", "appointment").prefetch_related("items")
@@ -679,7 +717,6 @@ class ClinicalRecordAggregationView(APIView):
             scope = {"role": "admin", "admin_id": user.id}
 
         elif is_doctor(user):
-            # Doctor scope: only what this doctor created for this patient
             orders_qs = ClinicalOrder.objects.filter(doctor=user, patient_id=patient_id).select_related("doctor", "patient", "appointment")
             rx_qs = Prescription.objects.filter(doctor=user, patient_id=patient_id).select_related("doctor", "patient", "appointment").prefetch_related("items")
             adh_qs = MedicationAdherence.objects.filter(
@@ -689,7 +726,6 @@ class ClinicalRecordAggregationView(APIView):
             scope = {"role": "doctor", "doctor_id": user.id}
 
         elif is_patient(user):
-            # Option A : patient can only access their own record aggregation
             if user.id != patient_id:
                 return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
 
@@ -703,9 +739,6 @@ class ClinicalRecordAggregationView(APIView):
         else:
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
 
-        # -------------------------
-        # Serialize
-        # -------------------------
         orders_data = ClinicalOrderSerializer(orders_qs, many=True, context={"request": request}).data
         prescriptions_data = PrescriptionSerializer(rx_qs, many=True, context={"request": request}).data
         adherence_data = MedicationAdherenceSerializer(adh_qs, many=True, context={"request": request}).data
@@ -726,6 +759,11 @@ class ClinicalRecordAggregationView(APIView):
             status=status.HTTP_200_OK,
         )
 
+
+# ---------------------------------------------------------------------------
+# Outbox / Inbox
+# ---------------------------------------------------------------------------
+
 class OutboxEventListView(generics.ListAPIView):
     serializer_class = OutboxEventSerializer
     permission_classes = [IsAuthenticated]
@@ -739,3 +777,54 @@ class OutboxEventListView(generics.ListAPIView):
 
         return qs.none()
 
+
+class MyInboxEventsView(generics.ListAPIView):
+    """
+    GET /api/clinical/inbox/
+    Inbox = events where current user is the recipient.
+    NOTE: OutboxEvent.patient field is used as recipient in DB.
+
+    Optional filters:
+      - ?status=pending|sent|failed
+      - ?since_id=123   (only events with id > since_id)
+      - ?event_type=appointment_created (exact match)
+      - ?limit=50       (caps results)
+    """
+    serializer_class = OutboxEventSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        user = self.request.user
+
+        # IMPORTANT for polling with since_id:
+        # sort by id ASC to guarantee stable incremental delivery
+        qs = (
+            OutboxEvent.objects
+            .filter(patient_id=user.id)   # recipient
+            .order_by("id")
+        )
+
+        status_param = (self.request.query_params.get("status") or "").strip().lower()
+        if status_param in ("pending", "sent", "failed"):
+            qs = qs.filter(status=status_param)
+
+        event_type = (self.request.query_params.get("event_type") or "").strip()
+        if event_type:
+            qs = qs.filter(event_type=event_type)
+
+        since_id_raw = (self.request.query_params.get("since_id") or "").strip()
+        if since_id_raw:
+            try:
+                since_id = int(since_id_raw)
+                qs = qs.filter(id__gt=since_id)
+            except ValueError:
+                pass
+
+        limit_raw = (self.request.query_params.get("limit") or "").strip()
+        try:
+            limit = int(limit_raw) if limit_raw else 100
+        except ValueError:
+            limit = 100
+
+        limit = max(1, min(limit, 200))
+        return qs[:limit]

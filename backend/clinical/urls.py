@@ -13,6 +13,7 @@ from .views import (
     OutboxEventListView,
     OrderFileDeleteView,
     ClinicalRecordAggregationView,
+    MyInboxEventsView,
 )
 
 urlpatterns = [
@@ -42,5 +43,6 @@ urlpatterns = [
     # Outbox (optional)
     path("outbox/", OutboxEventListView.as_view(), name="outbox-list"),
     
+    path("inbox/", MyInboxEventsView.as_view(), name="my-inbox"),
 
 ]

@@ -17,8 +17,17 @@ SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "dev-secret-key-change-me")
 
 DEBUG = os.environ.get("DJANGO_DEBUG", "True").strip().lower() in ("1", "true", "yes", "on")
 
-_allowed_hosts = os.environ.get("DJANGO_ALLOWED_HOSTS", "127.0.0.1,localhost").strip()
-ALLOWED_HOSTS = [h.strip() for h in _allowed_hosts.split(",") if h.strip()]
+#_allowed_hosts = os.environ.get(
+#    "DJANGO_ALLOWED_HOSTS",
+#    "127.0.0.1,localhost,10.0.2.2,10.0.2.15",
+#).strip()
+#ALLOWED_HOSTS = [h.strip() for h in _allowed_hosts.split(",") if h.strip()]
+ALLOWED_HOSTS = [
+    "127.0.0.1",
+    "localhost",
+    "10.0.2.2",
+    "192.168.196.101",
+]
 
 
 

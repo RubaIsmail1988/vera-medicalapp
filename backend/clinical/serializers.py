@@ -398,17 +398,73 @@ class MedicationAdherenceSerializer(serializers.ModelSerializer):
 # Outbox
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Outbox
+# ---------------------------------------------------------------------------
+
 class OutboxEventSerializer(serializers.ModelSerializer):
+    recipient_id = serializers.SerializerMethodField()
+
+    actor_display_name = serializers.SerializerMethodField()
+    recipient_display_name = serializers.SerializerMethodField()
+
+    actor_role = serializers.SerializerMethodField()
+    recipient_role = serializers.SerializerMethodField()
+
     class Meta:
         model = OutboxEvent
         fields = [
             "id",
             "event_type",
             "actor",
-            "patient",
+            "actor_display_name",
+            "actor_role",
+            "recipient_id",
+            "recipient_display_name",
+            "recipient_role",
             "object_id",
             "payload",
             "status",
             "created_at",
         ]
         read_only_fields = ["id", "status", "created_at"]
+
+    def get_recipient_id(self, obj):
+        return obj.patient_id
+
+    # -------------------------
+    # Display helpers
+    # -------------------------
+    def _display_name(self, user):
+        if not user:
+            return None
+
+        full_name = getattr(user, "get_full_name", None)
+        if callable(full_name) and full_name():
+            return full_name()
+
+        if getattr(user, "username", None):
+            return user.username
+
+        if getattr(user, "email", None):
+            return user.email
+
+        return f"User #{getattr(user, 'id', '')}"
+
+    def _role(self, user):
+        if not user:
+            return None
+        return getattr(user, "role", None)
+
+    def get_actor_display_name(self, obj):
+        return self._display_name(getattr(obj, "actor", None))
+
+    def get_recipient_display_name(self, obj):
+        return self._display_name(getattr(obj, "patient", None))
+
+    def get_actor_role(self, obj):
+        return self._role(getattr(obj, "actor", None))
+
+    def get_recipient_role(self, obj):
+        return self._role(getattr(obj, "patient", None))
+
