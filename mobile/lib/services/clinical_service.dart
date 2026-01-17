@@ -282,4 +282,18 @@ class ClinicalService {
     final qp = Uri(queryParameters: {"patient_id": patientId.toString()}).query;
     return authorizedClinicalRequest("/record/?$qp", "GET");
   }
+  // ---------------------------------------------------------------------------
+  // Inbox (Polling)
+  // GET /api/clinical/inbox/?since_id=...&limit=...
+  // ---------------------------------------------------------------------------
+
+  Future<http.Response> fetchInbox({int? sinceId, int limit = 50}) {
+    final qp = <String, String>{
+      "limit": limit.toString(),
+      if (sinceId != null && sinceId > 0) "since_id": sinceId.toString(),
+    };
+
+    final query = Uri(queryParameters: qp).query;
+    return authorizedClinicalRequest("/inbox/?$query", "GET");
+  }
 }

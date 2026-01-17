@@ -6,6 +6,8 @@ import '../../main.dart';
 import '/services/auth_service.dart';
 import '/services/account_deletion_service.dart';
 import '../../utils/ui_helpers.dart';
+import '/services/clinical_service.dart';
+import '/services/polling_notifications_service.dart';
 
 import 'patient_home_screen.dart';
 import 'doctor_home_screen.dart';
@@ -25,6 +27,7 @@ class UserShellScreen extends StatefulWidget {
 
 class _UserShellScreenState extends State<UserShellScreen> {
   late int currentIndex;
+  PollingNotificationsService? pollingService;
 
   // Session from prefs
   String role = 'patient';
@@ -107,9 +110,19 @@ class _UserShellScreenState extends State<UserShellScreen> {
       context.go('/waiting-activation');
       return;
     }
+    // Start polling notifications (MVP)
+    pollingService ??= PollingNotificationsService(
+      authService: AuthService(),
+      clinicalService: ClinicalService(authService: AuthService()),
+    );
+    pollingService!.start();
   }
 
   Future<void> logout() async {
+    try {
+      await pollingService?.stop();
+    } catch (_) {}
+
     final authService = AuthService();
     await authService.logout();
 
@@ -381,6 +394,14 @@ class _UserShellScreenState extends State<UserShellScreen> {
   }
 
   @override
+  void dispose() {
+    try {
+      pollingService?.stop();
+    } catch (_) {}
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final themeMode = MyApp.of(context).themeMode;
 
@@ -401,6 +422,11 @@ class _UserShellScreenState extends State<UserShellScreen> {
                           : Icons.brightness_6_outlined,
                     ),
                     onPressed: () => MyApp.of(context).toggleTheme(),
+                  ),
+                  IconButton(
+                    tooltip: "Inbox",
+                    icon: const Icon(Icons.notifications),
+                    onPressed: () => context.go('/app/inbox'),
                   ),
                 ]
                 : null,

@@ -32,7 +32,6 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
     with SingleTickerProviderStateMixin {
   static const int tabOrders = 0;
 
-  // Single source of truth: tab index <-> route
   static const List<String> _recordTabPaths = <String>[
     "/app/record",
     "/app/record/files",
@@ -44,26 +43,20 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
   late final TabController tabController;
   late final ClinicalService clinicalService;
 
-  // Header
   String currentUserName = "";
 
-  // Role (web-safe)
   late String effectiveRole;
 
-  // Doctor selection
   int? selectedPatientId;
   String? selectedPatientName;
 
-  // Appointment context
   int? selectedAppointmentId;
 
-  // Patients source (dropdown only)
   bool loadingPatients = false;
   String? patientsErrorMessage;
   List<_PatientOption> patientOptions = [];
 
-  // PatientId captured from URL (doctor only)
-  int? pendingPatientIdFromUrl;
+  bool _initializedFromRoute = false;
 
   bool get isDoctor => effectiveRole == "doctor";
   bool get isPatient => effectiveRole == "patient";
@@ -74,47 +67,28 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
     return effectiveRole;
   }
 
+  int? _asInt(dynamic v) {
+    if (v == null) return null;
+    if (v is int) return v;
+    return int.tryParse(v.toString());
+  }
+
   @override
   void initState() {
     super.initState();
 
-    effectiveRole = _readRoleFromUrlOrFallback();
+    // مبدئيًا نستخدم role من widget (سيتم تصحيحه من route في didChangeDependencies)
+    effectiveRole =
+        widget.role.trim().toLowerCase() == "doctor" ? "doctor" : "patient";
 
-    final initialIndex = _initialTabIndexFromUrl();
     tabController = TabController(
       length: _recordTabPaths.length,
-      initialIndex: initialIndex,
+      initialIndex: tabOrders,
       vsync: this,
     );
 
     clinicalService = ClinicalService(authService: AuthService());
-
     _loadCurrentUserNameFromPrefs();
-
-    // Read appointmentId from URL once
-    selectedAppointmentId = _readAppointmentIdFromUrl();
-
-    // Capture patientId from URL (doctor only)
-    _capturePatientIdFromUrlIfAny();
-
-    // IMPORTANT FIX:
-    // If doctor has patientId in URL, accept it immediately even if no Orders exist.
-    if (isDoctor && pendingPatientIdFromUrl != null) {
-      final pid = pendingPatientIdFromUrl!;
-      selectedPatientId = pid;
-      selectedPatientName = "مريض #$pid";
-      pendingPatientIdFromUrl = null;
-
-      // Optional: still load dropdown patients (from orders) for later switching
-      loadingPatients = true;
-      patientsErrorMessage = null;
-      _loadDoctorPatientsFromOrders();
-    } else if (isDoctor) {
-      // Old behavior: show dropdown based on orders list
-      loadingPatients = true;
-      patientsErrorMessage = null;
-      _loadDoctorPatientsFromOrders();
-    }
   }
 
   @override
@@ -123,59 +97,22 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
     super.dispose();
   }
 
-  // ---------------------------------------------------------------------------
-  // Shared helpers
-  // ---------------------------------------------------------------------------
-
-  int? _asInt(dynamic v) {
-    if (v == null) return null;
-    if (v is int) return v;
-    return int.tryParse(v.toString());
-  }
-
   Future<void> _loadCurrentUserNameFromPrefs() async {
     final prefs = await SharedPreferences.getInstance();
     final name = (prefs.getString("currentUserName") ?? "").trim();
 
     if (!mounted) return;
-    setState(() {
-      currentUserName = name;
-    });
+    setState(() => currentUserName = name);
   }
 
   // ---------------------------------------------------------------------------
-  // URL helpers (web hash-safe)
+  // IMPORTANT: read route from GoRouterState (works on mobile + web)
   // ---------------------------------------------------------------------------
 
-  String _readHashPathOrPath() {
-    // Hash routing: "#/app/record/adherence?patientId=31"
-    final frag = Uri.base.fragment;
-    if (frag.trim().isNotEmpty) {
-      final qIndex = frag.indexOf("?");
-      return qIndex == -1 ? frag : frag.substring(0, qIndex);
-    }
+  GoRouterState _state() => GoRouterState.of(context);
 
-    final p = Uri.base.path;
-    return p.isNotEmpty ? p : "/app/record";
-  }
-
-  Map<String, String> _readQueryParamsHashSafe() {
-    // Normal query
-    final direct = Uri.base.queryParameters;
-    if (direct.isNotEmpty) return direct;
-
-    // Hash: #/app/record?... (need parse query from fragment)
-    final frag = Uri.base.fragment;
-    final qIndex = frag.indexOf("?");
-    if (qIndex == -1) return const {};
-
-    final fragQuery = frag.substring(qIndex + 1);
-    final fake = Uri.parse("http://dummy/?$fragQuery");
-    return fake.queryParameters;
-  }
-
-  String _readRoleFromUrlOrFallback() {
-    final qp = _readQueryParamsHashSafe();
+  String _readRoleFromStateOrFallback() {
+    final qp = _state().uri.queryParameters;
     final fromUrl = (qp["role"] ?? "").trim().toLowerCase();
     if (fromUrl == "doctor") return "doctor";
     if (fromUrl == "patient") return "patient";
@@ -184,62 +121,27 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
     return (w == "doctor") ? "doctor" : "patient";
   }
 
-  int _initialTabIndexFromUrl() {
-    final path = _readHashPathOrPath();
+  int _tabIndexFromStatePath() {
+    final path = _state().uri.path;
 
     for (int i = 0; i < _recordTabPaths.length; i++) {
-      final candidate = _recordTabPaths[i];
-      if (path == candidate || path.endsWith(candidate)) {
-        return i;
-      }
+      if (path == _recordTabPaths[i]) return i;
     }
-
     return tabOrders;
   }
 
-  int? _readPatientIdFromUrl() {
-    final qp = _readQueryParamsHashSafe();
-    final pid = int.tryParse(qp["patientId"] ?? "");
+  int? _readPatientIdFromState() {
+    final qp = _state().uri.queryParameters;
+    final pid = int.tryParse((qp["patientId"] ?? "").trim());
     if (pid != null && pid > 0) return pid;
     return null;
   }
 
-  int? _readAppointmentIdFromUrl() {
-    final qp = _readQueryParamsHashSafe();
-    final aid = int.tryParse(qp["appointmentId"] ?? "");
+  int? _readAppointmentIdFromState() {
+    final qp = _state().uri.queryParameters;
+    final aid = int.tryParse((qp["appointmentId"] ?? "").trim());
     if (aid != null && aid > 0) return aid;
     return null;
-  }
-
-  void _capturePatientIdFromUrlIfAny() {
-    if (!isDoctor) return;
-    pendingPatientIdFromUrl = _readPatientIdFromUrl();
-  }
-
-  void _applyPendingPatientSelectionIfPossible() {
-    if (!isDoctor) return;
-
-    if (selectedPatientId != null) {
-      pendingPatientIdFromUrl = null;
-      return;
-    }
-
-    final pid = pendingPatientIdFromUrl;
-    if (pid == null) return;
-
-    if (loadingPatients) return;
-    if (patientOptions.isEmpty) return;
-
-    final match = patientOptions.where((p) => p.id == pid).toList();
-    if (match.isEmpty) return;
-
-    pendingPatientIdFromUrl = null;
-
-    if (!mounted) return;
-    setState(() {
-      selectedPatientId = pid;
-      selectedPatientName = match.first.name;
-    });
   }
 
   String _buildRecordLocationForTab(int index) {
@@ -249,23 +151,21 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
     final base = _recordTabPaths[safeIndex];
 
     final qp = <String, String>{};
-
-    // WEB-SAFE: always keep role
     qp["role"] = effectiveRole;
 
-    // keep patientId for doctor
-    final pid = isDoctor ? selectedPatientId : null;
-    if (pid != null && pid > 0) qp["patientId"] = "$pid";
+    if (isDoctor && selectedPatientId != null && selectedPatientId! > 0) {
+      qp["patientId"] = "${selectedPatientId!}";
+    }
 
-    // keep appointmentId for both roles
-    final apptId = selectedAppointmentId;
-    if (apptId != null && apptId > 0) qp["appointmentId"] = "$apptId";
+    if (selectedAppointmentId != null && selectedAppointmentId! > 0) {
+      qp["appointmentId"] = "${selectedAppointmentId!}";
+    }
 
     return "$base?${Uri(queryParameters: qp).query}";
   }
 
   // ---------------------------------------------------------------------------
-  // Load patients (doctor) - still from orders (dropdown only)
+  // Load patients list for doctor (dropdown only)
   // ---------------------------------------------------------------------------
 
   Future<void> _loadDoctorPatientsFromOrders() async {
@@ -321,18 +221,80 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
       loadingPatients = false;
       patientsErrorMessage = null;
 
-      // If we already selected patientId from URL earlier, try to improve name
-      if (isDoctor && selectedPatientId != null) {
+      if (selectedPatientId != null) {
         final m = options.where((x) => x.id == selectedPatientId).toList();
         if (m.isNotEmpty) selectedPatientName = m.first.name;
       }
     });
-
-    _applyPendingPatientSelectionIfPossible();
   }
 
   // ---------------------------------------------------------------------------
-  // UI building blocks
+  // Sync from route whenever route changes (mobile/web)
+  // ---------------------------------------------------------------------------
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+
+    // Sync role/tab/patient/appointment from current route.
+    // This fixes the "lost selection on phone" issue.
+    final newRole = _readRoleFromStateOrFallback();
+    final newTabIndex = _tabIndexFromStatePath();
+
+    final newApptId = _readAppointmentIdFromState();
+    final newPid = _readPatientIdFromState();
+
+    // only apply patientId from URL for doctor
+    final pidForDoctor = (newRole == "doctor") ? newPid : null;
+
+    final bool needsSetState =
+        !_initializedFromRoute ||
+        effectiveRole != newRole ||
+        selectedAppointmentId != newApptId ||
+        selectedPatientId != pidForDoctor ||
+        tabController.index != newTabIndex;
+
+    if (!needsSetState) return;
+
+    _initializedFromRoute = true;
+
+    effectiveRole = newRole;
+    selectedAppointmentId = newApptId;
+
+    if (effectiveRole == "doctor") {
+      selectedPatientId = pidForDoctor;
+      if (selectedPatientId != null) {
+        selectedPatientName = null;
+      }
+      // Load patients list (optional dropdown support)
+      if (!loadingPatients && patientOptions.isEmpty) {
+        loadingPatients = true;
+        patientsErrorMessage = null;
+        // تأخير بسيط لتجنب setState داخل didChangeDependencies مباشرة
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          setState(() {
+            loadingPatients = true;
+            patientsErrorMessage = null;
+          });
+          _loadDoctorPatientsFromOrders();
+        });
+      }
+    } else {
+      selectedPatientId = null;
+      selectedPatientName = null;
+    }
+
+    // Move tab controller to correct index without triggering extra navigation
+    if (newTabIndex != tabController.index) {
+      tabController.index = newTabIndex;
+    }
+
+    if (mounted) setState(() {});
+  }
+
+  // ---------------------------------------------------------------------------
+  // UI blocks
   // ---------------------------------------------------------------------------
 
   Widget _headerTile({required String titleText}) {
@@ -431,12 +393,10 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
 
   @override
   Widget build(BuildContext context) {
-    _applyPendingPatientSelectionIfPossible();
-
     final doctorLabel =
         currentUserName.isNotEmpty ? "د. $currentUserName" : "د. -";
 
-    // Doctor must select patient first ONLY if no patientId exists in URL
+    // Doctor must select patient first if not provided in route.
     if (isDoctor && selectedPatientId == null) {
       return Column(
         children: [
@@ -478,7 +438,7 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
                       title: "لا يوجد مرضى في القائمة",
                       message:
                           "لا توجد طلبات حتى الآن (القائمة تُبنى من الطلبات).\n"
-                          "لكن إذا فتحت الإضبارة من الموعد سيتم تمرير patientId وستُفتح الإضبارة مباشرة.",
+                          "يمكنك فتح الإضبارة من الموعد (سيتم تمرير patientId).",
                       tone: AppSnackBarType.warning,
                     )
                     : Padding(
@@ -571,7 +531,9 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
     final subtitleText =
         isPatient
             ? "المريض: ${currentUserName.isNotEmpty ? currentUserName : "-"}"
-            : "الطبيب: $doctorLabel | المريض: ${(selectedPatientName?.trim().isNotEmpty ?? false) ? selectedPatientName!.trim() : (selectedPatientId != null ? "مريض #$selectedPatientId" : "-")}";
+            : (selectedPatientName?.trim().isNotEmpty ?? false)
+            ? "الطبيب: $doctorLabel | المريض: ${selectedPatientName!.trim()}"
+            : "الطبيب: $doctorLabel";
 
     final apptId = selectedAppointmentId;
     final hasAppt = apptId != null && apptId > 0;
@@ -581,7 +543,6 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
       children: [
         _headerTile(titleText: subtitleText),
 
-        // Appointment context banner
         if (hasAppt)
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),

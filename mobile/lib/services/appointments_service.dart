@@ -7,6 +7,7 @@ import '../models/appointment_create_request.dart';
 import '../models/doctor_search_result.dart';
 import '../services/auth_service.dart';
 import '../utils/constants.dart';
+import '../services/local_notifications_service.dart';
 
 class ApiException implements Exception {
   final int statusCode;
@@ -102,6 +103,46 @@ class AppointmentsService {
     return first;
   }
 
+  // ------------- notification helper -------------
+  Future<void> _syncLocalRemindersForAppointments(
+    List<Appointment> items,
+  ) async {
+    final nowLocal = DateTime.now();
+
+    for (final ap in items) {
+      final startLocal = ap.dateTime.toLocal();
+
+      // فقط المواعيد القادمة
+      if (startLocal.isBefore(nowLocal)) {
+        // قد يكون في تذكيرات قديمة — نلغيها احتياطياً
+        try {
+          await LocalNotificationsService.cancelAppointmentReminders(ap.id);
+        } catch (_) {}
+        continue;
+      }
+
+      final st = ap.status.trim().toLowerCase();
+
+      // سياستنا الآن: confirmed فقط
+      if (st == "confirmed") {
+        await LocalNotificationsService.scheduleAppointmentReminders(
+          appointmentId: ap.id,
+          doctorName: ap.doctorName ?? "الطبيب",
+          appointmentDateTimeLocal: startLocal,
+        );
+      } else {
+        await LocalNotificationsService.cancelAppointmentReminders(ap.id);
+      }
+    }
+  }
+
+  // -------- helper to convert decoded to Map ------
+  Map<String, dynamic> _asMap(dynamic decoded) {
+    if (decoded is Map<String, dynamic>) return decoded;
+    if (decoded is Map) return Map<String, dynamic>.from(decoded);
+    throw Exception("Unexpected response format.");
+  }
+
   // ---------------- API methods ----------------
 
   Future<List<DoctorSearchResult>> searchDoctors({
@@ -128,7 +169,6 @@ class AppointmentsService {
     return results.map((e) => DoctorSearchResult.fromJson(e)).toList();
   }
 
-  /// يرجّع الـ payload كما هو (central + specific)
   Future<Map<String, dynamic>> fetchDoctorVisitTypes({
     required int doctorId,
   }) async {
@@ -158,7 +198,17 @@ class AppointmentsService {
 
     if (resp.statusCode == 201) {
       final decoded = jsonDecode(resp.body);
-      return Appointment.fromJson(decoded);
+      final ap = Appointment.fromJson(_asMap(decoded));
+
+      // IMPORTANT:
+      // لا نعمل schedule هون بشكل موثوق لأن الموعد غالباً pending.
+      // التذكيرات تُضبط عبر fetchMyAppointments (sync) بعد التأكيد.
+      // ومع ذلك: نضمن تنظيف أي تذكيرات قديمة لنفس id.
+      try {
+        await LocalNotificationsService.cancelAppointmentReminders(ap.id);
+      } catch (_) {}
+
+      return ap;
     }
 
     throw ApiException(resp.statusCode, resp.body);
@@ -166,7 +216,7 @@ class AppointmentsService {
 
   Future<Map<String, dynamic>> fetchDoctorSlots({
     required int doctorId,
-    required String date, // "YYYY-MM-DD"
+    required String date,
     required int appointmentTypeId,
   }) async {
     final resp = await _authorizedAppointmentsRequest(
@@ -185,45 +235,35 @@ class AppointmentsService {
   }
 
   Future<List<Appointment>> fetchMyAppointments({
-    String? status, // pending|confirmed|cancelled|no_show|all
-    String? time, // upcoming|past|all
-    String? preset, // today|next7|day
-    String? date, // YYYY-MM-DD (when preset=day)
-    String? fromDate, // YYYY-MM-DD
-    String? toDate, // YYYY-MM-DD
+    String? status,
+    String? time,
+    String? preset,
+    String? date,
+    String? fromDate,
+    String? toDate,
   }) async {
     final qp = <String, String>{};
 
-    // status
     final s = (status ?? '').trim();
-    if (s.isNotEmpty && s != 'all') {
-      qp['status'] = s;
-    }
+    if (s.isNotEmpty && s != 'all') qp['status'] = s;
 
-    // time
     final t = (time ?? '').trim();
-    if (t.isNotEmpty) {
-      // upcoming|past|all
-      qp['time'] = t;
-    }
+    if (t.isNotEmpty) qp['time'] = t;
 
-    // preset (takes precedence conceptually)
     final p = (preset ?? '').trim();
     if (p.isNotEmpty) {
-      qp['preset'] = p; // today|next7|day
+      qp['preset'] = p;
       if (p == 'day') {
         final d = (date ?? '').trim();
         if (d.isNotEmpty) qp['date'] = d;
       }
     } else {
-      // from/to only if no preset
       final f = (fromDate ?? '').trim();
       final to = (toDate ?? '').trim();
       if (f.isNotEmpty) qp['from'] = f;
       if (to.isNotEmpty) qp['to'] = to;
     }
 
-    // FIX: build endpoint correctly
     final endpoint =
         qp.isEmpty ? "/my/" : "/my/?${Uri(queryParameters: qp).query}";
 
@@ -239,9 +279,18 @@ class AppointmentsService {
             ? decoded["results"] as List
             : <dynamic>[];
 
-    return results
-        .map((e) => Appointment.fromJson(Map<String, dynamic>.from(e)))
-        .toList();
+    final items =
+        results
+            .whereType<Map>()
+            .map((e) => Appointment.fromJson(Map<String, dynamic>.from(e)))
+            .toList();
+
+    // Sync reminders (confirmed only)
+    try {
+      await _syncLocalRemindersForAppointments(items);
+    } catch (_) {}
+
+    return items;
   }
 
   Future<void> cancelAppointment({required int appointmentId}) async {
@@ -250,9 +299,13 @@ class AppointmentsService {
       "POST",
     );
 
-    if (resp.statusCode != 200) {
+    if (resp.statusCode != 200 && resp.statusCode != 204) {
       throw ApiException(resp.statusCode, resp.body);
     }
+
+    try {
+      await LocalNotificationsService.cancelAppointmentReminders(appointmentId);
+    } catch (_) {}
   }
 
   Future<void> markNoShow({required int appointmentId}) async {
@@ -274,14 +327,22 @@ class AppointmentsService {
     if (resp.statusCode != 200) {
       throw ApiException(resp.statusCode, resp.body);
     }
+
+    // NOTE: الجهاز الذي ينفّذ confirm قد لا يكون جهاز المريض،
+    // لكن هذا يساعدنا بالاختبار عندما نؤكد على نفس الجهاز.
+    // المريض سيحصل عليها أيضاً عبر fetchMyAppointments (sync).
+    try {
+      // الأفضل: إعادة fetch للموعد الواحد، لكن ما عنا endpoint لهذا الآن.
+      // لذلك نعتمد على شاشة "مواعيدي" لتعمل sync بعد التأكيد.
+    } catch (_) {}
   }
 
   Future<Map<String, dynamic>> fetchDoctorSlotsRange({
     required int doctorId,
     required int appointmentTypeId,
-    String? fromDate, // YYYY-MM-DD
-    String? toDate, // YYYY-MM-DD
-    int? days, // 1..31
+    String? fromDate,
+    String? toDate,
+    int? days,
   }) async {
     final qp = <String, String>{
       'appointment_type_id': appointmentTypeId.toString(),

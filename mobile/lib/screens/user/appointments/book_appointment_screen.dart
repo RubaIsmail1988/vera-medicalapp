@@ -146,9 +146,8 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
     final hh = int.tryParse(parts.isNotEmpty ? parts[0] : '') ?? 0;
     final mi = int.tryParse(parts.length > 1 ? parts[1] : '') ?? 0;
 
-    // slot is shown in local time => build local then convert to UTC
-    final local = DateTime(date.year, date.month, date.day, hh, mi);
-    return local.toUtc();
+    // slot = local time
+    return DateTime(date.year, date.month, date.day, hh, mi);
   }
 
   double? _parseDoubleOrNull(String v) {

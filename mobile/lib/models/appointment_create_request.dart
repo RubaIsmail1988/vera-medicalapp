@@ -18,20 +18,14 @@ class AppointmentCreateRequest {
   });
 
   Map<String, dynamic> toJson() {
-    final DateTime utc = dateTime.isUtc ? dateTime : dateTime.toUtc();
+    final local = dateTime; // keep as local
 
-    final data = <String, dynamic>{
+    return <String, dynamic>{
       'doctor_id': doctorId,
       'appointment_type_id': appointmentTypeId,
-      'date_time': utc.toIso8601String(), // ends with Z when utc
+      'date_time': local.toIso8601String(), // no "Z"
       'notes': (notes ?? '').trim(),
+      if (triage != null && triage!.isNotEmpty) 'triage': triage,
     };
-
-    // NEW: only include triage if not null and not empty
-    if (triage != null && triage!.isNotEmpty) {
-      data['triage'] = triage;
-    }
-
-    return data;
   }
 }

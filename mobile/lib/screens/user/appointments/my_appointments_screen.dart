@@ -360,13 +360,14 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
         );
         return;
       }
+
       context.go(
-        '/app/record?patientId=$patientId&appointmentId=$appointmentId',
+        '/app/record?role=doctor&patientId=$patientId&appointmentId=$appointmentId',
       );
       return;
     }
 
-    context.go('/app/record?appointmentId=$appointmentId');
+    context.go('/app/record?role=patient&appointmentId=$appointmentId');
   }
 
   Future<void> _setStatusFilter(String v) async {

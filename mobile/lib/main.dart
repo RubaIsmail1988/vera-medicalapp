@@ -32,13 +32,21 @@ import 'screens/doctor/doctor_availability_screen.dart';
 import 'screens/doctor/doctor_visit_types_screen.dart';
 import 'screens/doctor/doctor_absences_screen.dart';
 
-//aAppointment
+// Appointment
 import 'screens/user/appointments/book_appointment_screen.dart';
 import 'screens/user/appointments/doctor_search_screen.dart';
 import 'utils/ui_helpers.dart';
 
-void main() {
+// Notification
+import '/services/local_notifications_service.dart';
+import 'screens/user/inbox/inbox_screen.dart';
+
+// navigation_keys
+import 'utils/navigation_keys.dart';
+
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await LocalNotificationsService.init();
   runApp(const MyApp());
 }
 
@@ -59,7 +67,30 @@ class MyApp extends StatefulWidget {
 class MyAppState extends State<MyApp> {
   ThemeMode themeMode = ThemeMode.dark;
 
+  Widget _adminShell(GoRouterState state, int index) {
+    return AdminShellScreen(
+      key: ValueKey<String>(state.uri.toString()),
+      initialIndex: index,
+    );
+  }
+
+  Widget _userShell(GoRouterState state, int index) {
+    return UserShellScreen(
+      key: ValueKey<String>(state.uri.toString()),
+      initialIndex: index,
+    );
+  }
+
+  // IMPORTANT: One builder for ALL /app/record routes (and its tabs)
+  Widget _userRecordShell(GoRouterState state) {
+    return UserShellScreen(
+      key: ValueKey<String>(state.uri.toString()),
+      initialIndex: 1,
+    );
+  }
+
   late final GoRouter router = GoRouter(
+    navigatorKey: rootNavigatorKey,
     initialLocation: '/',
     routes: [
       GoRoute(path: '/', builder: (context, state) => const SplashScreen()),
@@ -101,61 +132,33 @@ class MyAppState extends State<MyApp> {
       // ---------------- Admin (web-safe) ----------------
       GoRoute(
         path: '/admin',
-        builder:
-            (context, state) => AdminShellScreen(
-              key: ValueKey<String>(state.uri.path),
-              initialIndex: 0,
-            ),
+        builder: (context, state) => _adminShell(state, 0),
       ),
       GoRoute(
         path: '/admin/users',
-        builder:
-            (context, state) => AdminShellScreen(
-              key: ValueKey<String>(state.uri.path),
-              initialIndex: 1,
-            ),
+        builder: (context, state) => _adminShell(state, 1),
       ),
       GoRoute(
         path: '/admin/hospitals',
-        builder:
-            (context, state) => AdminShellScreen(
-              key: ValueKey<String>(state.uri.path),
-              initialIndex: 2,
-            ),
+        builder: (context, state) => _adminShell(state, 2),
       ),
       GoRoute(
         path: '/admin/labs',
-        builder:
-            (context, state) => AdminShellScreen(
-              key: ValueKey<String>(state.uri.path),
-              initialIndex: 3,
-            ),
+        builder: (context, state) => _adminShell(state, 3),
       ),
       GoRoute(
         path: '/admin/requests',
-        builder:
-            (context, state) => AdminShellScreen(
-              key: ValueKey<String>(state.uri.path),
-              initialIndex: 4,
-            ),
+        builder: (context, state) => _adminShell(state, 4),
       ),
       GoRoute(
         path: '/admin/profile',
-        builder:
-            (context, state) => AdminShellScreen(
-              key: ValueKey<String>(state.uri.path),
-              initialIndex: 5,
-            ),
+        builder: (context, state) => _adminShell(state, 5),
       ),
 
       // ---------------- App (User web-safe) ----------------
       GoRoute(
         path: '/app',
-        builder:
-            (context, state) => UserShellScreen(
-              key: ValueKey<String>(state.uri.path),
-              initialIndex: 0,
-            ),
+        builder: (context, state) => _userShell(state, 0),
         routes: [
           // ---------------- Doctor Scheduling (Phase C) ----------------
           GoRoute(
@@ -180,13 +183,9 @@ class MyAppState extends State<MyApp> {
           // ---------------- Unified Record ----------------
           GoRoute(
             path: 'record',
-            builder:
-                (context, state) => UserShellScreen(
-                  key: ValueKey<String>(state.uri.toString()),
-                  initialIndex: 1,
-                ),
+            builder: (context, state) => _userRecordShell(state),
             routes: [
-              // تفاصيل الطلب
+              // تفاصيل الطلب (شاشة مستقلة)
               GoRoute(
                 path: 'orders/:orderId',
                 builder: (context, state) {
@@ -205,7 +204,6 @@ class MyAppState extends State<MyApp> {
                   final patientIdRaw = state.uri.queryParameters['patientId'];
                   final patientId = int.tryParse(patientIdRaw ?? '');
 
-                  // (اختياري لكن مفيد) اذا بدنا نمرر appointmentId للشاشة لاحقًا
                   final apptIdRaw = state.uri.queryParameters['appointmentId'];
                   final appointmentId = int.tryParse(apptIdRaw ?? '');
 
@@ -218,40 +216,24 @@ class MyAppState extends State<MyApp> {
                 },
               ),
 
-              // Tabs routes (UI فقط)
+              // IMPORTANT:
+              // These are "tab routes" but they MUST build the same record shell,
+              // not a new shell each time.
               GoRoute(
                 path: 'files',
-                builder:
-                    (context, state) => UserShellScreen(
-                      key: ValueKey<String>(state.uri.path),
-                      initialIndex: 1,
-                    ),
+                builder: (context, state) => _userRecordShell(state),
               ),
               GoRoute(
                 path: 'prescripts',
-                builder:
-                    (context, state) => UserShellScreen(
-                      key: ValueKey<String>(state.uri.path),
-                      initialIndex: 1,
-                    ),
+                builder: (context, state) => _userRecordShell(state),
               ),
               GoRoute(
                 path: 'adherence',
-                builder:
-                    (context, state) => UserShellScreen(
-                      key: ValueKey<String>(state.uri.path),
-                      initialIndex: 1,
-                    ),
+                builder: (context, state) => _userRecordShell(state),
               ),
-
-              // ---------------- NEW: Health Profile Tab ----------------
               GoRoute(
                 path: 'health-profile',
-                builder:
-                    (context, state) => UserShellScreen(
-                      key: ValueKey<String>(state.uri.path),
-                      initialIndex: 1,
-                    ),
+                builder: (context, state) => _userRecordShell(state),
               ),
             ],
           ),
@@ -259,11 +241,7 @@ class MyAppState extends State<MyApp> {
           // ---------------- Hospitals ----------------
           GoRoute(
             path: 'hospitals',
-            builder:
-                (context, state) => UserShellScreen(
-                  key: ValueKey<String>(state.uri.path),
-                  initialIndex: 2,
-                ),
+            builder: (context, state) => _userShell(state, 2),
             routes: [
               GoRoute(
                 path: 'detail',
@@ -271,10 +249,7 @@ class MyAppState extends State<MyApp> {
                   final extra = state.extra;
 
                   if (extra is! Map) {
-                    return UserShellScreen(
-                      key: ValueKey<String>(state.uri.path),
-                      initialIndex: 2,
-                    );
+                    return _userShell(state, 2);
                   }
 
                   final name = (extra['name'] ?? '').toString().trim();
@@ -286,10 +261,7 @@ class MyAppState extends State<MyApp> {
                           : int.tryParse(governorateRaw?.toString() ?? '') ?? 0;
 
                   if (name.isEmpty || governorate == 0) {
-                    return UserShellScreen(
-                      key: ValueKey<String>(state.uri.path),
-                      initialIndex: 2,
-                    );
+                    return _userShell(state, 2);
                   }
 
                   return HospitalPublicDetailScreen(
@@ -320,11 +292,7 @@ class MyAppState extends State<MyApp> {
           // ---------------- Labs ----------------
           GoRoute(
             path: 'labs',
-            builder:
-                (context, state) => UserShellScreen(
-                  key: ValueKey<String>(state.uri.path),
-                  initialIndex: 3,
-                ),
+            builder: (context, state) => _userShell(state, 3),
             routes: [
               GoRoute(
                 path: 'detail',
@@ -332,10 +300,7 @@ class MyAppState extends State<MyApp> {
                   final extra = state.extra;
 
                   if (extra is! Map) {
-                    return UserShellScreen(
-                      key: ValueKey<String>(state.uri.path),
-                      initialIndex: 3,
-                    );
+                    return _userShell(state, 3);
                   }
 
                   final name = (extra['name'] ?? '').toString().trim();
@@ -347,10 +312,7 @@ class MyAppState extends State<MyApp> {
                           : int.tryParse(governorateRaw?.toString() ?? '') ?? 0;
 
                   if (name.isEmpty || governorate == 0) {
-                    return UserShellScreen(
-                      key: ValueKey<String>(state.uri.path),
-                      initialIndex: 3,
-                    );
+                    return _userShell(state, 3);
                   }
 
                   return LabPublicDetailScreen(
@@ -381,11 +343,7 @@ class MyAppState extends State<MyApp> {
           // ---------------- Account ----------------
           GoRoute(
             path: 'account',
-            builder:
-                (context, state) => UserShellScreen(
-                  key: ValueKey<String>(state.uri.path),
-                  initialIndex: 4,
-                ),
+            builder: (context, state) => _userShell(state, 4),
             routes: [
               GoRoute(
                 path: 'patient-details',
@@ -436,11 +394,7 @@ class MyAppState extends State<MyApp> {
           // ---------------- appointments ----------------
           GoRoute(
             path: 'appointments',
-            builder:
-                (context, state) => UserShellScreen(
-                  key: ValueKey<String>(state.uri.path),
-                  initialIndex: 5,
-                ),
+            builder: (context, state) => _userShell(state, 5),
             routes: [
               // /app/appointments/book
               GoRoute(
@@ -480,6 +434,11 @@ class MyAppState extends State<MyApp> {
                 ],
               ),
             ],
+          ),
+          // inbox
+          GoRoute(
+            path: 'inbox',
+            builder: (context, state) => const InboxScreen(),
           ),
         ],
       ),
