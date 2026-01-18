@@ -2,6 +2,7 @@
 const String baseUrl = "https://rubaismail.pythonanywhere.com";
 //const String baseUrl = "http://10.0.2.2:8000";
 //const String baseUrl = "http://192.168.49.101:8000";
+
 // API domains
 const String accountsBaseUrl = "$baseUrl/api/accounts";
 const String clinicalBaseUrl = "$baseUrl/api/clinical";

@@ -1,3 +1,4 @@
+// ----------------- mobile/lib/services/polling_notifications_service.dart -----------------
 import 'dart:async';
 import 'dart:convert';
 
@@ -90,6 +91,23 @@ class PollingNotificationsService {
     }
   }
 
+  // --------- formatting helpers ---------
+  String _two(int n) => n.toString().padLeft(2, "0");
+
+  String _formatReadableDate(String? iso) {
+    if (iso == null) return "";
+    final s = iso.trim();
+    if (s.isEmpty) return "";
+
+    try {
+      final dt = DateTime.parse(s).toLocal();
+      // مثال: 2026-01-16 15:17
+      return "${dt.year}-${_two(dt.month)}-${_two(dt.day)} ${_two(dt.hour)}:${_two(dt.minute)}";
+    } catch (_) {
+      return s; // fallback
+    }
+  }
+
   // --------- filtering (UX policy) ---------
   bool _shouldIgnoreEvent({
     required String eventType,
@@ -98,6 +116,7 @@ class PollingNotificationsService {
     required Map<String, dynamic> payload,
   }) {
     // سياسة: حذف الملف من المريض لنفسه لا يحتاج إشعار نظام (SnackBar داخل الشاشة يكفي)
+    // (ويبقى موجوداً في InboxScreen كسجل، لكن لا نعمل show notification.)
     if (eventType == "MEDICAL_FILE_DELETED") {
       final reason = (payload["reason"] ?? "").toString();
       final isSelf = actorId != 0 && recipientId != 0 && actorId == recipientId;
@@ -108,6 +127,25 @@ class PollingNotificationsService {
     }
 
     return false;
+  }
+
+  // --------- helpers: payload-aware title/body ---------
+  String _preferPayloadTitle(String eventType, Map<String, dynamic> payload) {
+    final t = payload["title"]?.toString();
+    if (t != null && t.trim().isNotEmpty) return t.trim();
+    return _titleForEventFallback(eventType, payload);
+  }
+
+  String _preferPayloadBody(String eventType, Map<String, dynamic> payload) {
+    // نستخدم message إن كان موجودًا (هذا ما وضعناه بالباك)
+    final msg = payload["message"]?.toString();
+    if (msg != null && msg.trim().isNotEmpty) return msg.trim();
+
+    // بعض الأكواد القديمة قد تستخدم body بدل message
+    final body = payload["body"]?.toString();
+    if (body != null && body.trim().isNotEmpty) return body.trim();
+
+    return _bodyForEventFallback(eventType, payload);
   }
 
   // --------- main tick ---------
@@ -177,7 +215,7 @@ class PollingNotificationsService {
                 ? Map<String, dynamic>.from(payloadRaw)
                 : <String, dynamic>{};
 
-        // event type
+        // event type (مع fallback على payload.type)
         final eventType =
             (item["event_type"] ?? payload["type"] ?? "notification")
                 .toString();
@@ -206,11 +244,37 @@ class PollingNotificationsService {
           continue;
         }
 
-        final title = _titleForEvent(eventType, payload);
-        final body = _bodyForEvent(eventType, payload);
+        // العنوان/النص: نعتمد على payload أولاً
+        final title = _preferPayloadTitle(eventType, payload);
+        var body = _preferPayloadBody(eventType, payload);
+
+        // ---- enrich notification text like Inbox (actor name + readable date) ----
+        final actorName =
+            (item["actor_display_name"] ??
+                    payload["actor_name"] ??
+                    payload["actor_display_name"] ??
+                    "")
+                .toString()
+                .trim();
+
+        final createdAtRaw =
+            (item["created_at"] ?? payload["timestamp"] ?? "")
+                .toString()
+                .trim();
+        final createdAt = _formatReadableDate(createdAtRaw);
+
+        // مثال: "تم رفع ملف طبي — من: patient34 • 2026-01-16 15:17"
+        final parts = <String>[];
+        if (actorName.isNotEmpty) parts.add("من: $actorName");
+        if (createdAt.isNotEmpty) parts.add(createdAt);
+
+        if (parts.isNotEmpty) {
+          body = "$body — ${parts.join(" • ")}";
+        }
 
         deliveredIds.add(id);
 
+        // data payload الذي سيذهب لـ LocalNotificationsService (tap routing)
         final data = <String, dynamic>{
           "event_type": eventType,
           "outbox_id": id,
@@ -254,16 +318,19 @@ class PollingNotificationsService {
     }
   }
 
-  // --------- mapping ---------
-  String _titleForEvent(String eventType, Map<String, dynamic> payload) {
-    final status = (payload["status"] ?? "").toString();
+  // --------- fallback mapping (عند غياب payload richness) ---------
+  String _titleForEventFallback(
+    String eventType,
+    Map<String, dynamic> payload,
+  ) {
+    final status = (payload["status"] ?? "").toString().toLowerCase().trim();
 
     // Adherence (taken/skipped) قد تأتي كـ status فقط
     if (status == "taken") return "تم تسجيل تناول الدواء";
     if (status == "skipped") return "تم تسجيل تخطي الجرعة";
 
     // no_show قد تأتي كـ status
-    if (status == "no_show") return "تم اعتبار الموعد لم يتم الحضور";
+    if (status == "no_show") return "لم يتم الحضور للموعد";
 
     switch (eventType) {
       case "appointment_created":
@@ -287,6 +354,7 @@ class PollingNotificationsService {
         return "وصفة جديدة";
       case "ADHERENCE_CREATED":
       case "adherence_created":
+      case "MEDICATION_ADHERENCE_RECORDED":
         return "تسجيل التزام دوائي";
       case "MEDICAL_FILE_DELETED":
         return "تم حذف ملف";
@@ -295,9 +363,9 @@ class PollingNotificationsService {
     }
   }
 
-  String _bodyForEvent(String eventType, Map<String, dynamic> payload) {
+  String _bodyForEventFallback(String eventType, Map<String, dynamic> payload) {
     final title = payload["title"]?.toString();
-    final status = (payload["status"] ?? "").toString();
+    final status = (payload["status"] ?? "").toString().toLowerCase().trim();
     final orderCategory = payload["order_category"]?.toString();
     final filename = payload["filename"]?.toString();
     final reviewStatus = payload["review_status"]?.toString();
@@ -343,7 +411,9 @@ class PollingNotificationsService {
         }
         return "تم حذف الملف.";
       default:
-        if (status.isNotEmpty) return "الحالة: $status";
+        if ((payload["status"] ?? "").toString().trim().isNotEmpty) {
+          return "الحالة: ${payload["status"]}";
+        }
         return "تفاصيل غير متوفرة.";
     }
   }

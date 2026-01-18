@@ -14,9 +14,18 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from clinical.permissions import IsPatient, IsDoctor
-from clinical.models import ClinicalOrder, MedicalRecordFile, Prescription, MedicationAdherence, Prescription, OutboxEvent
-from notifications.services.outbox import try_send_event
+from clinical.models import (
+    ClinicalOrder,
+    MedicalRecordFile,
+    Prescription,
+    MedicationAdherence,
+    OutboxEvent,
+)
 
+# NOTE:
+# لديك try_send_event ضمن outbox services. إذا أردت لاحقًا إلغاء الـ push بالكامل
+# يمكنك إزالة try_send_event من هذا الملف، لكن سنتركه الآن لتجنب كسر أي شيء.
+from notifications.services.outbox import try_send_event
 
 from accounts.models import (
     Appointment,
@@ -37,6 +46,8 @@ from .serializers import (
     DoctorSlotsRangeQuerySerializer,
 )
 
+from notifications.services.outbox_payload import create_outbox_event
+
 
 # -----------------------------
 # Helpers
@@ -47,6 +58,38 @@ def _is_admin(user) -> bool:
         getattr(user, "is_staff", False)
         or getattr(user, "is_superuser", False)
         or getattr(user, "role", "") == "admin"
+    )
+
+
+def _create_outbox_event(
+    *,
+    event_type: str,
+    actor,
+    recipient,
+    obj=None,
+    payload=None,
+    entity_type: str | None = None,
+    entity_id=None,
+    route: str | None = None,
+    title: str | None = None,
+    message: str | None = None,
+) -> None:
+    """
+    Wrapper موحّد (مثل clinical/views.py):
+    - يضمن route صحيح مع Flutter الحالي
+    - يضمن payload غني مع actor_name/recipient_name تلقائيًا داخل create_outbox_event
+    """
+    create_outbox_event(
+        event_type=event_type,
+        actor=actor,
+        recipient=recipient,
+        obj=obj,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        route=route,
+        payload=payload,
+        title=title,
+        message=message,
     )
 
 
@@ -74,31 +117,32 @@ class AppointmentCreateView(APIView):
         )
         serializer.is_valid(raise_exception=True)
         appointment = serializer.save()
+
         # -----------------------------
-        # Notifications: Outbox + (Mock) Push
-        # Event: appointment_created (pending)
+        # Notifications: appointment_created
+        # Recipient: doctor
+        # IMPORTANT: route must exist in Flutter -> use /app/appointments
         # -----------------------------
         try:
-            ev = OutboxEvent.objects.create(
+            _create_outbox_event(
                 event_type="appointment_created",
-                actor=request.user,
-                patient=appointment.doctor,
-                object_id=str(appointment.id),
+                actor=request.user,              # patient
+                recipient=appointment.doctor,    # notify doctor
+                obj=appointment,
+                entity_type="appointment",
+                entity_id=appointment.id,
+                route="/app/appointments",
                 payload={
-                    "type": "appointment_created",
-                    "entity_id": appointment.id,
+                    "appointment_id": appointment.id,
                     "status": appointment.status,
                     "patient_id": appointment.patient_id,
                     "doctor_id": appointment.doctor_id,
-                    "timestamp": timezone.now().isoformat(),
+                    "date_time": appointment.date_time.isoformat() if appointment.date_time else None,
+                    "title": "طلب موعد جديد",
+                    "message": "تم إنشاء طلب موعد جديد.",
                 },
-                status=OutboxEvent.Status.PENDING,
             )
-
-            # مبدئيًا: إرسال Mock + تحديث status (sent/failed)
-            try_send_event(ev)
         except Exception:
-            # fail-safe: لا نفشل إنشاء الموعد
             pass
 
         triage = getattr(appointment, "triage", None)
@@ -109,7 +153,6 @@ class AppointmentCreateView(APIView):
             if timezone.is_naive(dt):
                 dt = timezone.make_aware(dt, tz)
             return dt.astimezone(tz).isoformat()
-
 
         return Response(
             {
@@ -139,7 +182,6 @@ class AppointmentCreateView(APIView):
                     if triage is not None
                     else None
                 ),
-
             },
             status=status.HTTP_201_CREATED,
         )
@@ -262,7 +304,6 @@ def mark_no_show(request, pk: int):
     if appointment.doctor_id != user.id:
         return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
 
-    # لا تسمح لو الموعد ملغى أو no_show مسبقًا
     if appointment.status == "cancelled":
         return Response(
             {"detail": "Cancelled appointments cannot be marked as no_show."},
@@ -272,14 +313,12 @@ def mark_no_show(request, pk: int):
     if appointment.status == "no_show":
         return Response({"id": appointment.id, "status": appointment.status}, status=status.HTTP_200_OK)
 
-    # يجب أن يكون الموعد confirmed أساسًا (مهم لمنع no_show على pending)
     if appointment.status != "confirmed":
         return Response(
             {"detail": "Only confirmed appointments can be marked as no_show."},
             status=status.HTTP_409_CONFLICT,
         )
 
-    # prevent future no_show: must be after (start + duration)
     end_dt = appointment.date_time + timedelta(minutes=appointment.duration_minutes or 0)
     if end_dt > timezone.now():
         return Response(
@@ -287,13 +326,8 @@ def mark_no_show(request, pk: int):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
-    # -----------------------------
-    # NEW: Block no_show if clinical activity exists
-    # -----------------------------
     has_orders = ClinicalOrder.objects.filter(appointment_id=appointment.id).exists()
     has_rx = Prescription.objects.filter(appointment_id=appointment.id).exists()
-
-    # (اختياري لكن أنصح به) إذا عندك adherence مربوط بالـ Rx items:
     has_adh = MedicationAdherence.objects.filter(
         prescription_item__prescription__appointment_id=appointment.id
     ).exists()
@@ -309,30 +343,33 @@ def mark_no_show(request, pk: int):
 
     # -----------------------------
     # Notifications: appointment_no_show
-    # recipient = patient
+    # Recipient: patient
+    # IMPORTANT: route must exist -> /app/appointments
     # -----------------------------
     try:
-        ev = OutboxEvent.objects.create(
+        _create_outbox_event(
             event_type="appointment_no_show",
-            actor=request.user,
-            patient=appointment.patient,  # recipient
-            object_id=str(appointment.id),
+            actor=request.user,             # doctor
+            recipient=appointment.patient,  # patient
+            obj=appointment,
+            entity_type="appointment",
+            entity_id=appointment.id,
+            route="/app/appointments",
             payload={
-                "type": "appointment_no_show",
-                "entity_id": appointment.id,
-                "status": appointment.status,
+                "appointment_id": appointment.id,
+                "status": appointment.status,   # no_show
                 "patient_id": appointment.patient_id,
                 "doctor_id": appointment.doctor_id,
-                "timestamp": timezone.now().isoformat(),
+                "date_time": appointment.date_time.isoformat() if appointment.date_time else None,
+                "title": "لم يتم الحضور للموعد",
+                "message": "تم وضع الموعد بحالة عدم حضور (No-show).",
             },
-            status=OutboxEvent.Status.PENDING,
         )
-        try_send_event(ev)
     except Exception:
         pass
 
-
     return Response({"id": appointment.id, "status": appointment.status}, status=status.HTTP_200_OK)
+
 
 # -----------------------------
 # Cancel appointment (patient/doctor/admin)
@@ -344,11 +381,11 @@ def cancel_appointment(request, pk: int):
     user = request.user
     appointment = get_object_or_404(Appointment, pk=pk)
 
-    is_admin = _is_admin(user)
+    is_admin_flag = _is_admin(user)
     is_owner_patient = appointment.patient_id == user.id
     is_owner_doctor = appointment.doctor_id == user.id
 
-    if not (is_admin or is_owner_patient or is_owner_doctor):
+    if not (is_admin_flag or is_owner_patient or is_owner_doctor):
         return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
 
     if appointment.status == "no_show":
@@ -362,8 +399,7 @@ def cancel_appointment(request, pk: int):
             {"id": appointment.id, "status": appointment.status},
             status=status.HTTP_200_OK,
         )
-    
-    # Block cancellation if clinical activity already exists for this appointment
+
     has_orders = ClinicalOrder.objects.filter(appointment_id=appointment.id).exists()
     has_rx = Prescription.objects.filter(appointment_id=appointment.id).exists()
 
@@ -378,43 +414,42 @@ def cancel_appointment(request, pk: int):
 
     # -----------------------------
     # Notifications: appointment_cancelled
-    # recipient = other party
+    # recipients = other party (or both if admin)
+    # IMPORTANT: route must exist -> /app/appointments
     # -----------------------------
     try:
         actor = request.user
 
-        # Determine recipients
         recipients = []
-
         if getattr(actor, "role", "") == "patient":
-            recipients = [appointment.doctor]   # patient cancelled -> notify doctor
+            recipients = [appointment.doctor]
         elif getattr(actor, "role", "") == "doctor":
-            recipients = [appointment.patient]  # doctor cancelled -> notify patient
+            recipients = [appointment.patient]
         else:
-            # admin (or unknown): notify both (simplest)
             recipients = [appointment.patient, appointment.doctor]
 
         for recipient in recipients:
-            ev = OutboxEvent.objects.create(
+            _create_outbox_event(
                 event_type="appointment_cancelled",
                 actor=actor,
-                patient=recipient,  # recipient
-                object_id=str(appointment.id),
+                recipient=recipient,
+                obj=appointment,
+                entity_type="appointment",
+                entity_id=appointment.id,
+                route="/app/appointments",
                 payload={
-                    "type": "appointment_cancelled",
-                    "entity_id": appointment.id,
-                    "status": appointment.status,
+                    "appointment_id": appointment.id,
+                    "status": appointment.status,  # cancelled
+                    "cancelled_by_role": getattr(actor, "role", None),
                     "patient_id": appointment.patient_id,
                     "doctor_id": appointment.doctor_id,
-                    "cancelled_by_role": getattr(actor, "role", None),
-                    "timestamp": timezone.now().isoformat(),
+                    "date_time": appointment.date_time.isoformat() if appointment.date_time else None,
+                    "title": "تم إلغاء الموعد",
+                    "message": "تم إلغاء الموعد.",
                 },
-                status=OutboxEvent.Status.PENDING,
             )
-            try_send_event(ev)
     except Exception:
         pass
-
 
     return Response({"id": appointment.id, "status": appointment.status}, status=status.HTTP_200_OK)
 
@@ -429,10 +464,10 @@ def confirm_appointment(request, pk: int):
     user = request.user
     appointment = get_object_or_404(Appointment, pk=pk)
 
-    is_admin = _is_admin(user)
+    is_admin_flag = _is_admin(user)
     is_owner_doctor = appointment.doctor_id == user.id
 
-    if not (is_admin or is_owner_doctor):
+    if not (is_admin_flag or is_owner_doctor):
         return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
 
     if appointment.status in ["cancelled", "no_show"]:
@@ -453,11 +488,6 @@ def confirm_appointment(request, pk: int):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
-    # ------------------------------------------------------------
-    # Follow-up confirmation gate (Policy 2 - flexible)
-    # - If no OPEN orders => allow confirmation
-    # - If there are OPEN orders => each must have >=1 file AND all files approved
-    # ------------------------------------------------------------
     appt_type = appointment.appointment_type
     if bool(getattr(appt_type, "requires_approved_files", False)):
         open_orders = ClinicalOrder.objects.filter(
@@ -495,36 +525,39 @@ def confirm_appointment(request, pk: int):
 
     appointment.status = "confirmed"
     appointment.save(update_fields=["status", "updated_at"])
-    
+
     # -----------------------------
     # Notifications: appointment_confirmed
-    # recipient = patient
+    # Recipient: patient
+    # IMPORTANT: route must exist -> /app/appointments
     # -----------------------------
     try:
-        ev = OutboxEvent.objects.create(
+        _create_outbox_event(
             event_type="appointment_confirmed",
-            actor=request.user,
-            patient=appointment.patient,  # recipient
-            object_id=str(appointment.id),
+            actor=request.user,            # doctor/admin
+            recipient=appointment.patient, # patient
+            obj=appointment,
+            entity_type="appointment",
+            entity_id=appointment.id,
+            route="/app/appointments",
             payload={
-                "type": "appointment_confirmed",
-                "entity_id": appointment.id,
-                "status": appointment.status,
+                "appointment_id": appointment.id,
+                "status": appointment.status,  # confirmed
                 "patient_id": appointment.patient_id,
                 "doctor_id": appointment.doctor_id,
-                "timestamp": timezone.now().isoformat(),
+                "date_time": appointment.date_time.isoformat() if appointment.date_time else None,
+                "title": "تم تأكيد الموعد",
+                "message": "تم تأكيد موعدك.",
             },
-            status=OutboxEvent.Status.PENDING,
         )
-        try_send_event(ev)
     except Exception:
         pass
-
 
     return Response(
         {"id": appointment.id, "status": appointment.status},
         status=status.HTTP_200_OK,
     )
+
 
 # -----------------------------
 # Slots (single day)
@@ -609,7 +642,6 @@ class DoctorAvailableSlotsView(APIView):
 
         intervals = []
 
-        # appointments
         for ap in existing:
             ap_start = ap.date_time
             if timezone.is_naive(ap_start):
@@ -621,7 +653,6 @@ class DoctorAvailableSlotsView(APIView):
             ap_end = ap_start + timedelta(minutes=ap_dur)
             intervals.append((ap_start, ap_end))
 
-        # absences (clamp to day window)
         absences = DoctorAbsence.objects.filter(
             doctor_id=doctor.id,
             start_time__lt=end_dt,
@@ -729,7 +760,6 @@ class DoctorAvailableSlotsRangeView(APIView):
         start_date = v["from_date"]
         end_date = v["to_date"]
 
-        # availabilities
         avail_qs = DoctorAvailability.objects.filter(doctor_id=doctor.id).only(
             "day_of_week", "start_time", "end_time"
         )
@@ -740,14 +770,12 @@ class DoctorAvailableSlotsRangeView(APIView):
         range_start_dt = timezone.make_aware(datetime.combine(start_date, datetime.min.time()), tz)
         range_end_dt = timezone.make_aware(datetime.combine(end_date, datetime.max.time()), tz)
 
-        # prefetch absences once
         absences_qs = DoctorAbsence.objects.filter(
             doctor_id=doctor.id,
             start_time__lt=range_end_dt,
             end_time__gt=range_start_dt,
         ).only("start_time", "end_time")
 
-        # prefetch appointments once
         existing = Appointment.objects.filter(
             doctor_id=doctor.id,
             status__in=blocking_statuses,
@@ -757,7 +785,6 @@ class DoctorAvailableSlotsRangeView(APIView):
 
         intervals_by_date = defaultdict(list)
 
-        # bucket appointments
         for ap in existing:
             ap_start = ap.date_time
             if timezone.is_naive(ap_start):
@@ -774,7 +801,6 @@ class DoctorAvailableSlotsRangeView(APIView):
                 intervals_by_date[cur_date].append((ap_start, ap_end))
                 cur_date = cur_date + timedelta(days=1)
 
-        # bucket absences
         for ab in absences_qs:
             ab_start = ab.start_time
             ab_end = ab.end_time
@@ -814,7 +840,6 @@ class DoctorAvailableSlotsRangeView(APIView):
             raw_intervals = intervals_by_date.get(day_date, [])
             intervals = []
 
-            # --- CLAMP intervals to [start_dt, end_dt] ---
             for a_start, a_end in raw_intervals:
                 if timezone.is_naive(a_start):
                     a_start = timezone.make_aware(a_start, tz)
@@ -920,8 +945,8 @@ class MyAppointmentsView(APIView):
 
         raw_status = (request.query_params.get("status") or "").strip().lower()
 
-        preset = (request.query_params.get("preset") or "").strip().lower()  # today|next7|day
-        preset_day = (request.query_params.get("date") or "").strip()        # YYYY-MM-DD
+        preset = (request.query_params.get("preset") or "").strip().lower()
+        preset_day = (request.query_params.get("date") or "").strip()
 
         date_from = (request.query_params.get("from") or "").strip()
         date_to = (request.query_params.get("to") or "").strip()
@@ -929,7 +954,6 @@ class MyAppointmentsView(APIView):
         tz = timezone.get_current_timezone()
         now_local = timezone.now().astimezone(tz)
 
-        # status
         if raw_status:
             status_map = {
                 "pending": ["pending", "Pending"],
@@ -943,7 +967,6 @@ class MyAppointmentsView(APIView):
             else:
                 qs = qs.none()
 
-        # time: upcoming|past|all
         time_filter = (request.query_params.get("time") or "upcoming").strip().lower()
         now_dt = timezone.now()
 
@@ -964,7 +987,6 @@ class MyAppointmentsView(APIView):
             end = timezone.make_aware(datetime.combine(d, datetime.max.time()), tz)
             return start, end
 
-        # preset precedence
         if preset == "today":
             d1 = now_local.date()
             start_dt, end_dt = day_range(d1)
@@ -1017,10 +1039,9 @@ class MyAppointmentsView(APIView):
                 qs = qs.filter(date_time__lte=end_dt)
 
         qs = qs.order_by("-date_time")[:200]
-        appointments_list = list(qs)  # materialize once
+        appointments_list = list(qs)
         appt_ids = [a.id for a in appointments_list]
 
-        # Any orders linked to these appointments
         order_rows = ClinicalOrder.objects.filter(
             appointment_id__in=appt_ids
         ).values("appointment_id", "status")
@@ -1033,13 +1054,13 @@ class MyAppointmentsView(APIView):
             bucket["any"] = True
             if st == ClinicalOrder.Status.OPEN:
                 bucket["open"] = True
-   
+
         results = []
         for ap in appointments_list:
             flags = orders_by_appt.get(ap.id, {"any": False, "open": False})
             has_any_orders = bool(flags["any"])
             has_open_orders = bool(flags["open"])
-            
+
             triage_obj = getattr(ap, "triage", None)
 
             triage_payload = None
@@ -1057,7 +1078,6 @@ class MyAppointmentsView(APIView):
                     "created_at": triage_obj.created_at.astimezone(tz).isoformat(),
                 }
 
-
             results.append(
                 {
                     "id": ap.id,
@@ -1072,14 +1092,11 @@ class MyAppointmentsView(APIView):
                     "status": ap.status,
                     "notes": ap.notes,
                     "created_at": ap.created_at.astimezone(tz).isoformat(),
-
-                    # NEW flags
                     "has_any_orders": has_any_orders,
                     "has_open_orders": has_open_orders,
                     "triage": triage_payload,
                 }
             )
-
 
         return Response({"results": results}, status=status.HTTP_200_OK)
 
@@ -1094,13 +1111,12 @@ class DoctorAbsenceListCreateView(APIView):
 
     def get(self, request):
         user = request.user
-        is_admin = _is_admin(user)
+        is_admin_flag = _is_admin(user)
 
-        qs = DoctorAbsence.objects.all().order_by("-start_time") if is_admin else \
+        qs = DoctorAbsence.objects.all().order_by("-start_time") if is_admin_flag else \
              DoctorAbsence.objects.filter(doctor=user).order_by("-start_time")
 
-        # optional admin filter: ?doctor_id=33
-        if is_admin:
+        if is_admin_flag:
             raw_doctor_id = (request.query_params.get("doctor_id") or "").strip()
             if raw_doctor_id:
                 try:
@@ -1117,12 +1133,11 @@ class DoctorAbsenceListCreateView(APIView):
 
     def post(self, request):
         user = request.user
-        is_admin = _is_admin(user)
+        is_admin_flag = _is_admin(user)
 
         data = request.data.copy()
 
-        # Admin may create for a doctor using doctor_id (optional but enabled)
-        if is_admin:
+        if is_admin_flag:
             raw_doctor_id = (data.get("doctor_id") or "").strip()
             if not raw_doctor_id:
                 return Response(
@@ -1136,7 +1151,6 @@ class DoctorAbsenceListCreateView(APIView):
 
             doctor = get_object_or_404(CustomUser, id=did, role="doctor")
 
-            # run serializer validations as the doctor (impersonated)
             serializer = DoctorAbsenceSerializer(
                 data=data,
                 context={"request": _ImpersonatedRequest(doctor)},
@@ -1145,7 +1159,6 @@ class DoctorAbsenceListCreateView(APIView):
             absence = serializer.save()
             return Response(DoctorAbsenceSerializer(absence).data, status=status.HTTP_201_CREATED)
 
-        # doctor creates own
         serializer = DoctorAbsenceSerializer(
             data=data,
             context={"request": request},
@@ -1171,7 +1184,6 @@ class DoctorAbsenceDetailView(APIView):
         return absence
 
     def _serializer_context_for(self, request, absence: DoctorAbsence):
-        # Ensure validation checks run against the correct doctor
         if _is_admin(request.user):
             return {"request": _ImpersonatedRequest(absence.doctor)}
         return {"request": request}

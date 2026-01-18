@@ -25,79 +25,47 @@ from .serializers import (
     OutboxEventSerializer,
 )
 from accounts.models import Appointment
-from notifications.services.outbox import try_send_event
+
+from notifications.services.outbox_payload import create_outbox_event
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _display_name(u):
-    if not u:
-        return None
-
-    full_name = getattr(u, "get_full_name", None)
-    if callable(full_name) and full_name():
-        return full_name()
-
-    return getattr(u, "username", None) or getattr(u, "email", None) or f"User #{u.id}"
-
-
-def _create_outbox_event(*, event_type: str, actor, patient=None, obj=None, payload=None):
+def _create_outbox_event(
+    *,
+    event_type: str,
+    actor,
+    patient=None,          # legacy naming in this file: means "recipient"
+    recipient=None,        # allow either
+    obj=None,
+    payload=None,
+    entity_type: str | None = None,
+    entity_id=None,
+    route: str | None = None,
+    title: str | None = None,
+    message: str | None = None,
+) -> None:
     """
-    Create Outbox event safely (fail-safe, does not break main flow).
-
-    NOTE:
-    - OutboxEvent.patient = recipient (may be patient OR doctor).
-    - This helper enriches payload with display names and unified keys for Flutter.
+    Wrapper لتوحيد الاستدعاء داخل هذا الملف بدون تغيير DB:
+    - في DB: OutboxEvent.patient = RECIPIENT
+    - يسمح بإرسال patient= كـ recipient (legacy)
+    - يغني payload بـ title/message/route/entity_id/entity_type تلقائياً عبر create_outbox_event
     """
-    try:
-        actor_user = actor if getattr(actor, "is_authenticated", False) else None
-        recipient_user = patient
-
-        base = payload.copy() if isinstance(payload, dict) else {}
-
-        # Unified keys
-        base.setdefault("type", event_type)
-        base.setdefault("entity_id", getattr(obj, "id", None) if obj is not None else None)
-
-        base.setdefault("actor_id", getattr(actor_user, "id", None))
-        base.setdefault("actor_name", _display_name(actor_user))
-
-        base.setdefault("recipient_id", getattr(recipient_user, "id", None))
-        base.setdefault("recipient_name", _display_name(recipient_user))
-
-        # Optional roles (if CustomUser.role exists)
-        if actor_user is not None:
-            base.setdefault("actor_role", getattr(actor_user, "role", None))
-        if recipient_user is not None:
-            base.setdefault("recipient_role", getattr(recipient_user, "role", None))
-
-        base.setdefault("timestamp", timezone.now().isoformat())
-
-        # Ready-to-show defaults
-        if not str(base.get("title") or "").strip():
-            base["title"] = event_type
-        if not str(base.get("message") or "").strip():
-            base["message"] = "تفاصيل غير متوفرة."
-
-        ev = OutboxEvent.objects.create(
-            event_type=event_type,
-            actor=actor_user,
-            patient=recipient_user,
-            object_id=str(getattr(obj, "id", "")) if obj is not None else "",
-            payload=base,
-            status=OutboxEvent.Status.PENDING,
-        )
-
-        try:
-            try_send_event(ev)
-        except Exception:
-            pass
-
-    except Exception:
-        # Fail-safe
-        pass
+    resolved_recipient = recipient or patient
+    create_outbox_event(
+        event_type=event_type,
+        actor=actor,
+        recipient=resolved_recipient,
+        obj=obj,
+        payload=payload,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        route=route,
+        title=title,
+        message=message,
+    )
 
 
 def _is_pending_review_status(value: str) -> bool:
@@ -222,20 +190,24 @@ class ClinicalOrderListCreateView(generics.ListCreateAPIView):
             appointment=appt,
         )
 
+        # إشعار للمريض: تم إنشاء طلب تحليل/صورة
+        # IMPORTANT: لا تضع role=doctor لأن recipient هنا هو المريض
         _create_outbox_event(
             event_type="CLINICAL_ORDER_CREATED",
             actor=resolved_doctor,
-            patient=order.patient,
+            patient=order.patient,   # recipient
             obj=order,
+            entity_type="clinical_order",
+            entity_id=order.id,
+            route=f"/app/record/orders/{order.id}",  # role سيتم تحديده من التطبيق عند routing
             payload={
                 "order_category": order.order_category,
-                "title": "طلب تحليل/صورة",
-                "message": f"طلب: {order.title}",
-                "appointment_id": appt.id,
                 "order_id": order.id,
+                "appointment_id": appt.id,
                 "patient_id": order.patient_id,
                 "doctor_id": order.doctor_id,
-                "route": f"/app/record/orders/{order.id}?role=doctor",
+                "title": "طلب تحليل/صورة",
+                "message": f"طلب: {order.title}",
             },
         )
 
@@ -319,20 +291,22 @@ class OrderFileUploadView(generics.CreateAPIView):
         serializer.is_valid(raise_exception=True)
         file_obj = serializer.save()
 
-        # Notifications: file_uploaded -> recipient = doctor
+        # إشعار للطبيب: تم رفع ملف طبي
         _create_outbox_event(
             event_type="file_uploaded",
-            actor=request.user,          # patient
-            patient=order.doctor,        # recipient doctor
+            actor=request.user,      # patient
+            patient=order.doctor,    # recipient doctor
             obj=file_obj,
+            entity_type="medical_record_file",
+            entity_id=file_obj.id,
+            route="/app/record/files",
             payload={
-                "title": "تم رفع ملف طبي",
-                "message": f"تم رفع الملف: {file_obj.original_filename or 'ملف جديد'}",
                 "order_id": order.id,
                 "patient_id": order.patient_id,
                 "doctor_id": order.doctor_id,
                 "filename": file_obj.original_filename,
-                "route": "/app/record/files",
+                "title": "تم رفع ملف طبي",
+                "message": f"تم رفع الملف: {file_obj.original_filename or 'ملف جديد'}",
             },
         )
 
@@ -367,11 +341,13 @@ class OrderFileDeleteView(APIView):
                 actor=user,
                 patient=getattr(record_file, "patient", None),
                 obj=record_file,
+                entity_type="medical_record_file",
+                entity_id=file_id,
+                route="/app/record/files",
                 payload={
                     "reason": "deleted_by_admin",
                     "title": "تم حذف ملف",
                     "message": "تم حذف الملف بواسطة الإدارة.",
-                    "route": "/app/record/files",
                 },
             )
             return Response(status=status.HTTP_204_NO_CONTENT)
@@ -393,16 +369,19 @@ class OrderFileDeleteView(APIView):
                 record_file.file.delete(save=False)
             record_file.delete()
 
+            # (ملاحظة UX) هذا الحدث غالباً recipient=self (المريض) وقد تختاره لتجاهله بالـ polling
             _create_outbox_event(
                 event_type="MEDICAL_FILE_DELETED",
                 actor=user,
                 patient=getattr(record_file, "patient", None),
                 obj=record_file,
+                entity_type="medical_record_file",
+                entity_id=file_id,
+                route="/app/record/files",
                 payload={
                     "reason": "deleted_by_patient",
                     "title": "تم حذف ملف",
                     "message": "تم حذف الملف بنجاح.",
-                    "route": "/app/record/files",
                 },
             )
             return Response(status=status.HTTP_204_NO_CONTENT)
@@ -444,20 +423,22 @@ def approve_medical_record_file(request, file_id: int):
         order.status = ClinicalOrder.Status.FULFILLED
         order.save(update_fields=["status", "updated_at"])
 
-    # Notifications: file_reviewed -> recipient = patient
+    # إشعار للمريض: تمت مراجعة ملف
     _create_outbox_event(
         event_type="file_reviewed",
         actor=request.user,
         patient=f.order.patient,
         obj=f,
+        entity_type="medical_record_file",
+        entity_id=f.id,
+        route="/app/record/files",
         payload={
-            "title": "تمت مراجعة ملف",
-            "message": f"حالة المراجعة: {f.review_status}",
             "order_id": f.order_id,
             "patient_id": f.order.patient_id,
             "doctor_id": f.order.doctor_id,
             "review_status": f.review_status,
-            "route": "/app/record/files",
+            "title": "تمت مراجعة ملف",
+            "message": f"حالة المراجعة: {f.review_status}",
         },
     )
 
@@ -487,20 +468,22 @@ def reject_medical_record_file(request, file_id: int):
     f.doctor_note = doctor_note
     f.save(update_fields=["review_status", "reviewed_by", "reviewed_at", "doctor_note"])
 
-    # Notifications: file_reviewed -> recipient = patient
+    # إشعار للمريض: تمت مراجعة ملف
     _create_outbox_event(
         event_type="file_reviewed",
         actor=request.user,
         patient=f.order.patient,
         obj=f,
+        entity_type="medical_record_file",
+        entity_id=f.id,
+        route="/app/record/files",
         payload={
-            "title": "تمت مراجعة ملف",
-            "message": f"حالة المراجعة: {f.review_status}",
             "order_id": f.order_id,
             "patient_id": f.order.patient_id,
             "doctor_id": f.order.doctor_id,
             "review_status": f.review_status,
-            "route": "/app/record/files",
+            "title": "تمت مراجعة ملف",
+            "message": f"حالة المراجعة: {f.review_status}",
         },
     )
 
@@ -597,13 +580,15 @@ class PrescriptionListCreateView(generics.ListCreateAPIView):
             actor=resolved_doctor,
             patient=rx.patient,
             obj=rx,
+            entity_type="prescription",
+            entity_id=rx.id,
+            route="/app/record/prescripts",
             payload={
-                "title": "وصفة جديدة",
-                "message": f"تم إنشاء وصفة جديدة. عدد الأدوية: {rx.items.count()}",
                 "items_count": rx.items.count(),
                 "appointment_id": appt.id,
                 "prescription_id": rx.id,
-                "route": "/app/record/prescripts",
+                "title": "وصفة جديدة",
+                "message": f"تم إنشاء وصفة جديدة. عدد الأدوية: {rx.items.count()}",
             },
         )
 
@@ -668,14 +653,16 @@ class MedicationAdherenceListCreateView(generics.ListCreateAPIView):
         _create_outbox_event(
             event_type="MEDICATION_ADHERENCE_RECORDED",
             actor=request.user,
-            patient=request.user,
+            patient=request.user,  # recipient = نفس المريض (MVP)
             obj=log,
+            entity_type="medication_adherence",
+            entity_id=log.id,
+            route="/app/record/adherence",
             payload={
+                "prescription_item_id": log.prescription_item_id,
+                "status": log.status,  # taken / skipped ...
                 "title": "تسجيل التزام دوائي",
                 "message": f"تم تسجيل الحالة: {log.status}",
-                "prescription_item_id": log.prescription_item_id,
-                "status": log.status,
-                "route": "/app/record/adherence",
             },
         )
 

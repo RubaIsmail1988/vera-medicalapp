@@ -136,6 +136,24 @@ class _InboxScreenState extends State<InboxScreen> {
     return role.isEmpty ? 'patient' : role;
   }
 
+  String _actorNameFrom(
+    Map<String, dynamic> item,
+    Map<String, dynamic> payload,
+  ) {
+    // Prefer server serializer field first
+    final s1 = item["actor_display_name"]?.toString();
+    if (s1 != null && s1.trim().isNotEmpty) return s1.trim();
+
+    // Then enriched payload
+    final s2 = payload["actor_name"]?.toString();
+    if (s2 != null && s2.trim().isNotEmpty) return s2.trim();
+
+    // Fallback
+    final actorId = item["actor"]?.toString() ?? "";
+    if (actorId.trim().isNotEmpty) return "User #$actorId";
+    return "مستخدم";
+  }
+
   Future<void> _routeFromInboxEvent({
     required String eventType,
     required Map<String, dynamic> payload,
@@ -143,25 +161,21 @@ class _InboxScreenState extends State<InboxScreen> {
   }) async {
     final role = await _currentRole();
 
-    // IMPORTANT:
-    // بعض الأحداث لا تأتي كـ event_type واضح، لكن تأتي كـ payload.status
+    // status-driven
     final status = (payload["status"] ?? "").toString().toLowerCase();
 
-    // 1) Adherence (taken/skipped) -> go to adherence tab
     if (status == "taken" || status == "skipped") {
       if (!mounted) return;
       context.go("/app/record/adherence");
       return;
     }
 
-    // 2) no_show -> go to appointments tab
     if (status == "no_show") {
       if (!mounted) return;
       context.go("/app/appointments");
       return;
     }
 
-    // Appointment-related events -> appointments tab
     if (eventType == "appointment_created" ||
         eventType == "appointment_confirmed" ||
         eventType == "appointment_cancelled" ||
@@ -172,10 +186,10 @@ class _InboxScreenState extends State<InboxScreen> {
       return;
     }
 
-    // Clinical order created -> order details in record
     if (eventType == "CLINICAL_ORDER_CREATED" ||
         eventType == "clinical_order_created") {
-      final rawOrderId = (item["object_id"] ?? payload["order_id"]);
+      final rawOrderId =
+          (item["object_id"] ?? payload["order_id"] ?? payload["entity_id"]);
       final orderId = int.tryParse(rawOrderId?.toString() ?? "");
 
       if (orderId != null) {
@@ -189,14 +203,12 @@ class _InboxScreenState extends State<InboxScreen> {
       return;
     }
 
-    // File uploaded/reviewed -> record (files tab)
     if (eventType == "file_uploaded" || eventType == "file_reviewed") {
       if (!mounted) return;
       context.go("/app/record/files");
       return;
     }
 
-    // Prescription created -> prescriptions tab
     if (eventType == "PRESCRIPTION_CREATED" ||
         eventType == "prescription_created") {
       if (!mounted) return;
@@ -204,14 +216,14 @@ class _InboxScreenState extends State<InboxScreen> {
       return;
     }
 
-    // Adherence created (explicit) -> adherence tab
-    if (eventType == "ADHERENCE_CREATED" || eventType == "adherence_created") {
+    if (eventType == "ADHERENCE_CREATED" ||
+        eventType == "adherence_created" ||
+        eventType == "MEDICATION_ADHERENCE_RECORDED") {
       if (!mounted) return;
       context.go("/app/record/adherence");
       return;
     }
 
-    // Default fallback
     if (!mounted) return;
     showAppSnackBar(
       context,
@@ -221,16 +233,15 @@ class _InboxScreenState extends State<InboxScreen> {
   }
 
   String _titleForEvent(String eventType, Map<String, dynamic> payload) {
+    // Prefer payload title (richness)
+    final payloadTitle = payload["title"]?.toString();
+    if (payloadTitle != null && payloadTitle.trim().isNotEmpty) {
+      return payloadTitle.trim();
+    }
+
     final status = (payload["status"] ?? "").toString().toLowerCase();
-
-    // taken/skipped قد تأتي بدون eventType واضح
-    if (status == "taken" || status == "skipped") {
-      return "تسجيل التزام دوائي";
-    }
-
-    if (status == "no_show") {
-      return "لم يتم الحضور للموعد";
-    }
+    if (status == "taken" || status == "skipped") return "تسجيل التزام دوائي";
+    if (status == "no_show") return "لم يتم الحضور للموعد";
 
     switch (eventType) {
       case "appointment_created":
@@ -252,22 +263,23 @@ class _InboxScreenState extends State<InboxScreen> {
       case "PRESCRIPTION_CREATED":
       case "prescription_created":
         return "وصفة جديدة";
-      case "adherence_created":
-      case "ADHERENCE_CREATED":
-        return "تسجيل التزام دوائي";
       default:
         return "إشعار";
     }
   }
 
   String _bodyForEvent(String eventType, Map<String, dynamic> payload) {
-    final title = payload["title"]?.toString();
+    // Prefer payload message (richness)
+    final payloadMsg = payload["message"]?.toString();
+    if (payloadMsg != null && payloadMsg.trim().isNotEmpty) {
+      return payloadMsg.trim();
+    }
+
     final filename = payload["filename"]?.toString();
     final reviewStatus = payload["review_status"]?.toString();
     final orderCategory = payload["order_category"]?.toString();
     final status = payload["status"]?.toString();
 
-    // taken/skipped نص واضح
     final statusLower = (status ?? "").toLowerCase();
     if (statusLower == "taken") return "تم تسجيل تناول الجرعة.";
     if (statusLower == "skipped") return "تم تسجيل تخطي الجرعة.";
@@ -276,6 +288,7 @@ class _InboxScreenState extends State<InboxScreen> {
     switch (eventType) {
       case "CLINICAL_ORDER_CREATED":
       case "clinical_order_created":
+        final title = payload["title"]?.toString();
         if (title != null && title.trim().isNotEmpty) return "طلب: $title";
         if (orderCategory != null && orderCategory.isNotEmpty) {
           return "النوع: $orderCategory";
@@ -323,11 +336,30 @@ class _InboxScreenState extends State<InboxScreen> {
       case "PRESCRIPTION_CREATED":
       case "prescription_created":
         return Icons.medication;
-      case "adherence_created":
-      case "ADHERENCE_CREATED":
-        return Icons.check_circle;
       default:
         return Icons.notifications;
+    }
+  }
+
+  String _formatCreatedAt(String raw) {
+    final s = raw.trim();
+    if (s.isEmpty) return "";
+
+    try {
+      final dt = DateTime.parse(s).toLocal();
+
+      String two(int x) => x.toString().padLeft(2, "0");
+      final y = dt.year;
+      final m = two(dt.month);
+      final d = two(dt.day);
+      final hh = two(dt.hour);
+      final mm = two(dt.minute);
+
+      // شكل مقروء: 2026-01-16 15:17
+      return "$y-$m-$d $hh:$mm";
+    } catch (_) {
+      // fallback: لو جاء نص غير قابل للـ parse
+      return s;
     }
   }
 
@@ -368,10 +400,6 @@ class _InboxScreenState extends State<InboxScreen> {
                   itemBuilder: (context, index) {
                     final item = items[index];
 
-                    final rawId = item["id"];
-                    final int id =
-                        rawId is int ? rawId : int.tryParse("$rawId") ?? 0;
-
                     final payloadRaw = item["payload"];
                     final Map<String, dynamic> payload =
                         payloadRaw is Map
@@ -385,10 +413,13 @@ class _InboxScreenState extends State<InboxScreen> {
                                 "notification")
                             .toString();
 
+                    final actorName = _actorNameFrom(item, payload);
+
                     final title = _titleForEvent(eventType, payload);
                     final body = _bodyForEvent(eventType, payload);
 
-                    final createdAt = item["created_at"]?.toString() ?? "";
+                    final createdAtRaw = item["created_at"]?.toString() ?? "";
+                    final createdAt = _formatCreatedAt(createdAtRaw);
 
                     return Card(
                       child: ListTile(
@@ -401,7 +432,7 @@ class _InboxScreenState extends State<InboxScreen> {
                             Text(body),
                             const SizedBox(height: 6),
                             Text(
-                              "#$id • $createdAt",
+                              "من: $actorName${createdAt.isNotEmpty ? " • $createdAt" : ""}",
                               style: Theme.of(context).textTheme.bodySmall,
                             ),
                           ],
