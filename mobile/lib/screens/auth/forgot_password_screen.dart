@@ -23,7 +23,6 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
     final text = (value ?? '').trim();
     if (text.isEmpty) return 'البريد الإلكتروني مطلوب';
 
-    // تحقق بسيط وعملي للبريد
     final emailRegex = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$');
     if (!emailRegex.hasMatch(text)) return 'صيغة البريد الإلكتروني غير صحيحة';
 
@@ -39,9 +38,9 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
     final email = normalizeEmail(emailController.text);
     final service = PasswordResetService();
 
-    bool ok = false;
+    PasswordResetRequestResult result;
     try {
-      ok = await service.requestOtp(email: email);
+      result = await service.requestOtp(email: email);
     } catch (_) {
       if (!mounted) return;
       setState(() => loading = false);
@@ -57,7 +56,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
     if (!mounted) return;
     setState(() => loading = false);
 
-    if (!ok) {
+    if (!result.success) {
       showAppSnackBar(
         context,
         'تعذّر إرسال الرمز. حاول مرة أخرى.',
@@ -66,6 +65,41 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
       return;
     }
 
+    // حالة PythonAnywhere المجاني: OTP يرجع في response
+    if (result.delivery == 'disabled' && (result.otp ?? '').isNotEmpty) {
+      final otp = result.otp!;
+      final expires = result.expiresInMinutes ?? 10;
+
+      await showDialog<void>(
+        context: context,
+        builder: (context) {
+          return AlertDialog(
+            title: const Text('رمز التحقق (بيئة تجريبية)'),
+            content: Text('الرمز: $otp\nصالح لمدة $expires دقائق.'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('متابعة'),
+              ),
+            ],
+          );
+        },
+      );
+
+      if (!mounted) return;
+
+      showAppSnackBar(
+        context,
+        'تم إنشاء رمز التحقق. انتقل الآن لصفحة إدخال الرمز.',
+        type: AppSnackBarType.success,
+      );
+
+      final encodedEmail = Uri.encodeComponent(email);
+      context.go('/forgot-password/verify?email=$encodedEmail');
+      return;
+    }
+
+    // الوضع الطبيعي: email
     showAppSnackBar(
       context,
       'إذا كان البريد صحيحًا، سيصلك رمز التحقق خلال لحظات.',

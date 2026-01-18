@@ -391,6 +391,10 @@ def deactivate_user(request, pk):
             'message': f'User {user.username} has been deactivated.',
         }
     )
+
+import os
+import logging
+
 from django.core.mail import send_mail
 from django.conf import settings
 from .models import PasswordResetOTP
@@ -399,6 +403,9 @@ from .serializers import (
     PasswordResetVerifySerializer,
     PasswordResetConfirmSerializer,
 )
+logger = logging.getLogger(__name__)
+
+
 class PasswordResetRequestView(APIView):
     permission_classes = [AllowAny]
 
@@ -410,17 +417,40 @@ class PasswordResetRequestView(APIView):
 
         # لأسباب أمنية: لا نفصح إن كان البريد موجود أو لا
         user = CustomUser.objects.filter(email=email).first()
-        if user:
-            otp = PasswordResetOTP.create_for_user(user, minutes=10)
+        if not user:
+            return Response({"success": True}, status=status.HTTP_200_OK)
 
-            subject = "Reset Password OTP - Vera Smart Health"
-            message = (
-                "You requested to reset your password.\n\n"
-                f"Your OTP code is: {otp.code}\n"
-                "This code expires in 10 minutes.\n\n"
-                "If you did not request this, please ignore this email."
+        otp = PasswordResetOTP.create_for_user(user, minutes=10)
+
+        # Flag لتعطيل الإرسال (مثلاً على PythonAnywhere المجاني)
+        disable_outbound_email = os.environ.get("DISABLE_OUTBOUND_EMAIL", "0").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+            "on",
+        )
+
+        if disable_outbound_email:
+            # MVP: نُرجع الرمز للتطبيق بدل الإرسال عبر Email (لأن outbound محظور)
+            return Response(
+                {
+                    "success": True,
+                    "delivery": "disabled",
+                    "otp": otp.code,
+                    "expires_in_minutes": 10,
+                },
+                status=status.HTTP_200_OK,
             )
 
+        subject = "Reset Password OTP - Vera Smart Health"
+        message = (
+            "You requested to reset your password.\n\n"
+            f"Your OTP code is: {otp.code}\n"
+            "This code expires in 10 minutes.\n\n"
+            "If you did not request this, please ignore this email."
+        )
+
+        try:
             send_mail(
                 subject=subject,
                 message=message,
@@ -428,8 +458,18 @@ class PasswordResetRequestView(APIView):
                 recipient_list=[user.email],
                 fail_silently=False,
             )
+        except Exception as e:
+            # لا نُسقط endpoint بـ 500. نسجل خطأ ونُرجع نجاح عام (أمنيًا) + مؤشر فشل.
+            logger.exception("Password reset email send failed for %s: %s", user.email, e)
+            return Response(
+                {
+                    "success": True,
+                    "delivery": "failed",
+                },
+                status=status.HTTP_200_OK,
+            )
 
-        return Response({"success": True}, status=status.HTTP_200_OK)
+        return Response({"success": True, "delivery": "email"}, status=status.HTTP_200_OK)
 
 
 class PasswordResetVerifyView(APIView):
