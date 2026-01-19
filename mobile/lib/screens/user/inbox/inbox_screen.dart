@@ -432,7 +432,12 @@ class _InboxScreenState extends State<InboxScreen> {
                             Text(body),
                             const SizedBox(height: 6),
                             Text(
-                              "من: $actorName${createdAt.isNotEmpty ? " • $createdAt" : ""}",
+                              "من: $actorName",
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
+                            const SizedBox(height: 6),
+                            Text(
+                              " ${createdAt.isNotEmpty ? "التاريخ والوقت: $createdAt" : ""}",
                               style: Theme.of(context).textTheme.bodySmall,
                             ),
                           ],

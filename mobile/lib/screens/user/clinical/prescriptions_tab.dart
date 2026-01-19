@@ -10,7 +10,7 @@ class PrescriptionsTab extends StatefulWidget {
   final String role;
   final int userId;
   final int? selectedPatientId; // doctor context
-  final int? selectedAppointmentId; // NEW: appointment context
+  final int? selectedAppointmentId; // appointment context
 
   const PrescriptionsTab({
     super.key,
@@ -29,6 +29,15 @@ class _PrescriptionsTabState extends State<PrescriptionsTab> {
 
   Future<List<Map<String, dynamic>>>? prescriptionsFuture;
 
+  bool get isDoctor => widget.role == "doctor";
+  bool get isPatient => widget.role == "patient";
+
+  bool get hasApptFilter =>
+      widget.selectedAppointmentId != null && widget.selectedAppointmentId! > 0;
+
+  /// المطلوب: الطبيب لا ينشئ وصفة إلا ضمن سياق موعد
+  bool get canDoctorCreatePrescription => isDoctor && hasApptFilter;
+
   @override
   void initState() {
     super.initState();
@@ -45,16 +54,12 @@ class _PrescriptionsTabState extends State<PrescriptionsTab> {
     }
   }
 
-  bool get isDoctor => widget.role == "doctor";
-  bool get isPatient => widget.role == "patient";
-
   int? asInt(dynamic v) {
     if (v == null) return null;
     if (v is int) return v;
     return int.tryParse(v.toString());
   }
 
-  // ✅ UPDATED: appointment filter inserted after patient filter
   Future<List<Map<String, dynamic>>> fetchPrescriptions() async {
     final response = await clinicalService.listPrescriptions();
 
@@ -79,7 +84,7 @@ class _PrescriptionsTabState extends State<PrescriptionsTab> {
             }).toList();
       }
 
-      // Appointment context: filter by appointmentId (works for doctor & patient)
+      // Appointment context: filter by appointmentId (doctor & patient)
       if (selectedApptId != null && selectedApptId > 0) {
         filtered =
             filtered.where((p) {
@@ -154,9 +159,6 @@ class _PrescriptionsTabState extends State<PrescriptionsTab> {
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // Prescription Details (Dialog) - UI only
-  // ---------------------------------------------------------------------------
   Future<void> openPrescriptionDetails(
     int prescriptionId, {
     required String doctorDisplayName,
@@ -356,9 +358,8 @@ class _PrescriptionsTabState extends State<PrescriptionsTab> {
     showAppSnackBar(context, "فشل تحميل التفاصيل (${response.statusCode}).");
   }
 
-  // ---------------------------------------------------------------------------
-  // ✅ UPDATED: create prescription must use appointmentId
   Future<void> createPrescriptionFlow() async {
+    // حماية إضافية حتى لو الزر مخفي
     if (!isDoctor) {
       showAppSnackBar(context, "هذه العملية متاحة للطبيب فقط.");
       return;
@@ -432,13 +433,10 @@ class _PrescriptionsTabState extends State<PrescriptionsTab> {
 
   @override
   Widget build(BuildContext context) {
-    final hasApptFilter =
-        widget.selectedAppointmentId != null &&
-        widget.selectedAppointmentId! > 0;
-
     return Column(
       children: [
-        if (isDoctor)
+        // المطلوب: لا نُظهر زر "إنشاء وصفة" للطبيب إلا ضمن سياق موعد
+        if (canDoctorCreatePrescription)
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
             child: SizedBox(
@@ -541,8 +539,8 @@ class _PrescriptionsTabState extends State<PrescriptionsTab> {
                     return Card(
                       child: ListTile(
                         title: Text(
-                          "وصفة طبية صادرة من الطبيب: د. $doctorDisplayName",
-                          maxLines: 1,
+                          "وصفة طبية صادرة من \nالطبيب: د. $doctorDisplayName",
+                          maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                         ),
                         subtitle: Padding(
@@ -598,7 +596,6 @@ class CreatePrescriptionPayload {
   CreatePrescriptionPayload({required this.notes, required this.items});
 }
 
-// Dialog إنشاء الوصفة للطبيب: كما هو عندك (بدون تعديل جوهري)
 class CreatePrescriptionDialog extends StatefulWidget {
   const CreatePrescriptionDialog({super.key});
 
@@ -644,18 +641,18 @@ class CreatePrescriptionDialogState extends State<CreatePrescriptionDialog> {
                 controller: notesController,
                 maxLines: 2,
                 decoration: const InputDecoration(
-                  labelText: "Notes (اختياري)",
+                  labelText: "ملاحظات (اختياري)",
                   border: OutlineInputBorder(),
                 ),
               ),
               const SizedBox(height: 12),
               Row(
                 children: [
-                  Expanded(child: Text("Items: ${items.length}")),
+                  Expanded(child: Text("الأدوية: ${items.length}")),
                   TextButton.icon(
                     onPressed: () async => addItemDialog(),
                     icon: const Icon(Icons.add),
-                    label: const Text("Add item"),
+                    label: const Text("إضافة دواء"),
                   ),
                 ],
               ),
@@ -672,17 +669,20 @@ class CreatePrescriptionDialogState extends State<CreatePrescriptionDialog> {
                       final name = it["medicine_name"]?.toString() ?? "";
                       final dosage = it["dosage"]?.toString() ?? "";
                       final freq = it["frequency"]?.toString() ?? "";
+                      final start = it["start_date"]?.toString() ?? "";
                       final endDate = it["end_date"]?.toString() ?? "";
                       final endLabel =
-                          endDate.trim().isNotEmpty ? endDate : "بدون نهاية";
+                          endDate.trim().isNotEmpty ? endDate : "-";
 
                       return ListTile(
                         title: Text(name.isNotEmpty ? name : "دواء"),
                         subtitle: Text(
-                          "${dosage.isNotEmpty ? dosage : ""}"
-                          "${(dosage.isNotEmpty && freq.isNotEmpty) ? " · " : ""}"
-                          "${freq.isNotEmpty ? freq : ""}"
-                          "${endLabel.isNotEmpty ? "\nتاريخ الانتهاء: $endLabel" : ""}",
+                          [
+                            if (dosage.trim().isNotEmpty) "الجرعة: $dosage",
+                            if (freq.trim().isNotEmpty) "التردد: $freq",
+                            if (start.trim().isNotEmpty) "البدء: $start",
+                            "الانتهاء: $endLabel",
+                          ].join("\n"),
                         ),
                         trailing: IconButton(
                           icon: const Icon(Icons.delete_outline),
@@ -713,14 +713,6 @@ class CreatePrescriptionDialogState extends State<CreatePrescriptionDialog> {
               return;
             }
 
-            for (final it in items) {
-              final endDate = it["end_date"]?.toString().trim() ?? "";
-              if (endDate.isEmpty) {
-                showAppSnackBar(context, "يرجى إدخال تاريخ انتهاء الدواء");
-                return;
-              }
-            }
-
             Navigator.pop(
               context,
               CreatePrescriptionPayload(
@@ -736,7 +728,6 @@ class CreatePrescriptionDialogState extends State<CreatePrescriptionDialog> {
   }
 }
 
-// PrescriptionItemDialog: كما هو عندك
 class PrescriptionItemDialog extends StatefulWidget {
   const PrescriptionItemDialog({super.key});
 
@@ -816,6 +807,33 @@ class PrescriptionItemDialogState extends State<PrescriptionItemDialog> {
     controller.text = "$y-$m-$d";
   }
 
+  String? _validateAllFields() {
+    final name = nameController.text.trim();
+    if (name.isEmpty) return "اسم الدواء مطلوب.";
+
+    final doseVal = dosageValueController.text.trim();
+    if (doseVal.isEmpty) return "الجرعة مطلوبة.";
+
+    if (dosageUnit == "other") {
+      final other = otherUnitController.text.trim();
+      if (other.isEmpty) return "يرجى كتابة وحدة الجرعة.";
+    }
+
+    final freq =
+        isOtherFrequency ? frequencyController.text.trim() : frequencyPreset;
+    if (freq.trim().isEmpty || (isOtherFrequency && freq.trim().isEmpty)) {
+      return "عدد المرات (التردد) مطلوب.";
+    }
+
+    final start = startDateController.text.trim();
+    if (start.isEmpty) return "تاريخ بدء الدواء مطلوب.";
+
+    final end = endDateController.text.trim();
+    if (end.isEmpty) return "تاريخ انتهاء الدواء مطلوب.";
+
+    return null;
+  }
+
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
@@ -828,7 +846,7 @@ class PrescriptionItemDialogState extends State<PrescriptionItemDialog> {
               TextField(
                 controller: nameController,
                 decoration: const InputDecoration(
-                  labelText: "اسم الدواء",
+                  labelText: "اسم الدواء *",
                   border: OutlineInputBorder(),
                 ),
               ),
@@ -836,20 +854,27 @@ class PrescriptionItemDialogState extends State<PrescriptionItemDialog> {
               Row(
                 children: [
                   Expanded(
+                    flex: 3,
                     child: TextField(
                       controller: dosageValueController,
                       keyboardType: TextInputType.number,
+                      textAlign: TextAlign.right,
                       decoration: const InputDecoration(
-                        labelText: "الجرعة",
+                        labelText: "الجرعة *",
                         border: OutlineInputBorder(),
                       ),
                     ),
                   ),
                   const SizedBox(width: 10),
-                  SizedBox(
-                    width: 160,
+                  Expanded(
+                    flex: 2,
                     child: DropdownButtonFormField<String>(
                       value: dosageUnit,
+                      isExpanded: true,
+                      decoration: const InputDecoration(
+                        labelText: "الوحدة *",
+                        border: OutlineInputBorder(),
+                      ),
                       items:
                           dosageUnits
                               .map(
@@ -866,20 +891,17 @@ class PrescriptionItemDialogState extends State<PrescriptionItemDialog> {
                           }
                         });
                       },
-                      decoration: const InputDecoration(
-                        labelText: "الوحدة",
-                        border: OutlineInputBorder(),
-                      ),
                     ),
                   ),
                 ],
               ),
+
               if (dosageUnit == "other") ...[
                 const SizedBox(height: 10),
                 TextField(
                   controller: otherUnitController,
                   decoration: const InputDecoration(
-                    labelText: "وحدة أخرى",
+                    labelText: "وحدة أخرى *",
                     border: OutlineInputBorder(),
                   ),
                 ),
@@ -904,7 +926,7 @@ class PrescriptionItemDialogState extends State<PrescriptionItemDialog> {
                   });
                 },
                 decoration: const InputDecoration(
-                  labelText: "عدد المرات",
+                  labelText: "عدد المرات *",
                   border: OutlineInputBorder(),
                 ),
               ),
@@ -913,7 +935,7 @@ class PrescriptionItemDialogState extends State<PrescriptionItemDialog> {
                 TextField(
                   controller: frequencyController,
                   decoration: const InputDecoration(
-                    labelText: "وصف التردد",
+                    labelText: "وصف التردد *",
                     border: OutlineInputBorder(),
                   ),
                 ),
@@ -923,7 +945,7 @@ class PrescriptionItemDialogState extends State<PrescriptionItemDialog> {
                 controller: startDateController,
                 readOnly: true,
                 decoration: const InputDecoration(
-                  labelText: "تاريخ بدء الدواء",
+                  labelText: "تاريخ بدء الدواء *",
                   border: OutlineInputBorder(),
                 ),
                 onTap: () async => pickDate(startDateController),
@@ -953,7 +975,7 @@ class PrescriptionItemDialogState extends State<PrescriptionItemDialog> {
                 readOnly: true,
                 enabled: !isPermanent,
                 decoration: const InputDecoration(
-                  labelText: "تاريخ انتهاء الدواء",
+                  labelText: "تاريخ انتهاء الدواء *",
                   border: OutlineInputBorder(),
                 ),
                 onTap: () async {
@@ -981,26 +1003,20 @@ class PrescriptionItemDialogState extends State<PrescriptionItemDialog> {
         ),
         ElevatedButton(
           onPressed: () {
-            final name = nameController.text.trim();
-            if (name.isEmpty) {
-              showAppSnackBar(context, "اسم الدواء مطلوب.");
+            final err = _validateAllFields();
+            if (err != null) {
+              showAppSnackBar(context, err, type: AppSnackBarType.warning);
               return;
             }
 
-            final endDate = endDateController.text.trim();
-            if (endDate.isEmpty) {
-              showAppSnackBar(context, "يرجى إدخال تاريخ انتهاء الدواء");
-              return;
-            }
+            final name = nameController.text.trim();
 
             final doseVal = dosageValueController.text.trim();
             String unitToUse = dosageUnit;
             if (dosageUnit == "other") {
-              final other = otherUnitController.text.trim();
-              if (other.isNotEmpty) unitToUse = other;
+              unitToUse = otherUnitController.text.trim();
             }
-
-            final dosage = doseVal.isNotEmpty ? "$doseVal $unitToUse" : "";
+            final dosage = "$doseVal $unitToUse";
 
             final frequency =
                 isOtherFrequency
@@ -1012,7 +1028,7 @@ class PrescriptionItemDialogState extends State<PrescriptionItemDialog> {
               "dosage": dosage,
               "frequency": frequency,
               "start_date": startDateController.text.trim(),
-              "end_date": endDate,
+              "end_date": endDateController.text.trim(),
               "instructions": instructionsController.text.trim(),
             });
           },

@@ -146,7 +146,7 @@ class _LoginScreenState extends State<LoginScreen> {
     final cs = Theme.of(context).colorScheme;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('تسجيل الدخول')),
+      appBar: AppBar(title: const Text('الدخول إلى الحساب')),
       body: Center(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(16),
@@ -161,14 +161,14 @@ class _LoginScreenState extends State<LoginScreen> {
                   const SizedBox(height: 18),
 
                   Text(
-                    'مرحبًا بعودتك',
+                    'مرحباً بعودتك',
                     style: Theme.of(context).textTheme.titleLarge?.copyWith(
                       fontWeight: FontWeight.w800,
                     ),
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    'سجّل دخولك للمتابعة.',
+                    'يرجى تسجيل الدخول للمتابعة',
                     style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                       color: cs.onSurface.withValues(alpha: 0.72),
                     ),
@@ -240,7 +240,7 @@ class _LoginScreenState extends State<LoginScreen> {
                             ),
                           ),
 
-                          const SizedBox(height: 10),
+                          const SizedBox(height: 16),
 
                           Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,

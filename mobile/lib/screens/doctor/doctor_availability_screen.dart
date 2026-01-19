@@ -125,7 +125,6 @@ class DoctorAvailabilityScreenState extends State<DoctorAvailabilityScreen> {
     required bool isEdit,
     DoctorAvailability? item,
   }) async {
-    // Defaults
     String selectedDay =
         item?.dayOfWeek ??
         daysEn.firstWhere(
@@ -137,6 +136,7 @@ class DoctorAvailabilityScreenState extends State<DoctorAvailabilityScreen> {
         item != null
             ? parseTime(item.startTime)
             : const TimeOfDay(hour: 9, minute: 0);
+
     TimeOfDay end =
         item != null
             ? parseTime(item.endTime)
@@ -145,116 +145,142 @@ class DoctorAvailabilityScreenState extends State<DoctorAvailabilityScreen> {
     final result = await showDialog<AvailabilityDialogResult>(
       context: context,
       builder: (dialogContext) {
-        return StatefulBuilder(
-          builder: (innerContext, setInnerState) {
-            Future<void> pickStart() async {
-              final picked = await showTimePicker(
-                context: innerContext,
-                initialTime: start,
-              );
-              if (picked == null) return;
-              setInnerState(() => start = picked);
-            }
-
-            Future<void> pickEnd() async {
-              final picked = await showTimePicker(
-                context: innerContext,
-                initialTime: end,
-              );
-              if (picked == null) return;
-              setInnerState(() => end = picked);
-            }
-
-            return AlertDialog(
-              title: Text(isEdit ? "تعديل دوام" : "إضافة دوام"),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  DropdownButtonFormField<String>(
-                    value: selectedDay,
-                    isExpanded: true,
-                    decoration: const InputDecoration(
-                      labelText: "اليوم",
-                      border: OutlineInputBorder(),
-                    ),
-                    items:
-                        daysEn.map((d) {
-                          final disabled = !isEdit && isDayConfigured(d);
-                          return DropdownMenuItem<String>(
-                            value: d,
-                            enabled: !disabled,
-                            child: Text(
-                              disabled ? "${labelDay(d)} (مضاف)" : labelDay(d),
-                            ),
-                          );
-                        }).toList(),
-                    onChanged: (v) {
-                      if (v == null) return;
-                      setInnerState(() => selectedDay = v);
-                    },
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: OutlinedButton(
-                          onPressed: pickStart,
-                          child: Text("بداية: ${formatTime(start)}"),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: OutlinedButton(
-                          onPressed: pickEnd,
-                          child: Text("نهاية: ${formatTime(end)}"),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-                  if (!isTimeRangeValid(start, end))
-                    Align(
-                      alignment: Alignment.centerRight,
-                      child: Text(
-                        "وقت البداية يجب أن يكون قبل وقت النهاية.",
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.error,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(dialogContext),
-                  child: const Text("إلغاء"),
-                ),
-                ElevatedButton(
-                  onPressed: () {
-                    if (!isTimeRangeValid(start, end)) {
-                      showAppSnackBar(
-                        context,
-                        "وقت البداية يجب أن يكون قبل وقت النهاية.",
-                        type: AppSnackBarType.warning,
-                      );
-                      return;
-                    }
-
-                    Navigator.pop(
-                      dialogContext,
-                      AvailabilityDialogResult(
-                        dayOfWeek: selectedDay,
-                        startTime: formatTime(start),
-                        endTime: formatTime(end),
-                      ),
+        return Directionality(
+          textDirection: TextDirection.rtl,
+          child: StatefulBuilder(
+            builder: (innerContext, setInnerState) {
+              Future<void> pickStart() async {
+                final picked = await showTimePicker(
+                  context: innerContext,
+                  initialTime: start,
+                  builder: (pickerContext, child) {
+                    return Directionality(
+                      textDirection: TextDirection.rtl,
+                      child: child ?? const SizedBox.shrink(),
                     );
                   },
-                  child: const Text("حفظ"),
+                );
+                if (picked == null) return;
+                setInnerState(() => start = picked);
+              }
+
+              Future<void> pickEnd() async {
+                final picked = await showTimePicker(
+                  context: innerContext,
+                  initialTime: end,
+                  builder: (pickerContext, child) {
+                    return Directionality(
+                      textDirection: TextDirection.rtl,
+                      child: child ?? const SizedBox.shrink(),
+                    );
+                  },
+                );
+                if (picked == null) return;
+                setInnerState(() => end = picked);
+              }
+
+              return AlertDialog(
+                title: Text(isEdit ? "تعديل دوام" : "إضافة دوام"),
+                content: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    DropdownButtonFormField<String>(
+                      value: selectedDay,
+                      isExpanded: true,
+                      decoration: const InputDecoration(
+                        labelText: "اليوم",
+                        border: OutlineInputBorder(),
+                      ),
+                      items:
+                          daysEn.map((d) {
+                            final disabled = !isEdit && isDayConfigured(d);
+                            return DropdownMenuItem<String>(
+                              value: d,
+                              enabled: !disabled,
+                              child: Align(
+                                alignment: Alignment.centerRight,
+                                child: Text(
+                                  disabled
+                                      ? "${labelDay(d)} (مضاف)"
+                                      : labelDay(d),
+                                  textAlign: TextAlign.right,
+                                ),
+                              ),
+                            );
+                          }).toList(),
+                      onChanged: (v) {
+                        if (v == null) return;
+                        setInnerState(() => selectedDay = v);
+                      },
+                    ),
+                    const SizedBox(height: 12),
+
+                    // بداية (يمين) - نهاية (يسار)
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: pickStart,
+                            child: Text("بداية: ${formatTime(start)}"),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: pickEnd,
+                            child: Text("نهاية: ${formatTime(end)}"),
+                          ),
+                        ),
+                      ],
+                    ),
+
+                    const SizedBox(height: 10),
+                    if (!isTimeRangeValid(start, end))
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: Text(
+                          "وقت البداية يجب أن يكون قبل وقت النهاية.",
+                          style: TextStyle(
+                            color: Theme.of(context).colorScheme.error,
+                            fontWeight: FontWeight.w600,
+                          ),
+                          textAlign: TextAlign.right,
+                        ),
+                      ),
+                  ],
                 ),
-              ],
-            );
-          },
+                actions: [
+                  // في RTL: نحافظ على "إلغاء" يسار و"حفظ" يمين عبر وضع "إلغاء" أولاً.
+                  TextButton(
+                    onPressed: () => Navigator.pop(dialogContext),
+                    child: const Text("إلغاء"),
+                  ),
+                  ElevatedButton(
+                    onPressed: () {
+                      if (!isTimeRangeValid(start, end)) {
+                        showAppSnackBar(
+                          context,
+                          "وقت البداية يجب أن يكون قبل وقت النهاية.",
+                          type: AppSnackBarType.warning,
+                        );
+                        return;
+                      }
+
+                      Navigator.pop(
+                        dialogContext,
+                        AvailabilityDialogResult(
+                          dayOfWeek: selectedDay,
+                          startTime: formatTime(start),
+                          endTime: formatTime(end),
+                        ),
+                      );
+                    },
+                    child: const Text("حفظ"),
+                  ),
+                ],
+              );
+            },
+          ),
         );
       },
     );
@@ -488,22 +514,25 @@ class DoctorAvailabilityScreenState extends State<DoctorAvailabilityScreen> {
       );
     }
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text("أوقات دوام الطبيب"),
-        actions: [
-          IconButton(
-            tooltip: "تحديث",
-            onPressed: loading ? null : loadData,
-            icon: const Icon(Icons.refresh),
-          ),
-        ],
-      ),
-      body: body,
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: (loading || allDaysConfigured) ? null : addAvailability,
-        icon: const Icon(Icons.add),
-        label: const Text("إضافة"),
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text("أوقات دوام الطبيب"),
+          actions: [
+            IconButton(
+              tooltip: "تحديث",
+              onPressed: loading ? null : loadData,
+              icon: const Icon(Icons.refresh),
+            ),
+          ],
+        ),
+        body: body,
+        floatingActionButton: FloatingActionButton.extended(
+          onPressed: (loading || allDaysConfigured) ? null : addAvailability,
+          icon: const Icon(Icons.add),
+          label: const Text("إضافة"),
+        ),
       ),
     );
   }

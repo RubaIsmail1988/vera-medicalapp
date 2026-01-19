@@ -98,48 +98,65 @@ class _DoctorDetailsFormScreenState extends State<DoctorDetailsFormScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text("إدخال تفاصيل الطبيب")),
-      body: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Form(
-          key: formKey,
-          child: ListView(
-            children: [
-              TextFormField(
-                controller: specialtyController,
-                decoration: const InputDecoration(labelText: "التخصص"),
-                validator:
-                    (v) => v == null || v.trim().isEmpty ? "الحقل مطلوب" : null,
-              ),
-              const SizedBox(height: 12),
-
-              TextFormField(
-                controller: experienceYearsController,
-                decoration: const InputDecoration(labelText: "سنوات الخبرة"),
-                keyboardType: TextInputType.number,
-                validator:
-                    (v) => v == null || v.trim().isEmpty ? "الحقل مطلوب" : null,
-              ),
-              const SizedBox(height: 12),
-
-              TextFormField(
-                controller: notesController,
-                decoration: const InputDecoration(labelText: "ملاحظات"),
-                maxLines: 3,
-              ),
-              const SizedBox(height: 20),
-
-              loading
-                  ? const Center(child: CircularProgressIndicator())
-                  : SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      onPressed: submitDoctorDetails,
-                      child: const Text("حفظ"),
-                    ),
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: Scaffold(
+        appBar: AppBar(title: const Text("إدخال تفاصيل الطبيب")),
+        body: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Form(
+            key: formKey,
+            child: ListView(
+              children: [
+                TextFormField(
+                  controller: specialtyController,
+                  textAlign: TextAlign.right,
+                  decoration: const InputDecoration(
+                    labelText: "التخصص",
+                    alignLabelWithHint: true,
                   ),
-            ],
+                  validator:
+                      (v) =>
+                          v == null || v.trim().isEmpty ? "الحقل مطلوب" : null,
+                ),
+                const SizedBox(height: 12),
+
+                TextFormField(
+                  controller: experienceYearsController,
+                  textAlign: TextAlign.right,
+                  decoration: const InputDecoration(
+                    labelText: "سنوات الخبرة",
+                    alignLabelWithHint: true,
+                  ),
+                  keyboardType: TextInputType.number,
+                  validator:
+                      (v) =>
+                          v == null || v.trim().isEmpty ? "الحقل مطلوب" : null,
+                ),
+                const SizedBox(height: 12),
+
+                TextFormField(
+                  controller: notesController,
+                  textAlign: TextAlign.right,
+                  decoration: const InputDecoration(
+                    labelText: "ملاحظات",
+                    alignLabelWithHint: true,
+                  ),
+                  maxLines: 3,
+                ),
+                const SizedBox(height: 20),
+
+                loading
+                    ? const Center(child: CircularProgressIndicator())
+                    : SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton(
+                        onPressed: submitDoctorDetails,
+                        child: const Text("حفظ"),
+                      ),
+                    ),
+              ],
+            ),
           ),
         ),
       ),

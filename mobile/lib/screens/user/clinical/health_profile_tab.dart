@@ -226,7 +226,7 @@ class _HealthProfileTabState extends State<HealthProfileTab> {
           const Card(
             child: ListTile(
               leading: Icon(Icons.health_and_safety_outlined),
-              title: Text("الملف الصحي"),
+              title: Text("البيانات الشخصية"),
             ),
           ),
           const SizedBox(height: 8),
@@ -246,7 +246,7 @@ class _HealthProfileTabState extends State<HealthProfileTab> {
           _infoTile(icon: Icons.wc_outlined, title: "الجنس", value: gender),
           _infoTile(
             icon: Icons.bloodtype_outlined,
-            title: "فصيلة الدم",
+            title: "زمرة الدم",
             value: bloodType,
           ),
           _infoTile(
@@ -254,11 +254,7 @@ class _HealthProfileTabState extends State<HealthProfileTab> {
             title: "الأمراض المزمنة",
             value: chronic,
           ),
-          _infoTile(
-            icon: Icons.notes_outlined,
-            title: "ملاحظات صحية",
-            value: notes,
-          ),
+          _infoTile(icon: Icons.notes_outlined, title: "ملاحظات", value: notes),
         ],
       ),
     );

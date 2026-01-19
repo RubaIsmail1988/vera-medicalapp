@@ -95,23 +95,37 @@ Future<bool> showConfirmDialog(
   String cancelText = 'إلغاء',
   bool danger = false,
 }) async {
+  final cs = Theme.of(context).colorScheme;
+
   final result = await showDialog<bool>(
     context: context,
     barrierDismissible: false,
     builder: (ctx) {
-      return AlertDialog(
-        title: Text(title),
-        content: Text(message),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: Text(cancelText),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: Text(confirmText),
-          ),
-        ],
+      return Directionality(
+        textDirection: TextDirection.rtl,
+        child: AlertDialog(
+          title: Text(title, textAlign: TextAlign.right),
+          content: Text(message, textAlign: TextAlign.right),
+          actions: [
+            // إلغاء على اليسار
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text(cancelText),
+            ),
+            // تأكيد/حذف على اليمين
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              style:
+                  danger
+                      ? FilledButton.styleFrom(
+                        backgroundColor: cs.error,
+                        foregroundColor: cs.onError,
+                      )
+                      : null,
+              child: Text(confirmText),
+            ),
+          ],
+        ),
       );
     },
   );

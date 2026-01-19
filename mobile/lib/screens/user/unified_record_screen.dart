@@ -32,7 +32,8 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
     with SingleTickerProviderStateMixin {
   static const int tabOrders = 0;
 
-  static const List<String> _recordTabPaths = <String>[
+  // Patient tabs (5)
+  static const List<String> _patientRecordTabPaths = <String>[
     "/app/record",
     "/app/record/files",
     "/app/record/prescripts",
@@ -40,7 +41,15 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
     "/app/record/health-profile",
   ];
 
-  late final TabController tabController;
+  // Doctor tabs (4) — NO files
+  static const List<String> _doctorRecordTabPaths = <String>[
+    "/app/record",
+    "/app/record/prescripts",
+    "/app/record/adherence",
+    "/app/record/health-profile",
+  ];
+
+  late TabController tabController;
   late final ClinicalService clinicalService;
 
   String currentUserName = "";
@@ -60,6 +69,9 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
 
   bool get isDoctor => effectiveRole == "doctor";
   bool get isPatient => effectiveRole == "patient";
+
+  List<String> get _recordTabPaths =>
+      isDoctor ? _doctorRecordTabPaths : _patientRecordTabPaths;
 
   String get roleLabel {
     if (effectiveRole == "doctor") return "طبيب";
@@ -121,11 +133,11 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
     return (w == "doctor") ? "doctor" : "patient";
   }
 
-  int _tabIndexFromStatePath() {
+  int _tabIndexFromStatePath(List<String> paths) {
     final path = _state().uri.path;
 
-    for (int i = 0; i < _recordTabPaths.length; i++) {
-      if (path == _recordTabPaths[i]) return i;
+    for (int i = 0; i < paths.length; i++) {
+      if (path == paths[i]) return i;
     }
     return tabOrders;
   }
@@ -145,10 +157,10 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
   }
 
   String _buildRecordLocationForTab(int index) {
-    final safeIndex =
-        (index >= 0 && index < _recordTabPaths.length) ? index : tabOrders;
+    final paths = _recordTabPaths;
 
-    final base = _recordTabPaths[safeIndex];
+    final safeIndex = (index >= 0 && index < paths.length) ? index : tabOrders;
+    final base = paths[safeIndex];
 
     final qp = <String, String>{};
     qp["role"] = effectiveRole;
@@ -232,14 +244,34 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
   // Sync from route whenever route changes (mobile/web)
   // ---------------------------------------------------------------------------
 
+  void _recreateTabControllerIfNeeded(int newLen, int desiredIndex) {
+    if (tabController.length == newLen) {
+      if (desiredIndex != tabController.index) {
+        tabController.index = desiredIndex;
+      }
+      return;
+    }
+
+    final old = tabController;
+    tabController = TabController(
+      length: newLen,
+      initialIndex: desiredIndex.clamp(0, newLen - 1),
+      vsync: this,
+    );
+    old.dispose();
+  }
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
 
-    // Sync role/tab/patient/appointment from current route.
-    // This fixes the "lost selection on phone" issue.
     final newRole = _readRoleFromStateOrFallback();
-    final newTabIndex = _tabIndexFromStatePath();
+
+    // Determine paths based on NEW role
+    final pathsForNewRole =
+        (newRole == "doctor") ? _doctorRecordTabPaths : _patientRecordTabPaths;
+
+    final newTabIndex = _tabIndexFromStatePath(pathsForNewRole);
 
     final newApptId = _readAppointmentIdFromState();
     final newPid = _readPatientIdFromState();
@@ -251,10 +283,18 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
         !_initializedFromRoute ||
         effectiveRole != newRole ||
         selectedAppointmentId != newApptId ||
-        selectedPatientId != pidForDoctor ||
-        tabController.index != newTabIndex;
+        selectedPatientId != pidForDoctor;
 
-    if (!needsSetState) return;
+    // If doctor tries to open /app/record/files, redirect to /app/record (orders)
+    final currentPath = _state().uri.path;
+    final isFilesPath = currentPath == "/app/record/files";
+    if (newRole == "doctor" && isFilesPath) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        // keep same query parameters but go to /app/record
+        context.go(_buildRecordLocationForTab(tabOrders));
+      });
+    }
 
     _initializedFromRoute = true;
 
@@ -266,11 +306,9 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
       if (selectedPatientId != null) {
         selectedPatientName = null;
       }
-      // Load patients list (optional dropdown support)
       if (!loadingPatients && patientOptions.isEmpty) {
         loadingPatients = true;
         patientsErrorMessage = null;
-        // تأخير بسيط لتجنب setState داخل didChangeDependencies مباشرة
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!mounted) return;
           setState(() {
@@ -285,11 +323,10 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
       selectedPatientName = null;
     }
 
-    // Move tab controller to correct index without triggering extra navigation
-    if (newTabIndex != tabController.index) {
-      tabController.index = newTabIndex;
-    }
+    // Ensure controller length matches role tabs
+    _recreateTabControllerIfNeeded(pathsForNewRole.length, newTabIndex);
 
+    if (!needsSetState) return;
     if (mounted) setState(() {});
   }
 
@@ -510,14 +547,6 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
                               ),
                             ),
                           ),
-                          const SizedBox(height: 12),
-                          _stateCard(
-                            icon: Icons.info_outline,
-                            title: "ملاحظة",
-                            message:
-                                "سيتم استخدام هذا الاختيار لعرض الطلبات والملفات والوصفات والالتزام الدوائي والملف الصحي.",
-                            tone: AppSnackBarType.info,
-                          ),
                         ],
                       ),
                     ),
@@ -539,6 +568,10 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
     final hasAppt = apptId != null && apptId > 0;
     final apptKey = (selectedAppointmentId ?? 0);
 
+    // قاعدة موحدة للخطوة القادمة:
+    // الطبيب لا يستطيع الإنشاء إلا ضمن سياق موعد
+    //final bool doctorCanCreate = !isDoctor || hasAppt;
+
     return Column(
       children: [
         _headerTile(titleText: subtitleText),
@@ -549,7 +582,6 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
             child: Card(
               child: ListTile(
                 leading: const Icon(Icons.event_available),
-                title: Text("سياق الموعد: #$apptId"),
                 subtitle: const Text(
                   "يتم عرض العناصر المرتبطة بهذا الموعد فقط.",
                 ),
@@ -580,59 +612,112 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
             }
             context.go(_buildRecordLocationForTab(index));
           },
-          tabs: const [
-            Tab(text: "الطلبات"),
-            Tab(text: "الملفات"),
-            Tab(text: "الوصفات"),
-            Tab(text: "الالتزام"),
-            Tab(text: "الملف الصحي"),
-          ],
+          tabs:
+              isDoctor
+                  ? const [
+                    Tab(text: "الطلبات"),
+                    Tab(text: "الوصفات"),
+                    Tab(text: "الالتزام"),
+                    Tab(text: "البيانات"),
+                  ]
+                  : const [
+                    Tab(text: "الطلبات"),
+                    Tab(text: "رفع الملفات"),
+                    Tab(text: "الوصفات"),
+                    Tab(text: "الالتزام"),
+                    Tab(text: "البيانات"),
+                  ],
         ),
+
         Expanded(
           child: TabBarView(
             controller: tabController,
-            children: [
-              OrdersTab(
-                key: ValueKey<String>("orders-$patientContextId-$apptKey"),
-                role: effectiveRole,
-                userId: widget.userId,
-                selectedPatientId: patientContextId,
-                selectedAppointmentId: selectedAppointmentId,
-              ),
-              FilesTab(
-                key: ValueKey<String>(
-                  "files-$patientContextId-${selectedAppointmentId ?? 0}",
-                ),
-                role: effectiveRole,
-                userId: widget.userId,
-                selectedPatientId: patientContextId,
-                selectedAppointmentId: selectedAppointmentId,
-              ),
-              PrescriptionsTab(
-                key: ValueKey<String>(
-                  "prescriptions-$patientContextId-$apptKey",
-                ),
-                role: effectiveRole,
-                userId: widget.userId,
-                selectedPatientId: patientContextId,
-                selectedAppointmentId: selectedAppointmentId,
-              ),
-              AdherenceTab(
-                key: ValueKey<String>(
-                  "adherence-$patientContextId-${selectedAppointmentId ?? 0}",
-                ),
-                role: effectiveRole,
-                userId: widget.userId,
-                selectedPatientId: patientContextId,
-                selectedAppointmentId: selectedAppointmentId,
-              ),
-              HealthProfileTab(
-                key: ValueKey<String>("health-profile-$patientContextId"),
-                role: effectiveRole,
-                userId: widget.userId,
-                selectedPatientId: patientContextId,
-              ),
-            ],
+            children:
+                isDoctor
+                    ? [
+                      OrdersTab(
+                        key: ValueKey<String>(
+                          "orders-$patientContextId-$apptKey",
+                        ),
+                        role: effectiveRole,
+                        userId: widget.userId,
+                        selectedPatientId: patientContextId,
+                        selectedAppointmentId: selectedAppointmentId,
+                        // ملاحظة: سنستخدم doctorCanCreate داخل OrdersTab لاحقًا لإخفاء زر الإنشاء
+                      ),
+                      PrescriptionsTab(
+                        key: ValueKey<String>(
+                          "prescriptions-$patientContextId-$apptKey",
+                        ),
+                        role: effectiveRole,
+                        userId: widget.userId,
+                        selectedPatientId: patientContextId,
+                        selectedAppointmentId: selectedAppointmentId,
+                      ),
+                      AdherenceTab(
+                        key: ValueKey<String>(
+                          "adherence-$patientContextId-${selectedAppointmentId ?? 0}",
+                        ),
+                        role: effectiveRole,
+                        userId: widget.userId,
+                        selectedPatientId: patientContextId,
+                        selectedAppointmentId: selectedAppointmentId,
+                      ),
+                      HealthProfileTab(
+                        key: ValueKey<String>(
+                          "health-profile-$patientContextId",
+                        ),
+                        role: effectiveRole,
+                        userId: widget.userId,
+                        selectedPatientId: patientContextId,
+                      ),
+                    ]
+                    : [
+                      OrdersTab(
+                        key: ValueKey<String>(
+                          "orders-$patientContextId-$apptKey",
+                        ),
+                        role: effectiveRole,
+                        userId: widget.userId,
+                        selectedPatientId: patientContextId,
+                        selectedAppointmentId: selectedAppointmentId,
+                      ),
+                      FilesTab(
+                        key: ValueKey<String>(
+                          "files-$patientContextId-${selectedAppointmentId ?? 0}",
+                        ),
+                        role: effectiveRole,
+                        userId: widget.userId,
+                        selectedPatientId: patientContextId,
+                        selectedAppointmentId: selectedAppointmentId,
+                      ),
+                      PrescriptionsTab(
+                        key: ValueKey<String>(
+                          "prescriptions-$patientContextId-$apptKey",
+                        ),
+                        role: effectiveRole,
+                        userId: widget.userId,
+                        selectedPatientId: patientContextId,
+                        selectedAppointmentId: selectedAppointmentId,
+                      ),
+                      AdherenceTab(
+                        key: ValueKey<String>(
+                          "adherence-$patientContextId-${selectedAppointmentId ?? 0}",
+                        ),
+                        role: effectiveRole,
+                        userId: widget.userId,
+                        selectedPatientId: patientContextId,
+                        selectedAppointmentId: selectedAppointmentId,
+                      ),
+                      HealthProfileTab(
+                        key: ValueKey<String>(
+                          "health-profile-$patientContextId",
+                        ),
+                        role: effectiveRole,
+                        userId: widget.userId,
+                        selectedPatientId: patientContextId,
+                      ),
+                    ],
           ),
         ),
       ],

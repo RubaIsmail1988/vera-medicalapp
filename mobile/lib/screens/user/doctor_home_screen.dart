@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:go_router/go_router.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class DoctorHomeScreen extends StatefulWidget {
@@ -18,15 +17,15 @@ class DoctorHomeScreen extends StatefulWidget {
 
 class _DoctorHomeScreenState extends State<DoctorHomeScreen> {
   String? userName;
-  bool loadingName = true;
 
   @override
   void initState() {
     super.initState();
-    loadUserName();
+    // ignore: unawaited_futures
+    _loadUserName();
   }
 
-  Future<void> loadUserName() async {
+  Future<void> _loadUserName() async {
     final prefs = await SharedPreferences.getInstance();
     final savedName = prefs.getString('currentUserName');
 
@@ -34,20 +33,14 @@ class _DoctorHomeScreenState extends State<DoctorHomeScreen> {
 
     setState(() {
       userName = savedName;
-      loadingName = false;
     });
   }
 
   @override
   Widget build(BuildContext context) {
-    if (loadingName) {
-      return const Center(child: CircularProgressIndicator());
-    }
+    final name = (userName ?? '').trim();
 
-    final greeting =
-        (userName != null && userName!.trim().isNotEmpty)
-            ? 'أهلاً بك يا ${userName!}'
-            : 'أهلاً بك';
+    final greeting = name.isNotEmpty ? 'أهلًا د. $name' : 'أهلًا بك';
 
     return Center(
       child: SingleChildScrollView(
@@ -60,34 +53,19 @@ class _DoctorHomeScreenState extends State<DoctorHomeScreen> {
               Text(
                 greeting,
                 textAlign: TextAlign.center,
-                style: const TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.w600,
-                ),
+                style: Theme.of(
+                  context,
+                ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 10),
               Text(
-                'يمكنك إدارة الإضبارة الطبية، متابعة المواعيد، ومراجعة الملفات عبر التبويبات بالأسفل.\n'
-                'إعدادات الحساب والجدولة وطلبات الحذف  ضمن تبويب "الحساب".',
+                'يمكنك متابعة عملك عبر التبويبات بالأسفل.',
                 textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 14,
-                  height: 1.5,
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  height: 1.6,
                   color: Theme.of(
                     context,
                   ).colorScheme.onSurface.withValues(alpha: 0.70),
-                ),
-              ),
-
-              const SizedBox(height: 24),
-
-              // اختياري: Shortcut مفيد
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton.icon(
-                  onPressed: () => context.go('/app/record'),
-                  icon: const Icon(Icons.folder_shared),
-                  label: const Text('فتح الإضبارة الطبية'),
                 ),
               ),
             ],

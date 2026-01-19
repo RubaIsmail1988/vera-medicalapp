@@ -36,6 +36,12 @@ class _OrdersTabState extends State<OrdersTab> {
   bool get isDoctor => widget.role == "doctor";
   bool get isPatient => widget.role == "patient";
 
+  bool get hasApptFilter =>
+      widget.selectedAppointmentId != null && widget.selectedAppointmentId! > 0;
+
+  /// المطلوب: الطبيب لا يُنشئ طلبًا إلا ضمن سياق موعد
+  bool get canDoctorCreateOrder => isDoctor && hasApptFilter;
+
   @override
   void initState() {
     super.initState();
@@ -169,6 +175,7 @@ class _OrdersTabState extends State<OrdersTab> {
   }
 
   Future<void> _createOrderFlow() async {
+    // هذا التحقق يبقى موجودًا كحماية ثانية (حتى لو أخفينا الزر)
     if (!isDoctor) {
       showAppSnackBar(
         context,
@@ -292,13 +299,10 @@ class _OrdersTabState extends State<OrdersTab> {
 
   @override
   Widget build(BuildContext context) {
-    final hasApptFilter =
-        widget.selectedAppointmentId != null &&
-        widget.selectedAppointmentId! > 0;
-
     return Column(
       children: [
-        if (isDoctor)
+        // المطلوب: لا نُظهر زر "إنشاء طلب" للطبيب إلا إذا كان هناك appointmentId
+        if (canDoctorCreateOrder)
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
             child: SizedBox(
@@ -310,6 +314,7 @@ class _OrdersTabState extends State<OrdersTab> {
               ),
             ),
           ),
+
         Expanded(
           child: FutureBuilder<List<Map<String, dynamic>>>(
             future: ordersFuture,

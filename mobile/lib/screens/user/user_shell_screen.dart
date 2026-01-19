@@ -222,6 +222,9 @@ class _UserShellScreenState extends State<UserShellScreen> {
   }
 
   Widget buildAccountTab(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+
     final roleFromBackend = userRole ?? role;
 
     final roleLabel =
@@ -236,104 +239,143 @@ class _UserShellScreenState extends State<UserShellScreen> {
             ? userName!
             : 'مستخدم';
 
-    String activationText = 'الحالة: غير معروفة';
-    Color activationColor = Colors.grey;
-
-    if (isActive == true) {
-      activationText = 'الحالة: مفعّل';
-      activationColor = Colors.green;
-    } else if (isActive == false) {
-      activationText = 'الحالة: غير مفعّل';
-      activationColor = Colors.orange;
-    }
+    final bool isDoctor = roleFromBackend == 'doctor';
 
     final bool canOpenDetails =
         token.isNotEmpty &&
         userId != 0 &&
         (roleFromBackend != 'doctor' || isActive == true);
 
-    final bool isDoctor = roleFromBackend == 'doctor';
+    final String activationText;
+    final Color activationColor;
 
-    return Center(
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.all(24),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 520),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(Icons.account_circle, size: 80),
-              const SizedBox(height: 16),
-              Text(displayName, style: Theme.of(context).textTheme.titleLarge),
-              const SizedBox(height: 4),
-              Text(
-                'الدور: $roleLabel',
-                style: Theme.of(context).textTheme.bodyMedium,
-              ),
-              const SizedBox(height: 4),
-              if (userEmail != null && userEmail!.trim().isNotEmpty)
-                Text(userEmail!, style: Theme.of(context).textTheme.bodySmall),
-              const SizedBox(height: 8),
-              Text(
-                activationText,
-                style: TextStyle(fontSize: 14, color: activationColor),
-              ),
-              const SizedBox(height: 24),
+    if (isActive == true) {
+      activationText = 'الحالة: مفعّل';
+      activationColor = cs.primary;
+    } else if (isActive == false) {
+      activationText = 'الحالة: غير مفعّل';
+      activationColor = cs.error;
+    } else {
+      activationText = 'الحالة: غير معروفة';
+      activationColor = cs.onSurface.withValues(alpha: 0.60);
+    }
 
-              // عرض / تعديل البيانات
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed:
-                      canOpenDetails
-                          ? () => openDetails(roleFromBackend)
-                          : null,
-                  child: const Text('عرض / تعديل البيانات'),
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 520),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.account_circle,
+                  size: 84,
+                  color: cs.onSurface.withValues(alpha: 0.85),
                 ),
-              ),
+                const SizedBox(height: 16),
 
-              // إعدادات الجدولة (للطبيب فقط)
-              if (isDoctor) ...[
-                const SizedBox(height: 12),
+                Text(
+                  displayName,
+                  textAlign: TextAlign.center,
+                  style: textTheme.titleLarge?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 6),
+
+                Text(
+                  'الدور: $roleLabel',
+                  style: textTheme.bodyMedium?.copyWith(
+                    color: cs.onSurface.withValues(alpha: 0.80),
+                  ),
+                ),
+
+                if (userEmail != null && userEmail!.trim().isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    userEmail!,
+                    style: textTheme.bodySmall?.copyWith(
+                      color: cs.onSurface.withValues(alpha: 0.75),
+                    ),
+                  ),
+                ],
+
+                const SizedBox(height: 10),
+                Text(
+                  activationText,
+                  style: textTheme.bodyMedium?.copyWith(
+                    color: activationColor,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+
+                const SizedBox(height: 24),
+
+                // 1) إدارة الحساب (أساسي)
                 SizedBox(
                   width: double.infinity,
-                  child: ElevatedButton(
-                    onPressed: () => context.go('/app/doctor/scheduling'),
-                    child: const Text('إعدادات الجدولة'),
+                  child: FilledButton(
+                    onPressed:
+                        canOpenDetails
+                            ? () => openDetails(roleFromBackend)
+                            : null,
+                    child: const Text('عرض / تعديل البيانات'),
+                  ),
+                ),
+
+                if (isDoctor) ...[
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton(
+                      onPressed: () => context.go('/app/doctor/scheduling'),
+                      child: const Text('إعدادات الجدولة'),
+                    ),
+                  ),
+                ],
+
+                const SizedBox(height: 18),
+                Divider(color: cs.onSurface.withValues(alpha: 0.12)),
+                const SizedBox(height: 14),
+
+                // 2) حذف الحساب (حساس)
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton(
+                    onPressed: () => requestAccountDeletion(context),
+                    style: OutlinedButton.styleFrom(
+                      side: BorderSide(color: cs.error.withValues(alpha: 0.75)),
+                      foregroundColor: cs.error,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                    ),
+                    child: const Text('طلب حذف الحساب'),
+                  ),
+                ),
+
+                const SizedBox(height: 6),
+                TextButton(
+                  onPressed: () => context.go('/app/account/deletion-status'),
+                  child: const Text('عرض حالة طلب حذف الحساب'),
+                ),
+
+                const SizedBox(height: 18),
+                Divider(color: cs.onSurface.withValues(alpha: 0.12)),
+                const SizedBox(height: 14),
+
+                // 3) تسجيل الخروج (منفصل)
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    onPressed: logout,
+                    icon: const Icon(Icons.logout),
+                    label: const Text('تسجيل الخروج'),
                   ),
                 ),
               ],
-
-              const SizedBox(height: 12),
-
-              // طلب حذف الحساب (للطبيب والمريض)
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: () => requestAccountDeletion(context),
-                  child: const Text('طلب حذف الحساب'),
-                ),
-              ),
-
-              const SizedBox(height: 8),
-
-              TextButton(
-                onPressed: () => context.go('/app/account/deletion-status'),
-                child: const Text('عرض حالة طلب حذف الحساب'),
-              ),
-
-              const SizedBox(height: 16),
-
-              // تسجيل الخروج
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  onPressed: logout,
-                  icon: const Icon(Icons.logout),
-                  label: const Text('تسجيل الخروج'),
-                ),
-              ),
-            ],
+            ),
           ),
         ),
       ),
@@ -411,6 +453,7 @@ class _UserShellScreenState extends State<UserShellScreen> {
 
     return Scaffold(
       appBar: AppBar(
+        automaticallyImplyLeading: false, // يمنع سهم الرجوع في التابات الأساسية
         title: Text(appBarTitle()),
         actions:
             currentIndex == 0
@@ -431,6 +474,7 @@ class _UserShellScreenState extends State<UserShellScreen> {
                 ]
                 : null,
       ),
+
       floatingActionButton: _buildFloatingActionButton(),
       body: buildBody(context),
       bottomNavigationBar: BottomNavigationBar(

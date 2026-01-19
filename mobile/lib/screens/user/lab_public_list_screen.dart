@@ -84,75 +84,135 @@ class _LabPublicListScreenState extends State<LabPublicListScreen> {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
 
-    // مهم: بدون Scaffold وبدون AppBar (لأنها داخل UserShell)
-    return Column(
-      children: [
-        if (loadingGovernorates)
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 12),
-            child: LinearProgressIndicator(),
-          ),
-        Expanded(
-          child: FutureBuilder<List<Lab>>(
-            future: futureLabs,
-            builder: (context, snapshot) {
-              if (snapshot.connectionState == ConnectionState.waiting) {
-                return const Center(child: CircularProgressIndicator());
-              }
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: Column(
+        children: [
+          if (loadingGovernorates)
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 12),
+              child: LinearProgressIndicator(),
+            ),
+          Expanded(
+            child: FutureBuilder<List<Lab>>(
+              future: futureLabs,
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Center(child: CircularProgressIndicator());
+                }
 
-              if (snapshot.hasError) {
-                return const Center(
-                  child: Text('حدث خطأ أثناء جلب قائمة المخابر.'),
+                if (snapshot.hasError) {
+                  return const Center(
+                    child: Text('حدث خطأ أثناء جلب قائمة المخابر.'),
+                  );
+                }
+
+                final labs = snapshot.data ?? [];
+
+                if (labs.isEmpty) {
+                  return const Center(
+                    child: Text('لا توجد مخابر متاحة حاليًا.'),
+                  );
+                }
+
+                return RefreshIndicator(
+                  onRefresh: refresh,
+                  child: ListView.separated(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    padding: const EdgeInsets.all(16),
+                    itemCount: labs.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 8),
+                    itemBuilder: (context, index) {
+                      final lab = labs[index];
+                      final govName = governorateNamesById[lab.governorate];
+
+                      return Card(
+                        elevation: 1,
+                        child: ListTile(
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 12,
+                          ),
+                          title: Text(
+                            lab.name,
+                            style: textTheme.titleMedium?.copyWith(
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          subtitle: Padding(
+                            padding: const EdgeInsets.only(top: 8),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                _InfoRow(
+                                  icon: Icons.location_city,
+                                  text: govName ?? '—',
+                                ),
+                                if (lab.specialty != null &&
+                                    lab.specialty!.trim().isNotEmpty)
+                                  _InfoRow(
+                                    icon: Icons.science_outlined,
+                                    text: lab.specialty!,
+                                  ),
+                                if (lab.contactInfo != null &&
+                                    lab.contactInfo!.trim().isNotEmpty)
+                                  _InfoRow(
+                                    icon: Icons.phone_outlined,
+                                    text: lab.contactInfo!,
+                                    textColor: cs.primary,
+                                  ),
+                              ],
+                            ),
+                          ),
+                          trailing: Icon(
+                            Icons.chevron_right_rounded,
+                            color: cs.onSurface.withValues(alpha: 0.55),
+                          ),
+                          onTap: () => openDetails(lab),
+                        ),
+                      );
+                    },
+                  ),
                 );
-              }
-
-              final labs = snapshot.data ?? [];
-
-              if (labs.isEmpty) {
-                return const Center(child: Text('لا توجد مخابر متاحة حالياً.'));
-              }
-
-              return RefreshIndicator(
-                onRefresh: refresh,
-                child: ListView.separated(
-                  physics: const AlwaysScrollableScrollPhysics(),
-                  padding: const EdgeInsets.all(16),
-                  itemCount: labs.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 8),
-                  itemBuilder: (context, index) {
-                    final lab = labs[index];
-                    final govName = governorateNamesById[lab.governorate];
-
-                    return Card(
-                      child: ListTile(
-                        title: Text(lab.name),
-                        subtitle: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text('المحافظة: ${govName ?? '—'}'),
-                            if (lab.specialty != null &&
-                                lab.specialty!.trim().isNotEmpty)
-                              Text('الاختصاص: ${lab.specialty}'),
-                            if (lab.contactInfo != null &&
-                                lab.contactInfo!.trim().isNotEmpty)
-                              Text('الاتصال: ${lab.contactInfo}'),
-                          ],
-                        ),
-                        trailing: Icon(
-                          Icons.chevron_right_rounded,
-                          color: cs.onSurface.withValues(alpha: 0.55),
-                        ),
-                        onTap: () => openDetails(lab),
-                      ),
-                    );
-                  },
-                ),
-              );
-            },
+              },
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
+    );
+  }
+}
+
+class _InfoRow extends StatelessWidget {
+  final IconData icon;
+  final String text;
+  final Color? textColor;
+
+  const _InfoRow({required this.icon, required this.text, this.textColor});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Row(
+        children: [
+          Icon(icon, size: 16, color: cs.onSurface.withValues(alpha: 0.65)),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              text,
+              style: textTheme.bodyMedium?.copyWith(
+                color: textColor ?? cs.onSurface.withValues(alpha: 0.85),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

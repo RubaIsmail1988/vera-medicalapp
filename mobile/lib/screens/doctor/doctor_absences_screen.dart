@@ -244,119 +244,122 @@ class _DoctorAbsencesScreenState extends State<DoctorAbsencesScreen> {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('غيابات الطبيب'),
-        centerTitle: true,
-        automaticallyImplyLeading: true,
-        backgroundColor: cs.surface,
-        foregroundColor: cs.onSurface,
-        scrolledUnderElevation: 0,
-        elevation: 0,
-        actions: [
-          IconButton(
-            tooltip: 'تحديث',
-            onPressed: fetchAbsences,
-            icon: const Icon(Icons.refresh),
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('غيابات الطبيب'),
+          centerTitle: true,
+          automaticallyImplyLeading: true,
+          backgroundColor: cs.surface,
+          foregroundColor: cs.onSurface,
+          scrolledUnderElevation: 0,
+          elevation: 0,
+          actions: [
+            IconButton(
+              tooltip: 'تحديث',
+              onPressed: fetchAbsences,
+              icon: const Icon(Icons.refresh),
+            ),
+          ],
+          leading: IconButton(
+            tooltip: 'رجوع',
+            icon: const Icon(Icons.arrow_back),
+            onPressed: () {
+              if (context.canPop()) {
+                context.pop();
+              } else {
+                Navigator.of(context).maybePop();
+              }
+            },
           ),
-        ],
-        leading: IconButton(
-          tooltip: 'رجوع',
-          icon: const Icon(Icons.arrow_back),
-          onPressed: () {
-            if (context.canPop()) {
-              context.pop();
-            } else {
-              Navigator.of(context).maybePop();
-            }
-          },
         ),
-      ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _openCreateDialog,
-        icon: const Icon(Icons.add),
-        label: const Text('إضافة غياب'),
-      ),
-      body: SafeArea(
-        child: Builder(
-          builder: (_) {
-            if (loading) {
-              return const Center(child: CircularProgressIndicator());
-            }
+        floatingActionButton: FloatingActionButton.extended(
+          onPressed: _openCreateDialog,
+          icon: const Icon(Icons.add),
+          label: const Text('إضافة غياب'),
+        ),
+        body: SafeArea(
+          child: Builder(
+            builder: (_) {
+              if (loading) {
+                return const Center(child: CircularProgressIndicator());
+              }
 
-            if (errorMessage != null) {
-              return Center(child: Text(errorMessage!));
-            }
+              if (errorMessage != null) {
+                return Center(child: Text(errorMessage!));
+              }
 
-            return RefreshIndicator(
-              onRefresh: fetchAbsences,
-              child: ListView(
-                padding: const EdgeInsets.fromLTRB(12, 12, 12, 90),
-                children: [
-                  Text(
-                    'تؤثر الغيابات على الحجز وتوليد المواعيد المتاحة (Slots).',
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                  const SizedBox(height: 12),
+              return RefreshIndicator(
+                onRefresh: fetchAbsences,
+                child: ListView(
+                  padding: const EdgeInsets.fromLTRB(12, 12, 12, 90),
+                  children: [
+                    Text(
+                      'تؤثر الغيابات على الحجز وتوليد المواعيد المتاحة (Slots).',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                    const SizedBox(height: 12),
 
-                  if (absences.isEmpty)
-                    const Center(
-                      child: Padding(
-                        padding: EdgeInsets.only(top: 32),
-                        child: Text('لا توجد غيابات حالياً.'),
-                      ),
-                    )
-                  else
-                    ...absences.map((a) {
-                      final notes = (a.notes ?? '').trim();
-                      final subtitle =
-                          'من: ${_fmtDateTime(a.startTime)}\n'
-                          'إلى: ${_fmtDateTime(a.endTime)}\n'
-                          'النوع: ${_typeLabel(a.type)}'
-                          '${notes.isNotEmpty ? "\nملاحظات: $notes" : ""}';
+                    if (absences.isEmpty)
+                      const Center(
+                        child: Padding(
+                          padding: EdgeInsets.only(top: 32),
+                          child: Text('لا توجد غيابات حالياً.'),
+                        ),
+                      )
+                    else
+                      ...absences.map((a) {
+                        final notes = (a.notes ?? '').trim();
+                        final subtitle =
+                            'من: ${_fmtDateTime(a.startTime)}\n'
+                            'إلى: ${_fmtDateTime(a.endTime)}\n'
+                            'النوع: ${_typeLabel(a.type)}'
+                            '${notes.isNotEmpty ? "\nملاحظات: $notes" : ""}';
 
-                      return Padding(
-                        padding: const EdgeInsets.only(bottom: 8),
-                        child: Card(
-                          elevation: 0,
-                          child: ListTile(
-                            leading: const CircleAvatar(
-                              child: Icon(Icons.event_busy),
-                            ),
-                            title: const Text(
-                              'غياب',
-                              style: TextStyle(fontWeight: FontWeight.w700),
-                            ),
-                            subtitle: Text(subtitle),
-                            trailing: PopupMenuButton<String>(
-                              onSelected: (v) async {
-                                if (v == 'edit') {
-                                  await _openEditDialog(a);
-                                }
-                                if (v == 'delete') {
-                                  await deleteAbsence(a);
-                                }
-                              },
-                              itemBuilder:
-                                  (_) => const [
-                                    PopupMenuItem(
-                                      value: 'edit',
-                                      child: Text('تعديل'),
-                                    ),
-                                    PopupMenuItem(
-                                      value: 'delete',
-                                      child: Text('حذف'),
-                                    ),
-                                  ],
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: Card(
+                            elevation: 0,
+                            child: ListTile(
+                              leading: const CircleAvatar(
+                                child: Icon(Icons.event_busy),
+                              ),
+                              title: const Text(
+                                'غياب',
+                                style: TextStyle(fontWeight: FontWeight.w700),
+                              ),
+                              subtitle: Text(subtitle),
+                              trailing: PopupMenuButton<String>(
+                                onSelected: (v) async {
+                                  if (v == 'edit') {
+                                    await _openEditDialog(a);
+                                  }
+                                  if (v == 'delete') {
+                                    await deleteAbsence(a);
+                                  }
+                                },
+                                itemBuilder:
+                                    (_) => const [
+                                      PopupMenuItem(
+                                        value: 'edit',
+                                        child: Text('تعديل'),
+                                      ),
+                                      PopupMenuItem(
+                                        value: 'delete',
+                                        child: Text('حذف'),
+                                      ),
+                                    ],
+                              ),
                             ),
                           ),
-                        ),
-                      );
-                    }),
-                ],
-              ),
-            );
-          },
+                        );
+                      }),
+                  ],
+                ),
+              );
+            },
+          ),
         ),
       ),
     );

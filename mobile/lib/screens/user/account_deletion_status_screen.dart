@@ -299,43 +299,49 @@ class _AccountDeletionStatusScreenState
         if (didPop) return;
         context.go('/app/account'); // الرجوع إلى صفحة الاعدادات
       },
-      child: Scaffold(
-        appBar: AppBar(
-          title: const Text('حالة طلب حذف الحساب'),
-          leading: IconButton(
-            icon: const Icon(Icons.arrow_back),
-            onPressed: () {
-              context.go('/app/account'); // نفس السلوك عند الضغط على السهم
-            },
+      child: Directionality(
+        textDirection: TextDirection.rtl,
+        child: Scaffold(
+          appBar: AppBar(
+            title: const Text('حالة طلب حذف الحساب'),
+            leading: IconButton(
+              icon: const Icon(Icons.arrow_back),
+              onPressed: () {
+                context.go('/app/account'); // نفس السلوك عند الضغط على السهم
+              },
+            ),
           ),
-        ),
-        body:
-            loading
-                ? const Center(child: CircularProgressIndicator())
-                : errorMessage != null
-                ? statusView(
-                  icon: Icons.error_outline,
-                  iconColor: cs.error,
-                  title: 'حدث خطأ',
-                  message: errorMessage!,
-                )
-                : buildStatusContent(context),
-        bottomNavigationBar:
-            (!loading && errorMessage == null && canRequestDeletion && isActive)
-                ? SafeArea(
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-                    child: SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton.icon(
-                        onPressed: openDeletionRequestDialog,
-                        icon: const Icon(Icons.delete_outline),
-                        label: const Text('إرسال طلب حذف حساب'),
+          body:
+              loading
+                  ? const Center(child: CircularProgressIndicator())
+                  : errorMessage != null
+                  ? statusView(
+                    icon: Icons.error_outline,
+                    iconColor: cs.error,
+                    title: 'حدث خطأ',
+                    message: errorMessage!,
+                  )
+                  : buildStatusContent(context),
+          bottomNavigationBar:
+              (!loading &&
+                      errorMessage == null &&
+                      canRequestDeletion &&
+                      isActive)
+                  ? SafeArea(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                      child: SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton.icon(
+                          onPressed: openDeletionRequestDialog,
+                          icon: const Icon(Icons.delete_outline),
+                          label: const Text('إرسال طلب حذف حساب'),
+                        ),
                       ),
                     ),
-                  ),
-                )
-                : null,
+                  )
+                  : null,
+        ),
       ),
     );
   }

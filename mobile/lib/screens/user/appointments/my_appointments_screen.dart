@@ -139,14 +139,19 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
     return _normStatus(a.status) == 'pending';
   }
 
-  String _fmtDateTime(DateTime dtUtcOrZ) {
-    final local = dtUtcOrZ.toLocal();
-    final y = local.year.toString().padLeft(4, '0');
-    final m = local.month.toString().padLeft(2, '0');
-    final d = local.day.toString().padLeft(2, '0');
-    final hh = local.hour.toString().padLeft(2, '0');
-    final mm = local.minute.toString().padLeft(2, '0');
-    return '$y-$m-$d  $hh:$mm';
+  String _fmtDate(DateTime dt) {
+    final d = dt.toLocal();
+    final dd = d.day.toString().padLeft(2, '0');
+    final mm = d.month.toString().padLeft(2, '0');
+    final yyyy = d.year.toString();
+    return '$dd-$mm-$yyyy';
+  }
+
+  String _fmtTime(DateTime dt) {
+    final d = dt.toLocal();
+    final hh = d.hour.toString().padLeft(2, '0');
+    final min = d.minute.toString().padLeft(2, '0');
+    return '$hh:$min';
   }
 
   String _emptyLabelByFilters() {
@@ -472,12 +477,12 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
 
   String _timeLabel(String v) {
     switch (v) {
+      case 'all':
+        return 'الكل';
       case 'upcoming':
         return 'القادمة';
       case 'past':
         return 'السابقة';
-      case 'all':
-        return 'الكل';
       default:
         return v;
     }
@@ -496,7 +501,7 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
       case 'all':
         return 'الكل';
       case 'pending':
-        return 'قيد الانتظار';
+        return 'انتظار';
       case 'confirmed':
         return 'مؤكد';
       case 'cancelled':
@@ -509,17 +514,20 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
   }
 
   // -----------------------------
-  // Triage chips builders
+  // Triage helpers
   // -----------------------------
-  List<String> _buildPatientTriageChips(Appointment a) {
+  String _triageSymptomsText(Appointment a) {
+    final t = a.triage;
+    if (t == null) return '';
+    return (t.symptomsText ?? '').trim();
+  }
+
+  List<String> _buildPatientVitalsChips(Appointment a) {
     if (role != 'patient') return const [];
     final t = a.triage;
     if (t == null) return const [];
 
     final items = <String>[];
-
-    final symptoms = (t.symptomsText ?? '').trim();
-    if (symptoms.isNotEmpty) items.add('الأعراض: $symptoms');
 
     final temp = (t.temperatureC ?? '').trim();
     if (temp.isNotEmpty) items.add('الحرارة: $temp°C');
@@ -535,15 +543,12 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
     return items;
   }
 
-  List<String> _buildDoctorTriageChips(Appointment a) {
+  List<String> _buildDoctorVitalsChips(Appointment a) {
     if (role != 'doctor') return const [];
     final t = a.triage;
     if (t == null) return const [];
 
     final items = <String>[];
-
-    final symptoms = (t.symptomsText ?? '').trim();
-    if (symptoms.isNotEmpty) items.add('الأعراض: $symptoms');
 
     final temp = (t.temperatureC ?? '').trim();
     if (temp.isNotEmpty) items.add('T: $temp°C');
@@ -552,22 +557,149 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
       items.add('BP: ${t.bpSystolic}/${t.bpDiastolic}');
     }
 
-    if (t.heartRate != null) items.add('HR: ${t.heartRate}');
-
-    items.add('Score: ${t.score}');
-    if (t.confidence != null) items.add('Conf: ${t.confidence}%');
-
-    final missing =
-        t.missingFields
-            .map((e) => e.toString())
-            .where((s) => s.isNotEmpty)
-            .toList();
-    if (missing.isNotEmpty) items.add('Missing: ${missing.join(", ")}');
-
-    final ver = (t.scoreVersion).trim();
-    if (ver.isNotEmpty) items.add(ver);
+    if (t.heartRate != null) {
+      items.add('HR: ${t.heartRate}');
+    }
 
     return items;
+  }
+
+  String _doctorScoreLine(Appointment a) {
+    final t = a.triage;
+    if (t == null) return '';
+    return 'Score: ${t.score}';
+  }
+
+  String _doctorConfidenceLine(Appointment a) {
+    final t = a.triage;
+    if (t == null) return '';
+    if (t.confidence == null) return '';
+    return 'Conf: ${t.confidence}%';
+  }
+
+  List<String> _doctorMissingFields(Appointment a) {
+    final t = a.triage;
+    if (t == null) return const [];
+    return t.missingFields
+        .map((e) => e.toString().trim())
+        .where((s) => s.isNotEmpty)
+        .toList();
+  }
+
+  String _doctorModelVersion(Appointment a) {
+    final t = a.triage;
+    if (t == null) return '';
+    return (t.scoreVersion).trim(); // triage_v1 كما هو
+  }
+
+  Widget _rtlSectionTitle(BuildContext context, String text) {
+    return Align(
+      alignment: Alignment.centerRight,
+      child: Text(
+        text,
+        textAlign: TextAlign.right,
+        style: Theme.of(
+          context,
+        ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800),
+      ),
+    );
+  }
+
+  Widget _chipsWrap(List<String> chips) {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      alignment: WrapAlignment.end, // مهم: محاذاة يمين
+      children: chips.map((t) => Chip(label: Text(t))).toList(),
+    );
+  }
+
+  Widget _symptomsBlock(BuildContext context, String title, String symptoms) {
+    final cs = Theme.of(context).colorScheme;
+
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Align(
+            alignment: Alignment.centerRight,
+            child: Text(
+              title,
+              textAlign: TextAlign.right,
+              style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                fontWeight: FontWeight.w800,
+                color: cs.onSurface,
+              ),
+            ),
+          ),
+          const SizedBox(height: 6),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: cs.surfaceContainerHighest,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: cs.outlineVariant),
+            ),
+            child: Text(
+              symptoms,
+              textAlign: TextAlign.right,
+              softWrap: true,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: cs.onSurface, // مهم: ليس رمادي
+                height: 1.4,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _doctorMissingBlock(BuildContext context, List<String> missing) {
+    if (missing.isEmpty) return const SizedBox.shrink();
+
+    final cs = Theme.of(context).colorScheme;
+
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          const SizedBox(height: 10),
+          Align(
+            alignment: Alignment.centerRight,
+            child: Text(
+              'الحقول الناقصة:',
+              textAlign: TextAlign.right,
+              style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                fontWeight: FontWeight.w800,
+                color: cs.onSurface,
+              ),
+            ),
+          ),
+          const SizedBox(height: 6),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: cs.surfaceContainerHighest,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: cs.outlineVariant),
+            ),
+            child: Text(
+              missing.join('، '),
+              textAlign: TextAlign.right,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: cs.onSurface,
+                height: 1.35,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -592,8 +724,9 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
                   children: [
                     Expanded(
                       child: Text(
-                        role == 'doctor' ? 'مواعيد المرضى' : 'مواعيدي',
+                        role == 'doctor' ? 'تصفية مواعيد المرضى' : 'مواعيدي',
                         style: Theme.of(context).textTheme.titleLarge,
+                        textAlign: TextAlign.right,
                       ),
                     ),
                     IconButton(
@@ -699,7 +832,7 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
                     ),
                     TextButton(
                       onPressed: _clearDateFilter,
-                      child: const Text('مسح'),
+                      child: const Text('مسح تصفية التاريخ'),
                     ),
                   ],
                 ),
@@ -795,64 +928,114 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
                       );
                     }
 
-                    final patientChips = _buildPatientTriageChips(a);
-                    final doctorChips = _buildDoctorTriageChips(a);
+                    final symptoms = _triageSymptomsText(a);
+
+                    final patientVitals = _buildPatientVitalsChips(a);
+                    final doctorVitals = _buildDoctorVitalsChips(a);
+
+                    final scoreLine = _doctorScoreLine(a);
+                    final confLine = _doctorConfidenceLine(a);
+                    final missing = _doctorMissingFields(a);
+                    final model = _doctorModelVersion(a);
 
                     return Padding(
                       padding: const EdgeInsets.only(bottom: 8),
                       child: Card(
                         elevation: 0,
-                        child: ListTile(
-                          leading: CircleAvatar(
-                            child: Icon(_statusIcon(a.status)),
-                          ),
-                          title: Text(
-                            title,
-                            style: const TextStyle(fontWeight: FontWeight.w700),
-                          ),
-                          subtitle: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                [
-                                  counterpartLine,
-                                  'الوقت: ${_fmtDateTime(a.dateTime)}',
-                                  'الحالة: $statusLabel',
-                                  if (notes.isNotEmpty) 'ملاحظات: $notes',
-                                ].join('\n'),
+                        child: Directionality(
+                          textDirection: TextDirection.rtl,
+                          child: ListTile(
+                            leading: CircleAvatar(
+                              child: Icon(_statusIcon(a.status)),
+                            ),
+                            title: Text(
+                              title,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w700,
                               ),
-                              if (role == 'patient' &&
-                                  patientChips.isNotEmpty) ...[
-                                const SizedBox(height: 10),
-                                const Text('بيانات الحالة التي أدخلتها:'),
-                                const SizedBox(height: 6),
-                                Wrap(
-                                  spacing: 8,
-                                  runSpacing: 8,
-                                  children:
-                                      patientChips
-                                          .map((t) => Chip(label: Text(t)))
-                                          .toList(),
+                              textAlign: TextAlign.right,
+                            ),
+                            subtitle: Column(
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              children: [
+                                Text(
+                                  [
+                                    counterpartLine,
+                                    'التاريخ: ${_fmtDate(a.dateTime)}',
+                                    'الوقت: ${_fmtTime(a.dateTime)}',
+                                    'الحالة: $statusLabel',
+                                    if (notes.isNotEmpty) 'ملاحظات: $notes',
+                                  ].join('\n'),
+                                  textAlign: TextAlign.right,
                                 ),
+
+                                // ---------------- Symptoms (full block) ----------------
+                                if (symptoms.isNotEmpty &&
+                                    role == 'patient') ...[
+                                  const SizedBox(height: 10),
+                                  _symptomsBlock(
+                                    context,
+                                    'الأعراض التي أدخلتها:',
+                                    symptoms,
+                                  ),
+                                ],
+
+                                if (symptoms.isNotEmpty &&
+                                    role == 'doctor') ...[
+                                  const SizedBox(height: 10),
+                                  _symptomsBlock(context, 'الأعراض:', symptoms),
+                                ],
+
+                                // ---------------- Patient view: vitals chips ----------------
+                                if (role == 'patient' &&
+                                    patientVitals.isNotEmpty) ...[
+                                  const SizedBox(height: 10),
+                                  _rtlSectionTitle(context, 'بيانات أخرى:'),
+                                  const SizedBox(height: 6),
+                                  _chipsWrap(patientVitals),
+                                ],
+
+                                // ---------------- Doctor view: vitals then assessment ----------------
+                                if (role == 'doctor') ...[
+                                  if (doctorVitals.isNotEmpty) ...[
+                                    const SizedBox(height: 10),
+                                    _rtlSectionTitle(
+                                      context,
+                                      'المؤشرات الحيوية:',
+                                    ),
+                                    const SizedBox(height: 6),
+                                    _chipsWrap(doctorVitals),
+                                  ],
+
+                                  const SizedBox(height: 10),
+                                  _rtlSectionTitle(
+                                    context,
+                                    'تقييم الحالة: قبل الزيارة',
+                                  ),
+                                  const SizedBox(height: 6),
+                                  _chipsWrap([
+                                    if (scoreLine.isNotEmpty) scoreLine,
+                                    if (confLine.isNotEmpty) confLine,
+                                  ]),
+
+                                  if (missing.isNotEmpty)
+                                    _doctorMissingBlock(context, missing),
+
+                                  if (model.isNotEmpty) ...[
+                                    const SizedBox(height: 10),
+                                    _rtlSectionTitle(context, 'النموذج:'),
+                                    const SizedBox(height: 6),
+                                    Align(
+                                      alignment: Alignment.centerRight,
+                                      child: Chip(label: Text(model)),
+                                    ),
+                                  ],
+                                ],
                               ],
-                              if (role == 'doctor' &&
-                                  doctorChips.isNotEmpty) ...[
-                                const SizedBox(height: 10),
-                                const Text('Triage (قبل الزيارة):'),
-                                const SizedBox(height: 6),
-                                Wrap(
-                                  spacing: 8,
-                                  runSpacing: 8,
-                                  children:
-                                      doctorChips
-                                          .map((t) => Chip(label: Text(t)))
-                                          .toList(),
-                                ),
-                              ],
-                            ],
+                            ),
+                            trailing: trailing,
+                            isThreeLine: false,
                           ),
-                          trailing: trailing,
-                          isThreeLine: false,
                         ),
                       ),
                     );

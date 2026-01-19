@@ -483,127 +483,136 @@ class DoctorVisitTypesScreenState extends State<DoctorVisitTypesScreen> {
     final canAddCentral = !loading && types.isNotEmpty;
 
     if (loading) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      return Directionality(
+        textDirection: TextDirection.rtl,
+        child: const Scaffold(body: Center(child: CircularProgressIndicator())),
+      );
     }
 
     if (errorMessage != null) {
-      return Scaffold(
-        appBar: AppBar(title: const Text("مدد أنواع الزيارة")),
-        body: stateCard(
-          icon: Icons.error_outline,
-          title: "حدث خطأ",
-          message: errorMessage!,
-          tone: AppSnackBarType.error,
-          action: primaryButton(label: "إعادة المحاولة", onPressed: loadData),
+      return Directionality(
+        textDirection: TextDirection.rtl,
+        child: Scaffold(
+          appBar: AppBar(title: const Text("مدد أنواع الزيارة")),
+          body: stateCard(
+            icon: Icons.error_outline,
+            title: "حدث خطأ",
+            message: errorMessage!,
+            tone: AppSnackBarType.error,
+            action: primaryButton(label: "إعادة المحاولة", onPressed: loadData),
+          ),
         ),
       );
     }
 
-    return Scaffold(
-      appBar: AppBar(title: const Text("مدد أنواع الزيارة")),
-      body: RefreshIndicator(
-        onRefresh: loadData,
-        child: ListView(
-          padding: const EdgeInsets.only(bottom: 90),
-          children: [
-            sectionHeader(
-              "الأنواع المركزية (Admin)",
-              subtitle: "تحدد النوع من قائمة الأدمن ثم تضبط مدته لديك.",
-              icon: Icons.list_alt_outlined,
-            ),
-            if (items.isEmpty)
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                child: Card(
-                  elevation: 0,
-                  child: Padding(
-                    padding: const EdgeInsets.all(14),
-                    child: Column(
-                      children: [
-                        const Text(
-                          "لم يتم تحديد مدد لأنواع الزيارة المركزية بعد.",
-                        ),
-                        const SizedBox(height: 10),
-                        SizedBox(
-                          width: double.infinity,
-                          child: ElevatedButton.icon(
-                            onPressed:
-                                canAddCentral ? openAddCentralDialog : null,
-                            icon: const Icon(Icons.add),
-                            label: const Text("إضافة نوع مركزي"),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              )
-            else
-              ...items.map((item) {
-                final title = typeNameById(item.appointmentType);
-                return Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 6,
-                  ),
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: Scaffold(
+        appBar: AppBar(title: const Text("مدد أنواع الزيارة")),
+        body: RefreshIndicator(
+          onRefresh: loadData,
+          child: ListView(
+            padding: const EdgeInsets.only(bottom: 90),
+            children: [
+              sectionHeader(
+                "الأنواع المركزية (Admin)",
+                subtitle: "تحدد النوع من قائمة الأدمن ثم تضبط مدته لديك.",
+                icon: Icons.list_alt_outlined,
+              ),
+              if (items.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
                   child: Card(
                     elevation: 0,
-                    child: ListTile(
-                      leading: const CircleAvatar(
-                        child: Icon(Icons.timer_outlined),
-                      ),
-                      title: Text(
-                        title,
-                        style: const TextStyle(fontWeight: FontWeight.w700),
-                      ),
-                      subtitle: Text("المدة: ${item.durationMinutes} دقيقة"),
-                      onTap: () => openEditCentralDialog(item),
-                      trailing: PopupMenuButton<String>(
-                        onSelected: (value) {
-                          if (value == 'edit') {
-                            openEditCentralDialog(item);
-                          } else if (value == 'delete') {
-                            deleteCentralItem(item.id);
-                          }
-                        },
-                        itemBuilder:
-                            (_) => const [
-                              PopupMenuItem(
-                                value: 'edit',
-                                child: Text('تعديل'),
-                              ),
-                              PopupMenuItem(
-                                value: 'delete',
-                                child: Text('حذف'),
-                              ),
-                            ],
+                    child: Padding(
+                      padding: const EdgeInsets.all(14),
+                      child: Column(
+                        children: [
+                          const Text(
+                            "لم يتم تحديد مدد لأنواع الزيارة المركزية بعد.",
+                          ),
+                          const SizedBox(height: 10),
+                          SizedBox(
+                            width: double.infinity,
+                            child: ElevatedButton.icon(
+                              onPressed:
+                                  canAddCentral ? openAddCentralDialog : null,
+                              icon: const Icon(Icons.add),
+                              label: const Text("إضافة نوع مركزي"),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ),
-                );
-              }),
+                )
+              else
+                ...items.map((item) {
+                  final title = typeNameById(item.appointmentType);
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 6,
+                    ),
+                    child: Card(
+                      elevation: 0,
+                      child: ListTile(
+                        leading: const CircleAvatar(
+                          child: Icon(Icons.timer_outlined),
+                        ),
+                        title: Text(
+                          title,
+                          style: const TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                        subtitle: Text("المدة: ${item.durationMinutes} دقيقة"),
+                        onTap: () => openEditCentralDialog(item),
+                        trailing: PopupMenuButton<String>(
+                          onSelected: (value) {
+                            if (value == 'edit') {
+                              openEditCentralDialog(item);
+                            } else if (value == 'delete') {
+                              deleteCentralItem(item.id);
+                            }
+                          },
+                          itemBuilder:
+                              (_) => const [
+                                PopupMenuItem(
+                                  value: 'edit',
+                                  child: Text('تعديل'),
+                                ),
+                                PopupMenuItem(
+                                  value: 'delete',
+                                  child: Text('حذف'),
+                                ),
+                              ],
+                        ),
+                      ),
+                    ),
+                  );
+                }),
 
-            const SizedBox(height: 6),
+              const SizedBox(height: 6),
 
-            sectionHeader(
-              "أنواع خاصة بالطبيب",
-              subtitle:
-                  "ميزة مستقبلية (غير مفعّلة الآن). سيتم تفعيلها لاحقًا عند اعتماد آلية حجز واضحة لها.",
-              icon: Icons.person_pin_outlined,
-            ),
-            disabledFeatureCard(
-              title: "أنواع خاصة بالطبيب (قيد التطوير)",
-              message:
-                  "حاليًا الحجز يعتمد فقط على الأنواع المركزية (Admin) مع إمكانية تخصيص المدة للطبيب. "
-                  "الأنواع الخاصة ستُفعّل لاحقًا عند تثبيت منطق الحجز والربط بشكل رسمي.",
-            ),
-          ],
+              sectionHeader(
+                "أنواع خاصة بالطبيب",
+                subtitle:
+                    "ميزة مستقبلية (غير مفعّلة الآن). سيتم تفعيلها لاحقًا عند اعتماد آلية حجز واضحة لها.",
+                icon: Icons.person_pin_outlined,
+              ),
+              disabledFeatureCard(
+                title: "أنواع خاصة بالطبيب (قيد التطوير)",
+                message:
+                    "حاليًا الحجز يعتمد فقط على الأنواع المركزية (Admin) مع إمكانية تخصيص المدة للطبيب. "
+                    "الأنواع الخاصة ستُفعّل لاحقًا عند تثبيت منطق الحجز والربط بشكل رسمي.",
+              ),
+            ],
+          ),
         ),
-      ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: canAddCentral ? openAddCentralDialog : null,
-        icon: const Icon(Icons.add),
-        label: const Text("إضافة نوع مركزي"),
+        floatingActionButton: FloatingActionButton.extended(
+          onPressed: canAddCentral ? openAddCentralDialog : null,
+          icon: const Icon(Icons.add),
+          label: const Text("إضافة نوع مركزي"),
+        ),
       ),
     );
   }
