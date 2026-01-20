@@ -1,11 +1,11 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../../services/appointments_service.dart';
 import '../../../models/doctor_search_result.dart';
 import '../../../utils/ui_helpers.dart';
-import 'package:go_router/go_router.dart';
 
 class DoctorSearchScreen extends StatefulWidget {
   const DoctorSearchScreen({super.key});
@@ -23,10 +23,39 @@ class _DoctorSearchScreenState extends State<DoctorSearchScreen> {
   List<DoctorSearchResult> results = const [];
   String? errorMessage;
 
+  int? selectedGovernorateId; // null => الكل
+
   @override
   void dispose() {
     searchController.dispose();
     super.dispose();
+  }
+
+  List<_GovernorateOption> get governorateOptions {
+    final map = <int, String>{};
+
+    for (final d in results) {
+      final id = d.governorateId;
+      final name = d.governorateName;
+
+      if (id != null && name != null && name.trim().isNotEmpty) {
+        map[id] = name.trim();
+      }
+    }
+
+    final options =
+        map.entries
+            .map((e) => _GovernorateOption(id: e.key, name: e.value))
+            .toList()
+          ..sort((a, b) => a.name.compareTo(b.name));
+
+    return options;
+  }
+
+  List<DoctorSearchResult> get filteredResults {
+    final gid = selectedGovernorateId;
+    if (gid == null) return results;
+    return results.where((d) => d.governorateId == gid).toList();
   }
 
   Future<void> runSearch() async {
@@ -36,6 +65,7 @@ class _DoctorSearchScreenState extends State<DoctorSearchScreen> {
         query = '';
         results = const [];
         errorMessage = null;
+        selectedGovernorateId = null;
       });
       return;
     }
@@ -44,16 +74,33 @@ class _DoctorSearchScreenState extends State<DoctorSearchScreen> {
       loading = true;
       query = q;
       errorMessage = null;
+      // ملاحظة: لا نصفر الفلتر هنا، لأن المستخدم قد يريد تثبيته أثناء تغيير كلمة البحث
+      // لكن إذا تحبي تصفيره تلقائياً عند كل بحث، اكتبي:
+      // selectedGovernorateId = null;
     });
 
     try {
       final data = await appointmentsService.searchDoctors(query: q);
-
       if (!mounted) return;
 
       setState(() {
         results = data;
+        debugPrint('Doctors returned: ${data.length}');
+        if (data.isNotEmpty) {
+          final d0 = data.first;
+          debugPrint(
+            'Sample: id=${d0.id}, name=${d0.username}, govId=${d0.governorateId}, govName=${d0.governorateName}, exp=${d0.experienceYears}',
+          );
+        }
+
         loading = false;
+
+        // إذا كانت المحافظة المحددة لم تعد موجودة ضمن النتائج الجديدة → رجّعيها "الكل"
+        final existingIds = governorateOptions.map((e) => e.id).toSet();
+        if (selectedGovernorateId != null &&
+            !existingIds.contains(selectedGovernorateId)) {
+          selectedGovernorateId = null;
+        }
       });
     } on ApiException catch (e) {
       if (!mounted) return;
@@ -93,6 +140,8 @@ class _DoctorSearchScreenState extends State<DoctorSearchScreen> {
       extra: {
         'doctorName': doctor.username,
         'doctorSpecialty': doctor.specialty,
+        'doctorGovernorateName': doctor.governorateName,
+        'doctorExperienceYears': doctor.experienceYears,
       },
     );
   }
@@ -100,6 +149,8 @@ class _DoctorSearchScreenState extends State<DoctorSearchScreen> {
   @override
   Widget build(BuildContext context) {
     final hasQuery = query.trim().isNotEmpty;
+    final govOptions = governorateOptions;
+    final dataToShow = filteredResults;
 
     return Scaffold(
       appBar: AppBar(title: const Text('حجز موعد')),
@@ -113,7 +164,7 @@ class _DoctorSearchScreenState extends State<DoctorSearchScreen> {
               onSubmitted: (_) => runSearch(),
               decoration: InputDecoration(
                 labelText: 'ابحث باسم الطبيب أو بالاختصاص',
-                hintText: 'مثال: عظم، أسنان، doctor33...',
+                hintText: 'مثال: عظم، أسنان، أحمد...',
                 suffixIcon: IconButton(
                   tooltip: 'بحث',
                   onPressed: loading ? null : runSearch,
@@ -129,6 +180,33 @@ class _DoctorSearchScreenState extends State<DoctorSearchScreen> {
               ),
             ),
             const SizedBox(height: 12),
+
+            // فلتر المحافظات (يظهر فقط إذا لدينا نتائج)
+            if (results.isNotEmpty) ...[
+              DropdownButtonFormField<int?>(
+                value: selectedGovernorateId,
+                decoration: const InputDecoration(labelText: 'المحافظة'),
+                items: [
+                  const DropdownMenuItem<int?>(
+                    value: null,
+                    child: Text('كل المحافظات'),
+                  ),
+                  ...govOptions.map(
+                    (g) => DropdownMenuItem<int?>(
+                      value: g.id,
+                      child: Text(g.name),
+                    ),
+                  ),
+                ],
+                onChanged: (v) {
+                  setState(() {
+                    selectedGovernorateId = v;
+                  });
+                },
+              ),
+              const SizedBox(height: 12),
+            ],
+
             Expanded(
               child: Builder(
                 builder: (_) {
@@ -146,20 +224,44 @@ class _DoctorSearchScreenState extends State<DoctorSearchScreen> {
                     return Center(child: Text(errorMessage!));
                   }
 
-                  if (results.isEmpty) {
+                  if (dataToShow.isEmpty) {
+                    // قد تكون النتائج الأصلية موجودة لكن الفلتر ضيّقها
+                    if (results.isNotEmpty && selectedGovernorateId != null) {
+                      return const Center(
+                        child: Text('لا توجد نتائج ضمن هذه المحافظة.'),
+                      );
+                    }
                     return const Center(child: Text('لا توجد نتائج.'));
                   }
 
                   return ListView.separated(
-                    itemCount: results.length,
+                    itemCount: dataToShow.length,
                     separatorBuilder: (_, __) => const SizedBox(height: 8),
                     itemBuilder: (ctx, i) {
-                      final d = results[i];
+                      final d = dataToShow[i];
+
+                      final specialty = d.specialty;
+                      final exp = d.experienceYears;
+                      final gov = d.governorateName ?? '';
+
+                      final line1 =
+                          exp != null
+                              ? '$specialty • خبرة $exp سنوات'
+                              : specialty;
+
+                      final line2 =
+                          gov.trim().isNotEmpty
+                              ? 'المحافظة: ${gov.trim()}'
+                              : '';
+
                       return Card(
                         elevation: 0,
                         child: ListTile(
                           title: Text(d.username),
-                          subtitle: Text(d.specialty),
+                          subtitle: Text(
+                            line2.isEmpty ? line1 : '$line1\n$line2',
+                          ),
+                          isThreeLine: line2.isNotEmpty,
                           trailing: const Icon(Icons.chevron_right),
                           onTap: () => openBooking(d),
                         ),
@@ -174,4 +276,11 @@ class _DoctorSearchScreenState extends State<DoctorSearchScreen> {
       ),
     );
   }
+}
+
+class _GovernorateOption {
+  final int id;
+  final String name;
+
+  const _GovernorateOption({required this.id, required this.name});
 }

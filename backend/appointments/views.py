@@ -103,103 +103,6 @@ class _ImpersonatedRequest:
 
 
 # -----------------------------
-# Appointment create (Patient)
-# -----------------------------
-
-class AppointmentCreateView(APIView):
-    permission_classes = [IsPatient]
-
-    @transaction.atomic
-    def post(self, request):
-        serializer = AppointmentCreateSerializer(
-            data=request.data,
-            context={"request": request},
-        )
-        serializer.is_valid(raise_exception=True)
-        doctor_id = serializer.validated_data.get("doctor") or serializer.validated_data.get("doctor_id")
-        doctor_obj = doctor_id
-        if hasattr(doctor_obj, "id"):
-            doctor_obj = doctor_obj
-        else:
-            doctor_obj = get_object_or_404(CustomUser, id=doctor_id, role="doctor")
-
-        if not getattr(doctor_obj, "is_active", True):
-            return Response(
-                {"detail": "Doctor account is inactive."},
-                status=status.HTTP_409_CONFLICT,
-            )
-        appointment = serializer.save()
-
-        # -----------------------------
-        # Notifications: appointment_created
-        # Recipient: doctor
-        # IMPORTANT: route must exist in Flutter -> use /app/appointments
-        # -----------------------------
-        try:
-            _create_outbox_event(
-                event_type="appointment_created",
-                actor=request.user,              # patient
-                recipient=appointment.doctor,    # notify doctor
-                obj=appointment,
-                entity_type="appointment",
-                entity_id=appointment.id,
-                route="/app/appointments",
-                payload={
-                    "appointment_id": appointment.id,
-                    "status": appointment.status,
-                    "patient_id": appointment.patient_id,
-                    "doctor_id": appointment.doctor_id,
-                    "date_time": appointment.date_time.isoformat() if appointment.date_time else None,
-                    "title": "طلب موعد جديد",
-                    "message": "تم إنشاء طلب موعد جديد.",
-                },
-            )
-        except Exception:
-            pass
-
-        triage = getattr(appointment, "triage", None)
-
-        tz = timezone.get_current_timezone()
-
-        def iso_local(dt):
-            if timezone.is_naive(dt):
-                dt = timezone.make_aware(dt, tz)
-            return dt.astimezone(tz).isoformat()
-
-        return Response(
-            {
-                "id": appointment.id,
-                "patient": appointment.patient_id,
-                "doctor": appointment.doctor_id,
-                "appointment_type": appointment.appointment_type_id,
-                "date_time": iso_local(appointment.date_time),
-                "duration_minutes": appointment.duration_minutes,
-                "status": appointment.status,
-                "notes": appointment.notes,
-                "created_at": iso_local(appointment.created_at),
-                "triage": (
-                    {
-                        "id": triage.id,
-                        "symptoms_text": triage.symptoms_text,
-                        "temperature_c": str(triage.temperature_c) if triage.temperature_c is not None else None,
-                        "bp_systolic": triage.bp_systolic,
-                        "bp_diastolic": triage.bp_diastolic,
-                        "heart_rate": triage.heart_rate,
-                        "score": triage.score,
-                        "confidence": triage.confidence,
-                        "missing_fields": triage.missing_fields,
-                        "score_version": triage.score_version,
-                        "created_at": iso_local(triage.created_at),
-                    }
-                    if triage is not None
-                    else None
-                ),
-            },
-            status=status.HTTP_201_CREATED,
-        )
-
-
-# -----------------------------
 # Doctor search (Authenticated)
 # -----------------------------
 
@@ -211,35 +114,45 @@ class DoctorSearchView(APIView):
         if not q:
             return Response({"results": []})
 
+        # البحث بالاختصاص
         doctor_ids_by_specialty = DoctorDetails.objects.filter(
-            Q(specialty__icontains=q)
+            specialty__icontains=q
         ).values_list("user_id", flat=True)
 
+        # جلب الأطباء
         doctors = (
             CustomUser.objects.filter(role="doctor", is_active=True)
             .filter(Q(username__icontains=q) | Q(id__in=doctor_ids_by_specialty))
+            .select_related("governorate")
             .order_by("username")[:50]
         )
 
-
-        specialties_map = {
-            row["user_id"]: row["specialty"]
+        # جلب تفاصيل الأطباء
+        details_map = {
+            row["user_id"]: row
             for row in DoctorDetails.objects.filter(
                 user_id__in=[d.id for d in doctors]
-            ).values("user_id", "specialty")
+            ).values("user_id", "specialty", "experience_years")
         }
 
-        results = [
-            {
-                "id": d.id,
-                "username": d.username,
-                "email": d.email,
-                "specialty": specialties_map.get(d.id),
-            }
-            for d in doctors
-        ]
+        # بناء النتيجة
+        results = []
+        for d in doctors:
+            det = details_map.get(d.id, {})
+            results.append(
+                {
+                    "id": d.id,
+                    "username": d.username,
+                    "email": d.email,
+                    "governorate_id": d.governorate_id,
+                    "governorate_name": getattr(d.governorate, "name", None),
+                    "specialty": det.get("specialty"),
+                    "experience_years": det.get("experience_years"),
+                }
+            )
 
         return Response({"results": results})
+
 
 
 # -----------------------------
@@ -303,6 +216,91 @@ class DoctorVisitTypesView(APIView):
             status=status.HTTP_200_OK,
         )
 
+# -----------------------------
+# Create appointment (patient)
+# -----------------------------
+
+class AppointmentCreateView(APIView):
+    permission_classes = [IsPatient]
+
+    @transaction.atomic
+    def post(self, request):
+        serializer = AppointmentCreateSerializer(
+            data=request.data,
+            context={"request": request},
+        )
+        serializer.is_valid(raise_exception=True)
+        appointment = serializer.save()
+
+        # -----------------------------
+        # Notifications: appointment_created
+        # Recipient: doctor
+        # IMPORTANT: route must exist in Flutter -> use /app/appointments
+        # -----------------------------
+        try:
+            _create_outbox_event(
+                event_type="appointment_created",
+                actor=request.user,              # patient
+                recipient=appointment.doctor,    # notify doctor
+                obj=appointment,
+                entity_type="appointment",
+                entity_id=appointment.id,
+                route="/app/appointments",
+                payload={
+                    "appointment_id": appointment.id,
+                    "status": appointment.status,
+                    "patient_id": appointment.patient_id,
+                    "doctor_id": appointment.doctor_id,
+                    "date_time": appointment.date_time.isoformat() if appointment.date_time else None,
+                    "title": "طلب موعد جديد",
+                    "message": "تم إنشاء طلب موعد جديد.",
+                },
+            )
+        except Exception:
+            pass
+
+        triage = getattr(appointment, "triage", None)
+
+        tz = timezone.get_current_timezone()
+
+        def iso_local(dt):
+            if dt is None:
+                return None
+            if timezone.is_naive(dt):
+                dt = timezone.make_aware(dt, tz)
+            return dt.astimezone(tz).isoformat()
+
+        return Response(
+            {
+                "id": appointment.id,
+                "patient": appointment.patient_id,
+                "doctor": appointment.doctor_id,
+                "appointment_type": appointment.appointment_type_id,
+                "date_time": iso_local(appointment.date_time),
+                "duration_minutes": appointment.duration_minutes,
+                "status": appointment.status,
+                "notes": appointment.notes,
+                "created_at": iso_local(appointment.created_at),
+                "triage": (
+                    {
+                        "id": triage.id,
+                        "symptoms_text": triage.symptoms_text,
+                        "temperature_c": str(triage.temperature_c) if triage.temperature_c is not None else None,
+                        "bp_systolic": triage.bp_systolic,
+                        "bp_diastolic": triage.bp_diastolic,
+                        "heart_rate": triage.heart_rate,
+                        "score": triage.score,
+                        "confidence": triage.confidence,
+                        "missing_fields": triage.missing_fields,
+                        "score_version": triage.score_version,
+                        "created_at": iso_local(triage.created_at),
+                    }
+                    if triage is not None
+                    else None
+                ),
+            },
+            status=status.HTTP_201_CREATED,
+        )
 
 # -----------------------------
 # Doctor actions: mark no_show
