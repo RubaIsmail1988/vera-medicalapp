@@ -23,6 +23,7 @@ DEBUG = os.environ.get("DJANGO_DEBUG", "True").strip().lower() in ("1", "true", 
 #).strip()
 #ALLOWED_HOSTS = [h.strip() for h in _allowed_hosts.split(",") if h.strip()]
 ALLOWED_HOSTS = [
+    "rubaismail.pythonanywhere.com",
     "127.0.0.1",
     "localhost",
     "10.0.2.2",
