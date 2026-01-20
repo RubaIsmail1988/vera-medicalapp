@@ -645,7 +645,12 @@ class MedicationAdherenceListCreateView(generics.ListCreateAPIView):
         if not (is_patient(request.user) or is_admin(request.user)):
             return Response({"detail": "Only patients can record adherence."}, status=403)
 
-        serializer = self.get_serializer(data=request.data)
+       # serializer = self.get_serializer(data=request.data)
+        serializer = self.get_serializer(
+            data=request.data,
+            context=self.get_serializer_context(),
+        )
+
         serializer.is_valid(raise_exception=True)
 
         log = serializer.save(patient=request.user)
