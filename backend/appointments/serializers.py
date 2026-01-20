@@ -79,7 +79,8 @@ class AppointmentCreateSerializer(serializers.Serializer):
             doctor = CustomUser.objects.get(id=doctor_id, role="doctor")
         except CustomUser.DoesNotExist:
             raise serializers.ValidationError({"doctor_id": "Doctor not found."})
-
+        if not doctor.is_active:
+            raise serializers.ValidationError({"detail": "Doctor account is inactive."})
         # 3) Reject doctor-specific booking for now (keep model for future)
         if attrs.get("doctor_specific_visit_type_id"):
             raise serializers.ValidationError(

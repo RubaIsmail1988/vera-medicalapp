@@ -116,6 +116,18 @@ class AppointmentCreateView(APIView):
             context={"request": request},
         )
         serializer.is_valid(raise_exception=True)
+        doctor_id = serializer.validated_data.get("doctor") or serializer.validated_data.get("doctor_id")
+        doctor_obj = doctor_id
+        if hasattr(doctor_obj, "id"):
+            doctor_obj = doctor_obj
+        else:
+            doctor_obj = get_object_or_404(CustomUser, id=doctor_id, role="doctor")
+
+        if not getattr(doctor_obj, "is_active", True):
+            return Response(
+                {"detail": "Doctor account is inactive."},
+                status=status.HTTP_409_CONFLICT,
+            )
         appointment = serializer.save()
 
         # -----------------------------
@@ -204,10 +216,11 @@ class DoctorSearchView(APIView):
         ).values_list("user_id", flat=True)
 
         doctors = (
-            CustomUser.objects.filter(role="doctor")
+            CustomUser.objects.filter(role="doctor", is_active=True)
             .filter(Q(username__icontains=q) | Q(id__in=doctor_ids_by_specialty))
             .order_by("username")[:50]
         )
+
 
         specialties_map = {
             row["user_id"]: row["specialty"]

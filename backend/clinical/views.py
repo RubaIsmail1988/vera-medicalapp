@@ -147,7 +147,12 @@ class ClinicalOrderListCreateView(generics.ListCreateAPIView):
             resolved_doctor = request.user
             if appt.doctor_id != resolved_doctor.id:
                 return Response({"detail": "Not found."}, status=404)
-
+        
+        if not appt.patient.is_active:
+            return Response(
+               {"detail": "Patient account is inactive."},
+                status=status.HTTP_409_CONFLICT,
+            )
         # Gate: must be confirmed to create clinical activity
         if appt.status in ["cancelled", "no_show"]:
             return Response(
@@ -191,7 +196,6 @@ class ClinicalOrderListCreateView(generics.ListCreateAPIView):
         )
 
         # إشعار للمريض: تم إنشاء طلب تحليل/صورة
-        # IMPORTANT: لا تضع role=doctor لأن recipient هنا هو المريض
         _create_outbox_event(
             event_type="CLINICAL_ORDER_CREATED",
             actor=resolved_doctor,
@@ -537,7 +541,12 @@ class PrescriptionListCreateView(generics.ListCreateAPIView):
             resolved_doctor = request.user
             if appt.doctor_id != resolved_doctor.id:
                 return Response({"detail": "Not found."}, status=404)
-
+        if not appt.patient.is_active:
+            return Response(
+                {"detail": "Patient account is inactive."},
+                status=status.HTTP_409_CONFLICT,
+            )
+        
         if appt.status in ["cancelled", "no_show"]:
             return Response(
                 {"detail": f"Cannot create prescription for appointment in status '{appt.status}'."},
@@ -642,9 +651,10 @@ class MedicationAdherenceListCreateView(generics.ListCreateAPIView):
         return qs.none()
 
     def create(self, request, *args, **kwargs):
-        if not (is_patient(request.user) or is_admin(request.user)):
+ #       if not (is_patient(request.user) or is_admin(request.user)):
+     #      return Response({"detail": "Only patients can record adherence."}, status=403)
+        if not is_patient(request.user):
             return Response({"detail": "Only patients can record adherence."}, status=403)
-
        # serializer = self.get_serializer(data=request.data)
         serializer = self.get_serializer(
             data=request.data,
