@@ -477,5 +477,162 @@ class DoctorAbsence(models.Model):
     def __str__(self):
         return f"{self.doctor.username} absence {self.start_time} -> {self.end_time}"
 
+# -----------------------------
+# Scheduling Policy Add-ons
+# -----------------------------
+
+class UrgentRequest(models.Model):
+    """
+    Waitlist / Urgent intake when no slots are available.
+    Created by patient when triage is high and booking cannot be satisfied.
+    """
+    STATUS_CHOICES = [
+        ("open", "Open"),
+        ("handled", "Handled"),
+        ("rejected", "Rejected"),
+        ("cancelled", "Cancelled"),
+    ]
+
+    patient = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="urgent_requests",
+        limit_choices_to={"role": "patient"},
+    )
+    doctor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="urgent_requests_received",
+        limit_choices_to={"role": "doctor"},
+    )
+    appointment_type = models.ForeignKey(
+        AppointmentType,
+        on_delete=models.CASCADE,
+        related_name="urgent_requests",
+    )
+    handled_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="urgent_requests_handled",
+        limit_choices_to={"role": "doctor"},
+    )
+
+    rejected_reason = models.TextField(blank=True, null=True)
+
+    # triage snapshot (not linked to Appointment)
+    symptoms_text = models.TextField(blank=True, null=True)
+    temperature_c = models.DecimalField(max_digits=4, decimal_places=1, blank=True, null=True)
+    bp_systolic = models.PositiveSmallIntegerField(blank=True, null=True)
+    bp_diastolic = models.PositiveSmallIntegerField(blank=True, null=True)
+    heart_rate = models.PositiveSmallIntegerField(blank=True, null=True)
+
+    score = models.PositiveSmallIntegerField(
+        validators=[MinValueValidator(1), MaxValueValidator(10)],
+        blank=True,
+        null=True,
+    )
+    confidence = models.PositiveSmallIntegerField(
+        blank=True,
+        null=True,
+        validators=[MinValueValidator(0), MaxValueValidator(100)],
+    )
+    missing_fields = models.JSONField(default=list, blank=True)
+    score_version = models.CharField(max_length=32, blank=True, null=True)
+
+    notes = models.TextField(blank=True, null=True)
+
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="open")
+    created_at = models.DateTimeField(default=timezone.now)
+    handled_at = models.DateTimeField(blank=True, null=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["doctor", "status", "created_at"]),
+            models.Index(fields=["patient", "created_at"]),
+            models.Index(fields=["score", "created_at"]),
+        ]
+
+    def __str__(self):
+        return f"UrgentRequest(patient={self.patient_id}, doctor={self.doctor_id}, score={self.score}, status={self.status})"
+
+
+class RebookingPriorityToken(models.Model):
+    """
+    Token granted to patients whose appointments were cancelled due to emergency absence.
+    Used to give them a fair advantage when rebooking.
+    """
+    patient = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="rebooking_tokens",
+        limit_choices_to={"role": "patient"},
+    )
+    doctor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="rebooking_tokens_issued",
+        limit_choices_to={"role": "doctor"},
+    )
+    absence = models.ForeignKey(
+        "DoctorAbsence",
+        on_delete=models.CASCADE,
+        related_name="rebooking_tokens",
+        blank=True,
+        null=True,
+    )
+
+    issued_at = models.DateTimeField(default=timezone.now)
+    expires_at = models.DateTimeField()
+
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["-issued_at"]
+        indexes = [
+            models.Index(fields=["patient", "is_active", "expires_at"]),
+            models.Index(fields=["doctor", "is_active", "expires_at"]),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(issued_at__lt=models.F("expires_at")),
+                name="chk_token_issued_before_expires",
+            ),
+        ]
+
+    def __str__(self):
+        return f"RebookingToken(patient={self.patient_id}, doctor={self.doctor_id}, active={self.is_active})"
+
+
+class AbsenceCancellationLog(models.Model):
+    """
+    Minimal audit for cancellations triggered by emergency absence.
+    (Keeps thesis-friendly traceability without changing Appointment schema.)
+    """
+    absence = models.ForeignKey(
+        "DoctorAbsence",
+        on_delete=models.CASCADE,
+        related_name="cancellation_logs",
+    )
+    appointment = models.ForeignKey(
+        Appointment,
+        on_delete=models.CASCADE,
+        related_name="absence_cancellation_logs",
+    )
+    cancelled_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ["-cancelled_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["absence", "appointment"],
+                name="uniq_absence_appointment_cancel_log",
+            ),
+        ]
+
+    def __str__(self):
+        return f"AbsenceCancellationLog(absence={self.absence_id}, appt={self.appointment_id})"
 
     
