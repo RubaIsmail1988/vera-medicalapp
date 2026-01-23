@@ -22,6 +22,9 @@ class Appointment {
   // NEW: triage (optional; doctor sees it, patient might get null)
   final TriageAssessmentDto? triage;
 
+  // NEW: Priority badge (e.g., rebooking token consumed for this appointment)
+  final AppointmentPriorityBadgeDto? priorityBadge;
+
   Appointment({
     required this.id,
     required this.patient,
@@ -38,6 +41,7 @@ class Appointment {
     required this.hasAnyOrders,
     required this.hasOpenOrders,
     required this.triage,
+    required this.priorityBadge,
   });
 
   factory Appointment.fromJson(Map<String, dynamic> json) {
@@ -55,6 +59,14 @@ class Appointment {
     if (triageRaw is Map) {
       triage = TriageAssessmentDto.fromJson(
         Map<String, dynamic>.from(triageRaw),
+      );
+    }
+
+    AppointmentPriorityBadgeDto? badge;
+    final badgeRaw = json['priority_badge'] ?? json['priorityBadge'];
+    if (badgeRaw is Map) {
+      badge = AppointmentPriorityBadgeDto.fromJson(
+        Map<String, dynamic>.from(badgeRaw),
       );
     }
 
@@ -78,6 +90,50 @@ class Appointment {
       hasOpenOrders: asBool(json['has_open_orders'] ?? json['hasOpenOrders']),
 
       triage: triage,
+      priorityBadge: badge,
+    );
+  }
+}
+
+class AppointmentPriorityBadgeDto {
+  final String type; // e.g. "rebooking_priority"
+  final DateTime? expiresAt;
+  final DateTime? issuedAt;
+  final int? absenceId;
+
+  const AppointmentPriorityBadgeDto({
+    required this.type,
+    required this.expiresAt,
+    required this.issuedAt,
+    required this.absenceId,
+  });
+
+  bool get isRebookingPriority =>
+      type.trim().toLowerCase() == 'rebooking_priority';
+
+  factory AppointmentPriorityBadgeDto.fromJson(Map<String, dynamic> json) {
+    DateTime? parseDt(dynamic v) {
+      if (v == null) return null;
+      final s = v.toString().trim();
+      if (s.isEmpty) return null;
+      try {
+        return DateTime.parse(s);
+      } catch (_) {
+        return null;
+      }
+    }
+
+    int? asIntOrNull(dynamic v) {
+      if (v == null) return null;
+      if (v is num) return v.toInt();
+      return int.tryParse(v.toString());
+    }
+
+    return AppointmentPriorityBadgeDto(
+      type: (json['type'] as String?)?.trim() ?? '',
+      expiresAt: parseDt(json['expires_at'] ?? json['expiresAt']),
+      issuedAt: parseDt(json['issued_at'] ?? json['issuedAt']),
+      absenceId: asIntOrNull(json['absence_id'] ?? json['absenceId']),
     );
   }
 }
