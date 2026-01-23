@@ -107,6 +107,49 @@ class _DoctorAbsencesScreenState extends State<DoctorAbsencesScreen> {
     return null;
   }
 
+  String _fmtShortLocal(DateTime dt) {
+    final d = dt.toLocal();
+    final y = d.year.toString().padLeft(4, '0');
+    final m = d.month.toString().padLeft(2, '0');
+    final day = d.day.toString().padLeft(2, '0');
+    final hh = d.hour.toString().padLeft(2, '0');
+    final mm = d.minute.toString().padLeft(2, '0');
+    return '$y-$m-$day $hh:$mm';
+  }
+
+  Future<void> _showEmergencyResultDialog(EmergencyAbsenceResultDto res) async {
+    final cancelledCount = res.cancelledAppointments.length;
+    final tokensCount = res.tokensIssuedForPatients.length;
+    final expiresText = _fmtShortLocal(res.tokenExpiresAt);
+
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) {
+        return AlertDialog(
+          title: const Text('تم إنشاء غياب طارئ'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('تم إلغاء $cancelledCount مواعيد ضمن فترة الغياب.'),
+              const SizedBox(height: 6),
+              Text('تم إصدار أولوية إعادة حجز لـ $tokensCount مرضى.'),
+              const SizedBox(height: 6),
+              Text('تنتهي صلاحية الأولوية بتاريخ: $expiresText'),
+            ],
+          ),
+          actions: [
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('موافق'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   Future<void> _openCreateDialog() async {
     final result = await showDialog<DoctorAbsenceDialogResult>(
       context: context,
@@ -121,6 +164,18 @@ class _DoctorAbsencesScreenState extends State<DoctorAbsencesScreen> {
   }
 
   Future<void> _openEditDialog(DoctorAbsenceDto existing) async {
+    // سياسة بسيطة وواضحة:
+    // - الغياب الطارئ لا نعدّله (إنشاؤه عبر endpoint خاص + آثار جانبية)
+    // - يمكن حذفه ثم إنشاء غياب طارئ جديد إذا لزم.
+    if (existing.type.trim().toLowerCase() == 'emergency') {
+      showAppSnackBar(
+        context,
+        'لا يمكن تعديل الغياب الطارئ. يمكنك حذفه ثم إنشاء غياب طارئ جديد.',
+        type: AppSnackBarType.warning,
+      );
+      return;
+    }
+
     final result = await showDialog<DoctorAbsenceDialogResult>(
       context: context,
       barrierDismissible: false,
@@ -134,7 +189,49 @@ class _DoctorAbsencesScreenState extends State<DoctorAbsencesScreen> {
   }
 
   Future<void> createAbsence(DoctorAbsenceDialogResult input) async {
+    final isEmergency = input.type.trim().toLowerCase() == 'emergency';
+
+    // تحذير/تأكيد إضافي للطارئ لأن له آثار جانبية
+    if (isEmergency) {
+      final confirm = await showConfirmDialog(
+        context,
+        title: 'تأكيد غياب طارئ',
+        message:
+            'تنبيه: الغياب الطارئ قد يؤدي إلى إلغاء المواعيد الواقعة ضمن الفترة '
+            'وإصدار أولوية إعادة حجز للمرضى المتأثرين.\n\nهل تريد المتابعة؟',
+        confirmText: 'تأكيد',
+        cancelText: 'تراجع',
+        danger: true,
+      );
+
+      if (!mounted) return;
+      if (!confirm) return;
+    }
+
     try {
+      if (isEmergency) {
+        // نرسل UTC ISO لتفادي أي التباس بالمناطق الزمنية
+        final startIso = input.start.toUtc().toIso8601String();
+        final endIso = input.end.toUtc().toIso8601String();
+        final notes = input.notes.trim().isEmpty ? null : input.notes.trim();
+
+        final res = await appointmentsService.createEmergencyAbsence(
+          startTimeIso: startIso,
+          endTimeIso: endIso,
+          notes: notes,
+        );
+
+        if (!mounted) return;
+
+        // بدل SnackBar: Dialog مع OK
+        await _showEmergencyResultDialog(res);
+
+        // تحديث القائمة بعد الإغلاق
+        await fetchAbsences();
+        return;
+      }
+
+      // planned (المنطق الحالي يبقى كما هو)
       await appointmentsService.createDoctorAbsence(
         payload: {
           "start_time": input.start.toIso8601String(),
@@ -168,6 +265,17 @@ class _DoctorAbsencesScreenState extends State<DoctorAbsencesScreen> {
   }
 
   Future<void> updateAbsence(int id, DoctorAbsenceDialogResult input) async {
+    // سياسة: التعديل فقط للـ planned
+    final isEmergency = input.type.trim().toLowerCase() == 'emergency';
+    if (isEmergency) {
+      showAppSnackBar(
+        context,
+        'لا يمكن تعديل الغياب الطارئ. احذفه ثم أنشئ غيابًا طارئًا جديدًا.',
+        type: AppSnackBarType.warning,
+      );
+      return;
+    }
+
     try {
       await appointmentsService.updateDoctorAbsence(
         absenceId: id,
@@ -203,10 +311,15 @@ class _DoctorAbsencesScreenState extends State<DoctorAbsencesScreen> {
   }
 
   Future<void> deleteAbsence(DoctorAbsenceDto a) async {
+    final isEmergency = a.type.trim().toLowerCase() == 'emergency';
+
     final confirm = await showConfirmDialog(
       context,
       title: 'حذف الغياب',
-      message: 'هل أنت متأكد من حذف هذا الغياب؟',
+      message:
+          isEmergency
+              ? 'هل أنت متأكد من حذف هذا الغياب الطارئ؟'
+              : 'هل أنت متأكد من حذف هذا الغياب؟',
       confirmText: 'حذف',
       cancelText: 'تراجع',
       danger: true,
@@ -300,7 +413,6 @@ class _DoctorAbsencesScreenState extends State<DoctorAbsencesScreen> {
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
                     const SizedBox(height: 12),
-
                     if (absences.isEmpty)
                       const Center(
                         child: Padding(
@@ -311,23 +423,39 @@ class _DoctorAbsencesScreenState extends State<DoctorAbsencesScreen> {
                     else
                       ...absences.map((a) {
                         final notes = (a.notes ?? '').trim();
+                        final type = a.type.trim().toLowerCase();
+                        final isEmergency = type == 'emergency';
+
                         final subtitle =
                             'من: ${_fmtDateTime(a.startTime)}\n'
                             'إلى: ${_fmtDateTime(a.endTime)}\n'
                             'النوع: ${_typeLabel(a.type)}'
-                            '${notes.isNotEmpty ? "\nملاحظات: $notes" : ""}';
+                            '${notes.isNotEmpty ? "\nملاحظات: $notes" : ""}'
+                            '${isEmergency ? "\nتنبيه: الغياب الطارئ قد يلغي مواعيد ضمن الفترة." : ""}';
 
                         return Padding(
                           padding: const EdgeInsets.only(bottom: 8),
                           child: Card(
                             elevation: 0,
                             child: ListTile(
-                              leading: const CircleAvatar(
-                                child: Icon(Icons.event_busy),
+                              leading: CircleAvatar(
+                                backgroundColor:
+                                    isEmergency
+                                        ? cs.error.withValues(alpha: 0.10)
+                                        : cs.primary.withValues(alpha: 0.10),
+                                foregroundColor:
+                                    isEmergency ? cs.error : cs.primary,
+                                child: Icon(
+                                  isEmergency
+                                      ? Icons.warning_amber
+                                      : Icons.event_busy,
+                                ),
                               ),
-                              title: const Text(
-                                'غياب',
-                                style: TextStyle(fontWeight: FontWeight.w700),
+                              title: Text(
+                                isEmergency ? 'غياب طارئ' : 'غياب',
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                ),
                               ),
                               subtitle: Text(subtitle),
                               trailing: PopupMenuButton<String>(
@@ -339,17 +467,26 @@ class _DoctorAbsencesScreenState extends State<DoctorAbsencesScreen> {
                                     await deleteAbsence(a);
                                   }
                                 },
-                                itemBuilder:
-                                    (_) => const [
-                                      PopupMenuItem(
-                                        value: 'edit',
-                                        child: Text('تعديل'),
-                                      ),
+                                itemBuilder: (_) {
+                                  if (isEmergency) {
+                                    return const [
                                       PopupMenuItem(
                                         value: 'delete',
                                         child: Text('حذف'),
                                       ),
-                                    ],
+                                    ];
+                                  }
+                                  return const [
+                                    PopupMenuItem(
+                                      value: 'edit',
+                                      child: Text('تعديل'),
+                                    ),
+                                    PopupMenuItem(
+                                      value: 'delete',
+                                      child: Text('حذف'),
+                                    ),
+                                  ];
+                                },
                               ),
                             ),
                           ),
@@ -480,6 +617,9 @@ class _DoctorAbsenceDialogState extends State<DoctorAbsenceDialog> {
   @override
   Widget build(BuildContext context) {
     final isEdit = widget.initial != null;
+    final cs = Theme.of(context).colorScheme;
+
+    final isEmergency = _type.trim().toLowerCase() == 'emergency';
 
     return AlertDialog(
       title: Text(isEdit ? 'تعديل غياب' : 'إضافة غياب'),
@@ -540,8 +680,39 @@ class _DoctorAbsenceDialogState extends State<DoctorAbsenceDialog> {
                   DropdownMenuItem(value: 'planned', child: Text('مخطط')),
                   DropdownMenuItem(value: 'emergency', child: Text('طارئ')),
                 ],
-                onChanged: (v) => setState(() => _type = v ?? 'planned'),
+                onChanged:
+                    isEdit
+                        ? null
+                        : (v) => setState(() => _type = v ?? 'planned'),
               ),
+
+              if (!isEdit && isEmergency) ...[
+                const SizedBox(height: 10),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: cs.error.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: cs.error.withValues(alpha: 0.35)),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(Icons.warning_amber, color: cs.error),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          'تنبيه: عند اختيار "طارئ" سيتم إلغاء المواعيد الواقعة ضمن الفترة، '
+                          'وسيتم منح المرضى المتأثرين أولوية إعادة حجز مؤقتة.',
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(color: cs.onSurface, height: 1.3),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
 
               const SizedBox(height: 12),
 
