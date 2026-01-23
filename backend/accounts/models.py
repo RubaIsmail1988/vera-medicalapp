@@ -544,6 +544,25 @@ class UrgentRequest(models.Model):
     notes = models.TextField(blank=True, null=True)
 
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="open")
+    HANDLED_TYPE_CHOICES = [
+        ("scheduled", "Scheduled"),
+        ("rejected", "Rejected"),
+    ]
+
+    handled_type = models.CharField(
+        max_length=20,
+        choices=HANDLED_TYPE_CHOICES,
+        blank=True,
+        null=True,
+    )
+
+    scheduled_appointment = models.ForeignKey(
+        "accounts.Appointment",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="from_urgent_request",
+    )
     created_at = models.DateTimeField(default=timezone.now)
     handled_at = models.DateTimeField(blank=True, null=True)
 
@@ -588,19 +607,47 @@ class RebookingPriorityToken(models.Model):
     expires_at = models.DateTimeField()
 
     is_active = models.BooleanField(default=True)
-
+    # NEW
+    consumed_at = models.DateTimeField(null=True, blank=True)
+    consumed_appointment = models.ForeignKey(
+        "accounts.Appointment",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="consumed_rebooking_tokens",
+    )
     class Meta:
         ordering = ["-issued_at"]
+
         indexes = [
+            # البحث عن توكن فعّال للمريض عند الحجز
+            models.Index(fields=["patient", "doctor", "is_active", "expires_at"]),
+
+            # دعم الاستعلامات القديمة (لو استُخدمت بمكان آخر)
             models.Index(fields=["patient", "is_active", "expires_at"]),
             models.Index(fields=["doctor", "is_active", "expires_at"]),
+
+            # NEW: الربط العكسي من الموعد ← التوكن المستهلك
+            models.Index(fields=["consumed_appointment"]),
         ]
+
         constraints = [
+            # سلامة زمنية أساسية
             models.CheckConstraint(
                 condition=models.Q(issued_at__lt=models.F("expires_at")),
                 name="chk_token_issued_before_expires",
             ),
+
+            # إذا استُهلك التوكن، يجب أن يكون غير فعّال
+            models.CheckConstraint(
+                condition=(
+                    models.Q(consumed_at__isnull=True, consumed_appointment__isnull=True)
+                    | models.Q(is_active=False)
+                ),
+                name="chk_consumed_token_is_inactive",
+            ),
         ]
+
 
     def __str__(self):
         return f"RebookingToken(patient={self.patient_id}, doctor={self.doctor_id}, active={self.is_active})"

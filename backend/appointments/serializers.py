@@ -125,6 +125,10 @@ class UrgentRequestReadSerializer(serializers.ModelSerializer):
     doctor_name = serializers.CharField(source="doctor.username", read_only=True)
     appointment_type_name = serializers.CharField(source="appointment_type.type_name", read_only=True)
 
+    # NEW
+    handled_type = serializers.CharField(read_only=True)
+    scheduled_appointment_id = serializers.IntegerField(read_only=True, required=False)
+
     class Meta:
         model = UrgentRequest
         fields = [
@@ -150,6 +154,10 @@ class UrgentRequestReadSerializer(serializers.ModelSerializer):
             "handled_at",
             "handled_by",
             "rejected_reason",
+
+            # NEW
+            "handled_type",
+            "scheduled_appointment_id",
         ]
         read_only_fields = fields
 
@@ -484,7 +492,9 @@ class AppointmentCreateSerializer(serializers.Serializer):
 
         if tok is not None:
             tok.is_active = False
-            tok.save(update_fields=["is_active"])
+            tok.consumed_at = now
+            tok.consumed_appointment = appointment
+            tok.save(update_fields=["is_active", "consumed_at", "consumed_appointment_id"])
  
 
         # Create triage only if at least one triage field is provided

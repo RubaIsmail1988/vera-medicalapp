@@ -408,6 +408,9 @@ class MyUrgentRequestsView(APIView):
 
     def get(self, request):
         user = request.user
+
+        # IMPORTANT: keep default "open" for doctor UX (as you had),
+        # but implement "handled" as a group (handled + rejected + cancelled).
         status_q = (request.query_params.get("status") or "open").strip().lower()
 
         allowed_statuses = {"open", "handled", "rejected", "cancelled", "all"}
@@ -417,21 +420,40 @@ class MyUrgentRequestsView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        qs = UrgentRequest.objects.select_related("patient", "doctor", "appointment_type").filter(
-            doctor_id=user.id
-        )
+        qs = UrgentRequest.objects.select_related(
+            "patient", "doctor", "appointment_type"
+        ).filter(doctor_id=user.id)
 
-        if status_q != "all":
-            qs = qs.filter(status=status_q)
+        if status_q == "open":
+            qs = qs.filter(status="open")
 
-        # Better triage-first ordering for open requests
+        elif status_q == "handled":
+            # "handled" in UI means: processed (scheduled OR rejected OR cancelled)
+            qs = qs.filter(status__in=["handled", "rejected", "cancelled"])
+
+        elif status_q == "rejected":
+            qs = qs.filter(status="rejected")
+
+        elif status_q == "cancelled":
+            qs = qs.filter(status="cancelled")
+
+        elif status_q == "all":
+            # no filter
+            pass
+
+        # Ordering:
+        # - open: triage-first (score desc), then newest
+        # - others: newest first
         if status_q == "open":
             qs = qs.order_by(F("score").desc(nulls_last=True), "-created_at")
         else:
             qs = qs.order_by("-created_at")
 
         qs = qs[:200]
-        return Response({"results": UrgentRequestReadSerializer(qs, many=True).data}, status=status.HTTP_200_OK)
+        return Response(
+            {"results": UrgentRequestReadSerializer(qs, many=True).data},
+            status=status.HTTP_200_OK,
+        )
 
 
 class UrgentRequestRejectView(APIView):
@@ -454,13 +476,25 @@ class UrgentRequestRejectView(APIView):
         tz = timezone.get_current_timezone()
 
         urgent.status = "rejected"
+        urgent.handled_type = "rejected"          
+        urgent.scheduled_appointment = None     
         urgent.handled_at = timezone.now()
+
         if hasattr(urgent, "handled_by_id"):
             urgent.handled_by = request.user
+
         if hasattr(urgent, "rejected_reason"):
             urgent.rejected_reason = reason
 
-        urgent.save()
+        urgent.save(update_fields=[
+            "status",
+            "handled_type",
+            "scheduled_appointment",
+            "handled_at",
+            "handled_by",
+            "rejected_reason",
+        ])
+
 
         # Notify patient
         try:
@@ -534,12 +568,23 @@ class UrgentRequestScheduleView(APIView):
             notes=(v.get("notes") or "").strip(),
         )
 
-        # Close urgent request
+        # Close urgent request — handled by scheduling
         urgent.status = "handled"
+        urgent.handled_type = "scheduled"          # NEW: نوع المعالجة
+        urgent.scheduled_appointment = appointment # NEW: ربط الموعد الناتج
         urgent.handled_at = timezone.now()
+
         if hasattr(urgent, "handled_by_id"):
             urgent.handled_by = request.user
-        urgent.save()
+
+        urgent.save(update_fields=[
+            "status",
+            "handled_type",
+            "scheduled_appointment",
+            "handled_at",
+            "handled_by",
+        ])
+
 
         # Notify patient
         try:
@@ -1141,17 +1186,35 @@ class DoctorAvailableSlotsRangeView(APIView):
             day_name = day_date.strftime("%A")
             availability = availability_by_dayname.get(day_name)
 
+            # إذا لا يوجد دوام لهذا اليوم → نعيد اليوم مع slots فارغة
             if not availability:
-                return None
+                return {
+                    "date": day_date.isoformat(),
+                    "availability": {"start": "", "end": ""},
+                    "slots": [],
+                }
 
-            start_dt = timezone.make_aware(datetime.combine(day_date, availability.start_time), tz)
-            end_dt = timezone.make_aware(datetime.combine(day_date, availability.end_time), tz)
+            start_dt = timezone.make_aware(
+                datetime.combine(day_date, availability.start_time), tz
+            )
+            end_dt = timezone.make_aware(
+                datetime.combine(day_date, availability.end_time), tz
+            )
 
+            # Clamp لليوم الحالي
             if day_date == now_local.date() and now_local > start_dt:
                 start_dt = now_local.replace(second=0, microsecond=0)
 
+            # إذا صار الدوام غير صالح بعد الـ clamp → نعيد اليوم مع slots فارغة
             if start_dt >= end_dt:
-                return None
+                return {
+                    "date": day_date.isoformat(),
+                    "availability": {
+                        "start": availability.start_time.strftime("%H:%M"),
+                        "end": availability.end_time.strftime("%H:%M"),
+                    },
+                    "slots": [],
+                }
 
             raw_intervals = intervals_by_date.get(day_date, [])
             intervals = []
@@ -1186,7 +1249,7 @@ class DoctorAvailableSlotsRangeView(APIView):
             slots = []
             step = timedelta(minutes=duration_minutes)
             cursor = start_dt.replace(second=0, microsecond=0)
- 
+
             while cursor + step <= end_dt:
                 candidate_end = cursor + step
                 hit = find_first_overlap(cursor, candidate_end)
@@ -1205,9 +1268,6 @@ class DoctorAvailableSlotsRangeView(APIView):
                 cursor = jump_to
                 if cursor >= end_dt:
                     break
-
-            if not slots:
-                return None
 
             return {
                 "date": day_date.isoformat(),
@@ -1234,13 +1294,11 @@ class DoctorAvailableSlotsRangeView(APIView):
                     "expires_at": tok.expires_at.astimezone(tz).isoformat(),
                 }
 
-
+        # IMPORTANT: return ALL days in range (including empty slots days)
         days_out = []
         d = start_date
         while d <= end_date:
-            payload = compute_day_slots(d)
-            if payload is not None:
-                days_out.append(payload)
+            days_out.append(compute_day_slots(d))
             d = d + timedelta(days=1)
 
         return Response(
@@ -1376,6 +1434,20 @@ class MyAppointmentsView(APIView):
         appointments_list = list(qs)
         appt_ids = [a.id for a in appointments_list]
 
+        tokens = RebookingPriorityToken.objects.filter(
+            consumed_appointment_id__in=appt_ids
+        ).values(
+            "consumed_appointment_id",
+            "expires_at",
+            "issued_at",
+            "absence_id",
+            "patient_id",
+            "doctor_id",
+        )
+        token_by_appt = {}
+        for t in tokens:
+            token_by_appt[t["consumed_appointment_id"]] = t
+
         order_rows = ClinicalOrder.objects.filter(
             appointment_id__in=appt_ids
         ).values("appointment_id", "status")
@@ -1411,6 +1483,25 @@ class MyAppointmentsView(APIView):
                     "score_version": triage_obj.score_version,
                     "created_at": triage_obj.created_at.astimezone(tz).isoformat(),
                 }
+            def iso_local(dt):
+                if dt is None:
+                    return None
+                if timezone.is_naive(dt):
+                    dt = timezone.make_aware(dt, tz)
+                return dt.astimezone(tz).isoformat()
+
+            tok = token_by_appt.get(ap.id)
+            priority_badge = None
+            tok = token_by_appt.get(ap.id)
+            priority_badge = None
+
+            if tok is not None:
+                priority_badge = {
+                    "type": "rebooking_priority",
+                    "expires_at": iso_local(tok.get("expires_at")),
+                    "issued_at": iso_local(tok.get("issued_at")),
+                    "absence_id": tok.get("absence_id"),
+                }
 
             results.append(
                 {
@@ -1429,6 +1520,7 @@ class MyAppointmentsView(APIView):
                     "has_any_orders": has_any_orders,
                     "has_open_orders": has_open_orders,
                     "triage": triage_payload,
+                    "priority_badge": priority_badge,
                 }
             )
 
