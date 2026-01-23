@@ -1,9 +1,11 @@
+// mobile/lib/screens/user/appointments/doctor_search_screen.dart
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../services/appointments_service.dart';
+import '../../../services/auth_service.dart';
 import '../../../models/doctor_search_result.dart';
 import '../../../utils/ui_helpers.dart';
 
@@ -18,18 +20,76 @@ class _DoctorSearchScreenState extends State<DoctorSearchScreen> {
   final TextEditingController searchController = TextEditingController();
   final AppointmentsService appointmentsService = AppointmentsService();
 
+  // for /api/accounts/me/
+  final AuthService authService = AuthService();
+
   bool loading = false;
   String query = '';
   List<DoctorSearchResult> results = const [];
   String? errorMessage;
 
   int? selectedGovernorateId; // null => الكل
+  int? myGovernorateId; // from /api/accounts/me/
+  bool profileLoaded = false;
+  bool userTouchedGovernorateFilter = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadMyGovernorateDefault();
+  }
 
   @override
   void dispose() {
     searchController.dispose();
     super.dispose();
   }
+
+  // ---------------- Accounts (/me) helpers ----------------
+
+  Future<void> _loadMyGovernorateDefault() async {
+    if (profileLoaded) return;
+
+    try {
+      final response = await authService.authorizedRequest("/me/", "GET");
+      if (!mounted) return;
+
+      if (response.statusCode != 200) {
+        setState(() {
+          profileLoaded = true;
+        });
+        return;
+      }
+
+      final decoded = jsonDecode(response.body);
+      int? govId;
+
+      if (decoded is Map) {
+        final rawGov = decoded["governorate"];
+        if (rawGov is int) govId = rawGov;
+        if (rawGov is num) govId = rawGov.toInt();
+        if (rawGov is String) govId = int.tryParse(rawGov);
+      }
+
+      setState(() {
+        myGovernorateId = govId;
+        profileLoaded = true;
+
+        // Default selection = patient's governorate,
+        // but do not override if user already changed it.
+        // if (!userTouchedGovernorateFilter && selectedGovernorateId == null) {
+        // selectedGovernorateId = govId;
+        //  }
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        profileLoaded = true;
+      });
+    }
+  }
+
+  // ---------------- UI data helpers ----------------
 
   List<_GovernorateOption> get governorateOptions {
     final map = <int, String>{};
@@ -58,6 +118,32 @@ class _DoctorSearchScreenState extends State<DoctorSearchScreen> {
     return results.where((d) => d.governorateId == gid).toList();
   }
 
+  List<DoctorSearchResult> _sortedForMyGovernorateFirst(
+    List<DoctorSearchResult> input,
+  ) {
+    final govId = myGovernorateId;
+    if (govId == null) return input;
+
+    // If user explicitly selected a governorate, respect that (no extra sorting needed)
+    if (selectedGovernorateId != null) return input;
+
+    final list = List<DoctorSearchResult>.from(input);
+
+    list.sort((a, b) {
+      final aMatch = a.governorateId == govId ? 0 : 1;
+      final bMatch = b.governorateId == govId ? 0 : 1;
+
+      if (aMatch != bMatch) return aMatch.compareTo(bMatch);
+
+      // secondary ordering: username
+      return a.username.compareTo(b.username);
+    });
+
+    return list;
+  }
+
+  // ---------------- API call ----------------
+
   Future<void> runSearch() async {
     final q = searchController.text.trim();
     if (q.isEmpty) {
@@ -65,7 +151,11 @@ class _DoctorSearchScreenState extends State<DoctorSearchScreen> {
         query = '';
         results = const [];
         errorMessage = null;
-        selectedGovernorateId = null;
+
+        // keep user's selected governorate; but if they never touched it, keep default
+        //   if (!userTouchedGovernorateFilter) {
+        //   selectedGovernorateId = myGovernorateId;
+        // }
       });
       return;
     }
@@ -74,32 +164,40 @@ class _DoctorSearchScreenState extends State<DoctorSearchScreen> {
       loading = true;
       query = q;
       errorMessage = null;
-      // ملاحظة: لا نصفر الفلتر هنا، لأن المستخدم قد يريد تثبيته أثناء تغيير كلمة البحث
-      // لكن إذا تحبي تصفيره تلقائياً عند كل بحث، اكتبي:
-      // selectedGovernorateId = null;
     });
 
     try {
       final data = await appointmentsService.searchDoctors(query: q);
       if (!mounted) return;
 
+      // Ensure default gov is applied after first search (if user didn't touch filter)
+      //  int? newSelectedGov = selectedGovernorateId;
+      //  if (!userTouchedGovernorateFilter && newSelectedGov == null) {
+      //    newSelectedGov = myGovernorateId;
+      //  }
+
+      // If the selected governorate is not present in this search results, fallback to "all"
+      // final ids = data.map((d) => d.governorateId).whereType<int>().toSet();
+      // if (newSelectedGov != null && !ids.contains(newSelectedGov)) {
+      //  newSelectedGov = null;
+      //}
+
+      //  setState(() {
+      //    results = data;
+      //   selectedGovernorateId = newSelectedGov;
+      //   loading = false;
+      // });
       setState(() {
         results = data;
-        debugPrint('Doctors returned: ${data.length}');
-        if (data.isNotEmpty) {
-          final d0 = data.first;
-          debugPrint(
-            'Sample: id=${d0.id}, name=${d0.username}, govId=${d0.governorateId}, govName=${d0.governorateName}, exp=${d0.experienceYears}',
-          );
-        }
-
         loading = false;
 
-        // إذا كانت المحافظة المحددة لم تعد موجودة ضمن النتائج الجديدة → رجّعيها "الكل"
-        final existingIds = governorateOptions.map((e) => e.id).toSet();
-        if (selectedGovernorateId != null &&
-            !existingIds.contains(selectedGovernorateId)) {
-          selectedGovernorateId = null;
+        // إذا المستخدم مختار محافظة، وتبين أنها غير موجودة ضمن النتائج الجديدة → رجّعيها "الكل"
+        if (selectedGovernorateId != null) {
+          final ids = data.map((d) => d.governorateId).whereType<int>().toSet();
+          if (!ids.contains(selectedGovernorateId)) {
+            selectedGovernorateId = null;
+            userTouchedGovernorateFilter = false;
+          }
         }
       });
     } on ApiException catch (e) {
@@ -150,7 +248,11 @@ class _DoctorSearchScreenState extends State<DoctorSearchScreen> {
   Widget build(BuildContext context) {
     final hasQuery = query.trim().isNotEmpty;
     final govOptions = governorateOptions;
-    final dataToShow = filteredResults;
+
+    final baseList = filteredResults;
+    final dataToShow = _sortedForMyGovernorateFirst(baseList);
+
+    final showGovFilter = results.isNotEmpty;
 
     return Scaffold(
       appBar: AppBar(title: const Text('حجز موعد')),
@@ -181,11 +283,19 @@ class _DoctorSearchScreenState extends State<DoctorSearchScreen> {
             ),
             const SizedBox(height: 12),
 
-            // فلتر المحافظات (يظهر فقط إذا لدينا نتائج)
-            if (results.isNotEmpty) ...[
+            // فلتر المحافظات
+            if (showGovFilter) ...[
               DropdownButtonFormField<int?>(
                 value: selectedGovernorateId,
-                decoration: const InputDecoration(labelText: 'المحافظة'),
+                decoration: InputDecoration(
+                  labelText: 'المحافظة',
+                  helperText:
+                      (!profileLoaded)
+                          ? 'جارٍ تحميل محافظة حسابك...'
+                          : (myGovernorateId != null
+                              ? 'تم ضبط الافتراضي على محافظة حسابك (يمكنك تغييره).'
+                              : 'يمكنك اختيار المحافظة لتصفية النتائج.'),
+                ),
                 items: [
                   const DropdownMenuItem<int?>(
                     value: null,
@@ -201,6 +311,7 @@ class _DoctorSearchScreenState extends State<DoctorSearchScreen> {
                 onChanged: (v) {
                   setState(() {
                     selectedGovernorateId = v;
+                    userTouchedGovernorateFilter = true;
                   });
                 },
               ),
@@ -225,7 +336,6 @@ class _DoctorSearchScreenState extends State<DoctorSearchScreen> {
                   }
 
                   if (dataToShow.isEmpty) {
-                    // قد تكون النتائج الأصلية موجودة لكن الفلتر ضيّقها
                     if (results.isNotEmpty && selectedGovernorateId != null) {
                       return const Center(
                         child: Text('لا توجد نتائج ضمن هذه المحافظة.'),

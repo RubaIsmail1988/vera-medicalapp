@@ -702,6 +702,44 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
     );
   }
 
+  // -----------------------------
+  // Priority badge helpers
+  // -----------------------------
+  String _fmtDateTimeShort(DateTime dt) {
+    final d = dt.toLocal();
+    final dd = d.day.toString().padLeft(2, '0');
+    final mm = d.month.toString().padLeft(2, '0');
+    final yyyy = d.year.toString();
+    final hh = d.hour.toString().padLeft(2, '0');
+    final min = d.minute.toString().padLeft(2, '0');
+    return '$dd-$mm-$yyyy $hh:$min';
+  }
+
+  Widget _priorityBadgeChip(BuildContext context, Appointment a) {
+    final b = a.priorityBadge;
+    if (b == null) return const SizedBox.shrink();
+    if (!b.isRebookingPriority) return const SizedBox.shrink();
+
+    final cs = Theme.of(context).colorScheme;
+
+    final expires = b.expiresAt;
+    final expiresLabel =
+        (expires != null) ? 'تنتهي: ${_fmtDateTimeShort(expires)}' : null;
+
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      alignment: WrapAlignment.end,
+      children: [
+        Chip(
+          avatar: Icon(Icons.bolt, size: 18, color: cs.onSurface),
+          label: const Text('أولوية إعادة الحجز'),
+        ),
+        if (expiresLabel != null) Chip(label: Text(expiresLabel)),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return SafeArea(
@@ -724,11 +762,22 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
                   children: [
                     Expanded(
                       child: Text(
-                        role == 'doctor' ? 'تصفية مواعيد المرضى' : 'مواعيدي',
+                        role == 'doctor' ? 'مواعيد المرضى' : 'مواعيدي',
                         style: Theme.of(context).textTheme.titleLarge,
                         textAlign: TextAlign.right,
                       ),
                     ),
+
+                    // NEW: Doctor urgent requests shortcut
+                    if (role == 'doctor')
+                      TextButton.icon(
+                        onPressed: () {
+                          context.go('/app/appointments/urgent-requests');
+                        },
+                        icon: const Icon(Icons.priority_high),
+                        label: const Text('الطلبات العاجلة'),
+                      ),
+
                     IconButton(
                       tooltip: 'تحديث',
                       onPressed: fetch,
@@ -736,6 +785,7 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
                     ),
                   ],
                 ),
+
                 const SizedBox(height: 12),
 
                 Text('الوقت', style: Theme.of(context).textTheme.titleSmall),
@@ -968,6 +1018,14 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
                                   ].join('\n'),
                                   textAlign: TextAlign.right,
                                 ),
+                                // ---------------- Priority badge ----------------
+                                if (a.priorityBadge?.isRebookingPriority ==
+                                    true) ...[
+                                  const SizedBox(height: 10),
+                                  _rtlSectionTitle(context, 'ميزة:'),
+                                  const SizedBox(height: 6),
+                                  _priorityBadgeChip(context, a),
+                                ],
 
                                 // ---------------- Symptoms (full block) ----------------
                                 if (symptoms.isNotEmpty &&

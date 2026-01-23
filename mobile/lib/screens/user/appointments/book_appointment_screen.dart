@@ -29,6 +29,7 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
   bool loadingTypes = true;
   bool loadingRange = false;
   bool booking = false;
+  bool creatingUrgent = false;
 
   // payload from /api/appointments/doctors/<id>/visit-types/
   List<Map<String, dynamic>> central = const [];
@@ -41,14 +42,19 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
   DateTime rangeFromDate = DateTime.now();
   int rangeDays = 7;
 
-  // Range payload (only days with slots)
+  // Range payload (ALL days in range, including days with no slots)
   List<Map<String, dynamic>> availableDays =
       const []; // [{date, availability, slots}]
+
   String? selectedDay; // YYYY-MM-DD
   List<String> slots = const [];
   String? selectedSlot;
   Map<String, String>? availability; // {"start":"..","end":".."}
   int resolvedDurationMinutes = 0;
+
+  // NEW: rebooking priority (from slots-range response)
+  bool rebookingPriorityActive = false;
+  DateTime? rebookingPriorityExpiresAt;
 
   // Notes
   final TextEditingController notesController = TextEditingController();
@@ -98,6 +104,27 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
     return DateTime(y, m, d);
   }
 
+  bool _isHolidayDay(Map<String, dynamic> d) {
+    final availabilityRaw = d['availability'];
+    if (availabilityRaw is! Map) return true;
+
+    final start = (availabilityRaw['start'] ?? '').toString().trim();
+    final end = (availabilityRaw['end'] ?? '').toString().trim();
+
+    // Backend returns ""/"" when no availability (holiday/no schedule)
+    return start.isEmpty || end.isEmpty;
+  }
+
+  bool _hasSlotsDay(Map<String, dynamic> d) {
+    final rawSlots = d['slots'];
+    return rawSlots is List && rawSlots.isNotEmpty;
+  }
+
+  List<Map<String, dynamic>> _daysForChips() {
+    // Do NOT show holiday days at all.
+    return availableDays.where((d) => !_isHolidayDay(d)).toList();
+  }
+
   String _weekdayAr(int weekday) {
     // DateTime.weekday: Mon=1..Sun=7
     switch (weekday) {
@@ -136,7 +163,7 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
     return '$name — $dur دقيقة${hasOverride ? " (مخصص)" : ""}';
   }
 
-  /// Builds UTC datetime to send to backend, from:
+  /// Builds local datetime to send to backend, from:
   /// - selectedDay (YYYY-MM-DD) from range payload
   /// - selectedSlot (HH:MM) from slots list (shown as local time)
   DateTime _buildDateTimeFromSlotYmd(String ymd, String slotHHmm) {
@@ -212,6 +239,9 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
       selectedSlot = null;
       availability = null;
       resolvedDurationMinutes = 0;
+
+      rebookingPriorityActive = false;
+      rebookingPriorityExpiresAt = null;
     });
 
     try {
@@ -339,6 +369,9 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
         selectedSlot = null;
         availability = null;
         resolvedDurationMinutes = 0;
+
+        rebookingPriorityActive = false;
+        rebookingPriorityExpiresAt = null;
       });
       return;
     }
@@ -352,6 +385,9 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
         selectedSlot = null;
         availability = null;
         resolvedDurationMinutes = 0;
+
+        rebookingPriorityActive = false;
+        rebookingPriorityExpiresAt = null;
       });
       return;
     }
@@ -369,10 +405,13 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
       availability = null;
 
       resolvedDurationMinutes = _toInt(selected['resolved_duration_minutes']);
+
+      rebookingPriorityActive = false;
+      rebookingPriorityExpiresAt = null;
     });
 
     try {
-      final payload = await appointmentsService.fetchDoctorSlotsRange(
+      final dto = await appointmentsService.fetchDoctorSlotsRangeDto(
         doctorId: widget.doctorId,
         appointmentTypeId: appointmentTypeId,
         fromDate: fromYmd,
@@ -380,35 +419,49 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
       );
 
       if (!mounted) return;
+      final resolved = dto.durationMinutes;
 
-      final dur = payload['duration_minutes'];
-      final resolved = (dur is num) ? dur.toInt() : int.tryParse('$dur') ?? 0;
+      // rebooking priority (typed)
+      final rpActive = dto.rebookingPriority?.active == true;
+      final rpExpires = dto.rebookingPriority?.expiresAt;
 
-      final daysRaw =
-          (payload['days'] is List)
-              ? (payload['days'] as List)
-                  .whereType<Map>()
-                  .map((e) => Map<String, dynamic>.from(e))
-                  .toList()
-              : <Map<String, dynamic>>[];
-
-      final daysWithSlots =
-          daysRaw.where((d) {
-            final s = d['slots'];
-            return (s is List) && s.isNotEmpty;
+      // Build ALL days (including empty slots)
+      final allDays =
+          dto.days.map((d) {
+            return <String, dynamic>{
+              'date': d.date,
+              'availability': {
+                'start': d.availabilityStart,
+                'end': d.availabilityEnd,
+              },
+              'slots': d.slots, // may be empty
+            };
           }).toList();
 
+      // Pick default selected day:
+      // 1) today if within range AND not holiday
+      // 2) else first non-holiday day in range
+      // Then compute slots for that day.
+      final todayYmd = _fmtYmd(DateTime.now());
+      final nonHolidayDays = allDays.where((d) => !_isHolidayDay(d)).toList();
+
       String? firstDay;
-      if (daysWithSlots.isNotEmpty) {
-        final d = (daysWithSlots.first['date'] ?? '').toString().trim();
-        if (d.isNotEmpty) firstDay = d;
+      final hasToday = nonHolidayDays.any(
+        (x) => (x['date'] ?? '').toString().trim() == todayYmd,
+      );
+
+      if (hasToday) {
+        firstDay = todayYmd;
+      } else if (nonHolidayDays.isNotEmpty) {
+        firstDay = (nonHolidayDays.first['date'] ?? '').toString().trim();
+        if (firstDay.isEmpty) firstDay = null;
       }
 
       List<String> initialSlots = const [];
       Map<String, String>? initialAvailability;
 
       if (firstDay != null) {
-        final dayObj = daysWithSlots.firstWhere(
+        final dayObj = allDays.firstWhere(
           (x) => (x['date'] ?? '').toString() == firstDay,
           orElse: () => <String, dynamic>{},
         );
@@ -431,13 +484,16 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
       }
 
       setState(() {
-        availableDays = daysWithSlots;
+        availableDays = allDays;
         resolvedDurationMinutes = resolved;
 
         selectedDay = firstDay;
         slots = initialSlots;
         availability = initialAvailability;
         selectedSlot = slots.isNotEmpty ? slots.first : null;
+
+        rebookingPriorityActive = rpActive;
+        rebookingPriorityExpiresAt = rpExpires;
 
         loadingRange = false;
       });
@@ -492,7 +548,85 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
     });
   }
 
+  Future<void> submitUrgentRequest() async {
+    final selected = selectedCentral;
+    if (selected == null) {
+      showAppSnackBar(
+        context,
+        'اختر نوع الزيارة أولاً.',
+        type: AppSnackBarType.warning,
+      );
+      return;
+    }
+
+    final appointmentTypeId = _toInt(selected['appointment_type_id']);
+    if (appointmentTypeId == 0) {
+      showAppErrorSnackBar(context, 'نوع الزيارة غير صالح.');
+      return;
+    }
+
+    final triagePayload = _buildTriagePayloadOrNull();
+    if (triagePayload != null && triagePayload.containsKey('__error__')) {
+      showAppSnackBar(
+        context,
+        triagePayload['__error__'].toString(),
+        type: AppSnackBarType.warning,
+      );
+      return;
+    }
+
+    if (!mounted) return;
+    setState(() => creatingUrgent = true);
+
+    try {
+      final urgent = await appointmentsService.createUrgentRequest(
+        doctorId: widget.doctorId,
+        appointmentTypeId: appointmentTypeId,
+        notes:
+            notesController.text.trim().isEmpty
+                ? null
+                : notesController.text.trim(),
+        triage: triagePayload,
+      );
+
+      if (!mounted) return;
+
+      showAppSuccessSnackBar(
+        context,
+        'تم إنشاء طلب عاجل بنجاح (رقم: ${urgent.id}). سيتم إشعار الطبيب.',
+      );
+
+      context.go('/app/appointments');
+    } on ApiException catch (e) {
+      if (!mounted) return;
+
+      Object? body;
+      try {
+        body = jsonDecode(e.body);
+      } catch (_) {
+        body = e.body;
+      }
+
+      showApiErrorSnackBar(context, statusCode: e.statusCode, data: body);
+    } catch (_) {
+      if (!mounted) return;
+      showAppErrorSnackBar(context, 'تعذّر إنشاء الطلب العاجل. حاول لاحقًا.');
+    } finally {
+      if (mounted) setState(() => creatingUrgent = false);
+    }
+  }
+
   Future<void> submitBooking() async {
+    // إذا ما في slots: نوجّه المستخدم لمسار urgent بدل الحجز العادي
+    if (!loadingRange && availableDays.isEmpty) {
+      showAppSnackBar(
+        context,
+        'لا توجد أوقات متاحة ضمن النطاق. يمكنك إنشاء طلب عاجل.',
+        type: AppSnackBarType.warning,
+      );
+      return;
+    }
+
     final selected = selectedCentral;
     if (selected == null) {
       showAppSnackBar(
@@ -548,7 +682,7 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
         appointmentTypeId: appointmentTypeId,
         dateTime: dt,
         notes: notesController.text.trim(),
-        triage: triagePayload, // NEW
+        triage: triagePayload, // optional
       );
 
       final appointment = await appointmentsService.createAppointment(
@@ -562,7 +696,6 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
         'تم حجز الموعد بنجاح (الحالة: ${appointment.status}).',
       );
 
-      if (!mounted) return;
       context.go('/app/appointments');
     } on ApiException catch (e) {
       if (!mounted) return;
@@ -583,9 +716,20 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
     }
   }
 
+  String? _rebookingBannerText() {
+    if (!rebookingPriorityActive) return null;
+    if (rebookingPriorityExpiresAt == null) {
+      return 'لديك أولوية إعادة حجز فعّالة لهذا الطبيب.';
+    }
+    final local = rebookingPriorityExpiresAt!.toLocal();
+    return 'لديك أولوية إعادة حجز فعّالة حتى ${local.year}-${local.month.toString().padLeft(2, '0')}-${local.day.toString().padLeft(2, '0')} '
+        '${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}.';
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final cs = theme.colorScheme;
 
     final availabilityText =
         availability == null
@@ -597,6 +741,16 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
 
     final bool hasTypesLoaded = !loadingTypes;
     final bool hasCentralSelected = selectedCentral != null;
+
+    final bannerText = _rebookingBannerText();
+
+    final bool noSlotsForSelectedDay =
+        !loadingRange &&
+        hasCentralSelected &&
+        selectedDay != null &&
+        slots.isEmpty;
+
+    final daysForChips = _daysForChips();
 
     return Scaffold(
       appBar: AppBar(title: const Text('حجز موعد')),
@@ -639,7 +793,7 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
                         )
                         .toList(),
                 onChanged:
-                    booking
+                    booking || creatingUrgent
                         ? null
                         : (v) async {
                           if (!mounted) return;
@@ -651,6 +805,9 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
                             selectedSlot = null;
                             slots = const [];
                             availability = null;
+
+                            rebookingPriorityActive = false;
+                            rebookingPriorityExpiresAt = null;
                           });
 
                           await loadSlotsRange();
@@ -690,19 +847,37 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
               runSpacing: 8,
               children: [
                 OutlinedButton.icon(
-                  onPressed: booking ? null : pickRangeFromDate,
+                  onPressed:
+                      (booking || creatingUrgent) ? null : pickRangeFromDate,
                   icon: const Icon(Icons.date_range),
                   label: Text('بداية النطاق: ${_fmtYmd(rangeFromDate)}'),
                 ),
                 ChoiceChip(
                   label: const Text('الأسبوع القادم'),
                   selected: rangeDays == 7,
-                  onSelected: booking ? null : (_) => setNextWeekPreset(),
+                  onSelected:
+                      (booking || creatingUrgent)
+                          ? null
+                          : (_) => setNextWeekPreset(),
                 ),
               ],
             ),
 
-            const SizedBox(height: 16),
+            const SizedBox(height: 12),
+
+            if (bannerText != null) ...[
+              Card(
+                elevation: 0,
+                child: ListTile(
+                  leading: const Icon(Icons.verified),
+                  title: const Text('أولوية إعادة الحجز'),
+                  subtitle: Text(bannerText),
+                ),
+              ),
+              const SizedBox(height: 8),
+            ],
+
+            const SizedBox(height: 8),
             Text(daysTitle, style: theme.textTheme.titleMedium),
             const SizedBox(height: 8),
 
@@ -717,18 +892,42 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
               const Text('اختر نوع الزيارة أولاً.')
             else if (availableDays.isEmpty)
               const Text('لا توجد أوقات متاحة ضمن هذا النطاق.')
+            else if (daysForChips.isEmpty)
+              const Text('لا توجد أيام دوام للطبيب ضمن هذا النطاق.')
             else
               Wrap(
                 spacing: 8,
                 runSpacing: 8,
                 children:
-                    availableDays.map((d) {
+                    daysForChips.map((d) {
                       final ymd = (d['date'] ?? '').toString().trim();
                       final isSelected = ymd == selectedDay;
+
+                      final hasSlots = _hasSlotsDay(d);
+                      final isFull = !hasSlots;
+
+                      // We allow selecting full days; they will show "لا توجد أوقات متاحة..."
+                      final bool disabled = booking || creatingUrgent;
+
+                      // Full-day hint: show a different visual while still selectable
+                      final Color? fillColor =
+                          isFull ? cs.surfaceContainerHighest : null;
+                      final Color? labelColor = isFull ? cs.onSurface : null;
+
                       return ChoiceChip(
-                        label: Text(_dayChipLabel(ymd)),
+                        label: Text(
+                          _dayChipLabel(ymd),
+                          style: TextStyle(color: labelColor),
+                        ),
                         selected: isSelected,
-                        onSelected: booking ? null : (_) => _selectDay(ymd),
+                        onSelected: disabled ? null : (_) => _selectDay(ymd),
+                        showCheckmark: !isFull,
+                        backgroundColor: fillColor,
+                        selectedColor: cs.secondaryContainer,
+                        side:
+                            isFull
+                                ? BorderSide(color: cs.outlineVariant)
+                                : null,
                       );
                     }).toList(),
               ),
@@ -759,7 +958,7 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
                         label: Text(s),
                         selected: isSelected,
                         onSelected:
-                            booking
+                            (booking || creatingUrgent)
                                 ? null
                                 : (val) {
                                   if (!mounted) return;
@@ -770,7 +969,7 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
               ),
 
             // -----------------------------
-            // NEW: Triage (optional)
+            // Triage (optional) — shared for booking + urgent
             // -----------------------------
             const SizedBox(height: 16),
             Text('تقييم الحالة (اختياري)', style: theme.textTheme.titleMedium),
@@ -861,11 +1060,67 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
               ),
             ),
 
-            const SizedBox(height: 20),
+            // -----------------------------
+            // No slots → Urgent CTA
+            // -----------------------------
+            if (noSlotsForSelectedDay) ...[
+              const SizedBox(height: 16),
+              Card(
+                elevation: 0,
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'لا يوجد مواعيد في هذا اليوم ',
+                        style: theme.textTheme.titleMedium,
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        'إذا كانت حالتك إسعافية أو لا يمكنك الانتظار، يمكنك إنشاء طلب عاجل ليصل للطبيب مباشرة.',
+                        style: theme.textTheme.bodyMedium,
+                      ),
+                      const SizedBox(height: 12),
+                      SizedBox(
+                        height: 46,
+                        width: double.infinity,
+                        child: ElevatedButton.icon(
+                          onPressed:
+                              (creatingUrgent || booking)
+                                  ? null
+                                  : submitUrgentRequest,
+                          icon:
+                              creatingUrgent
+                                  ? const SizedBox(
+                                    width: 18,
+                                    height: 18,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                  : const Icon(Icons.priority_high),
+                          label: Text(
+                            creatingUrgent
+                                ? 'جارٍ إنشاء الطلب...'
+                                : 'إنشاء طلب عاجل',
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+
+            const SizedBox(height: 16),
             SizedBox(
               height: 48,
               child: ElevatedButton(
-                onPressed: booking ? null : submitBooking,
+                onPressed:
+                    (booking || creatingUrgent || noSlotsForSelectedDay)
+                        ? null
+                        : submitBooking,
                 child:
                     booking
                         ? const SizedBox(
