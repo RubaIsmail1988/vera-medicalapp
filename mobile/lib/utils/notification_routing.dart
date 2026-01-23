@@ -103,6 +103,23 @@ class NotificationRouting {
         return "/app/inbox";
       }
     }
+    // ---------------- Urgent requests (override routing) ----------------
+    // Server currently sends route "/app/appointments" for urgent_request_created,
+    // but for doctors we want to jump directly to the urgent requests screen.
+    if (eventTypeHint == "urgent_request_created" && safeRole == "doctor") {
+      return "/app/appointments/urgent-requests";
+    }
+
+    // Patient-side urgent updates should go to appointments.
+    if (eventTypeHint == "urgent_request_scheduled" ||
+        eventTypeHint == "urgent_request_rejected") {
+      return "/app/appointments";
+    }
+
+    // Emergency absence cancellation: patient should see appointments (priority rebook info)
+    if (eventTypeHint == "appointment_cancelled_due_to_emergency_absence") {
+      return "/app/appointments";
+    }
 
     // 0) Highest priority: server-provided route (payload richness)
     final rawRoute = _safeRoute(data["route"]?.toString());
@@ -140,6 +157,20 @@ class NotificationRouting {
       case "appointment_cancelled":
       case "appointment_no_show":
       case "APPOINTMENT_NO_SHOW":
+        return "/app/appointments";
+      // ---------------- Urgent Requests ----------------
+      case "urgent_request_created":
+        // doctor override already handled above; fallback:
+        return (safeRole == "doctor")
+            ? "/app/appointments/urgent-requests"
+            : "/app/appointments";
+
+      case "urgent_request_scheduled":
+      case "urgent_request_rejected":
+        return "/app/appointments";
+
+      // ---------------- Emergency absence ----------------
+      case "appointment_cancelled_due_to_emergency_absence":
         return "/app/appointments";
 
       // ---------------- Orders ----------------
