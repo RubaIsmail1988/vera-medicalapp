@@ -12,13 +12,16 @@ from .models import (
     Governorate,
     Hospital,
     Lab,
+    # NEW
+    UrgentRequest,
+    RebookingPriorityToken,
+    AbsenceCancellationLog,
 )
 
 
 # ================================
 # Custom User Admin
 # ================================
-from .models import CustomUser, PatientDetails, DoctorDetails
 
 @admin.register(CustomUser)
 class CustomUserAdmin(UserAdmin):
@@ -154,3 +157,34 @@ class HospitalAdmin(admin.ModelAdmin):
 class LabAdmin(admin.ModelAdmin):
     list_display = ('id', 'name', 'governorate', 'address', 'specialty', 'contact_info')
     search_fields = ('name', 'governorate', 'specialty')
+
+# ================================
+# UrgentRequest
+# ================================
+@admin.register(UrgentRequest)
+class UrgentRequestAdmin(admin.ModelAdmin):
+    list_display = ("id", "patient", "doctor", "appointment_type", "score", "status", "created_at")
+    list_filter = ("status", "appointment_type", "score_version")
+    search_fields = ("patient__email", "patient__username", "doctor__email", "doctor__username", "symptoms_text")
+    ordering = ("-created_at",)
+
+# ================================
+# RebookingPriorityToken
+# ================================
+
+@admin.register(RebookingPriorityToken)
+class RebookingPriorityTokenAdmin(admin.ModelAdmin):
+    list_display = ("id", "patient", "doctor", "is_active", "issued_at", "expires_at", "absence")
+    list_filter = ("is_active",)
+    search_fields = ("patient__email", "patient__username", "doctor__email", "doctor__username")
+    ordering = ("-issued_at",)
+
+# ================================
+# LaAbsenceCancellationLogb
+# ================================
+@admin.register(AbsenceCancellationLog)
+class AbsenceCancellationLogAdmin(admin.ModelAdmin):
+    list_display = ("id", "absence", "appointment", "cancelled_at")
+    list_filter = ("cancelled_at",)
+    search_fields = ("absence__doctor__email", "absence__doctor__username", "appointment__id")
+    ordering = ("-cancelled_at",)

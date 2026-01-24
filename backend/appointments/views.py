@@ -22,7 +22,8 @@ from clinical.models import (
     OutboxEvent,
 )
 
-# NOTE:
+from django.db.models import F
+
 # لديك try_send_event ضمن outbox services. إذا أردت لاحقًا إلغاء الـ push بالكامل
 # يمكنك إزالة try_send_event من هذا الملف، لكن سنتركه الآن لتجنب كسر أي شيء.
 from notifications.services.outbox import try_send_event
@@ -36,6 +37,9 @@ from accounts.models import (
     DoctorAvailability,
     DoctorDetails,
     DoctorSpecificVisitType,
+    UrgentRequest,
+    RebookingPriorityToken,
+    AbsenceCancellationLog,   
 )
 
 from .permissions import IsDoctorOrAdmin
@@ -44,6 +48,10 @@ from .serializers import (
     DoctorAbsenceSerializer,
     DoctorSlotsQuerySerializer,
     DoctorSlotsRangeQuerySerializer,
+    UrgentRequestCreateSerializer,
+    UrgentRequestReadSerializer,        # NEW
+    UrgentRequestRejectSerializer,      # NEW
+    UrgentRequestScheduleSerializer,    # NEW    
 )
 
 from notifications.services.outbox_payload import create_outbox_event
@@ -114,28 +122,58 @@ class DoctorSearchView(APIView):
         if not q:
             return Response({"results": []})
 
-        # البحث بالاختصاص
+        raw_gov_id = (request.query_params.get("governorate_id") or "").strip()
+
+        # Validate governorate_id if provided
+        governorate_id = None
+        if raw_gov_id:
+            try:
+                governorate_id = int(raw_gov_id)
+            except ValueError:
+                return Response(
+                    {"detail": "Invalid governorate_id. Use integer."},
+                    status=400,
+                )
+
+        # Patient governorate (for distance_hint only)
+        patient_gov_id = getattr(request.user, "governorate_id", None)
+
+        # Search by specialty
         doctor_ids_by_specialty = DoctorDetails.objects.filter(
             specialty__icontains=q
         ).values_list("user_id", flat=True)
 
-        # جلب الأطباء
-        doctors = (
+        # Base doctors queryset
+        doctors_qs = (
             CustomUser.objects.filter(role="doctor", is_active=True)
             .filter(Q(username__icontains=q) | Q(id__in=doctor_ids_by_specialty))
+        )
+
+        # Optional filter by governorate
+        if governorate_id is not None:
+            doctors_qs = doctors_qs.filter(governorate_id=governorate_id)
+
+        doctors = (
+            doctors_qs
             .select_related("governorate")
             .order_by("username")[:50]
         )
 
-        # جلب تفاصيل الأطباء
+        doctor_ids = [d.id for d in doctors]
+
+        # Fetch details in one query
         details_map = {
             row["user_id"]: row
-            for row in DoctorDetails.objects.filter(
-                user_id__in=[d.id for d in doctors]
-            ).values("user_id", "specialty", "experience_years")
+            for row in DoctorDetails.objects.filter(user_id__in=doctor_ids).values(
+                "user_id", "specialty", "experience_years"
+            )
         }
 
-        # بناء النتيجة
+        def distance_hint_for(doctor_gov_id: int | None) -> str:
+            if patient_gov_id is None or doctor_gov_id is None:
+                return "unknown"
+            return "same_governorate" if patient_gov_id == doctor_gov_id else "different_governorate"
+
         results = []
         for d in doctors:
             det = details_map.get(d.id, {})
@@ -148,11 +186,12 @@ class DoctorSearchView(APIView):
                     "governorate_name": getattr(d.governorate, "name", None),
                     "specialty": det.get("specialty"),
                     "experience_years": det.get("experience_years"),
+                    # NEW (UI helper only, does not affect scheduling)
+                    "distance_hint": distance_hint_for(d.governorate_id),
                 }
             )
 
         return Response({"results": results})
-
 
 
 # -----------------------------
@@ -298,6 +337,304 @@ class AppointmentCreateView(APIView):
                     if triage is not None
                     else None
                 ),
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class UrgentRequestCreateView(APIView):
+    permission_classes = [IsPatient]
+
+    @transaction.atomic
+    def post(self, request):
+        serializer = UrgentRequestCreateSerializer(
+            data=request.data,
+            context={"request": request},
+        )
+        serializer.is_valid(raise_exception=True)
+        urgent = serializer.save()
+
+        # Notify doctor via outbox (optional but consistent)
+        try:
+            _create_outbox_event(
+                event_type="urgent_request_created",
+                actor=request.user,
+                recipient=urgent.doctor,
+                obj=None,
+                entity_type="urgent_request",
+                entity_id=urgent.id,
+                route="/app/appointments",
+                payload={
+                    "urgent_request_id": urgent.id,
+                    "patient_id": urgent.patient_id,
+                    "doctor_id": urgent.doctor_id,
+                    "appointment_type_id": urgent.appointment_type_id,
+                    "score": urgent.score,
+                    "title": "طلب عاجل (بدون مواعيد متاحة)",
+                    "message": "تم إنشاء طلب عاجل بسبب عدم توفر مواعيد.",
+                },
+            )
+        except Exception:
+            pass
+
+        tz = timezone.get_current_timezone()
+        return Response(
+            {
+                "id": urgent.id,
+                "patient": urgent.patient_id,
+                "doctor": urgent.doctor_id,
+                "appointment_type": urgent.appointment_type_id,
+                "status": urgent.status,
+                "notes": urgent.notes,
+                "triage": {
+                    "symptoms_text": urgent.symptoms_text,
+                    "temperature_c": str(urgent.temperature_c) if urgent.temperature_c is not None else None,
+                    "bp_systolic": urgent.bp_systolic,
+                    "bp_diastolic": urgent.bp_diastolic,
+                    "heart_rate": urgent.heart_rate,
+                    "score": urgent.score,
+                    "confidence": urgent.confidence,
+                    "missing_fields": urgent.missing_fields,
+                    "score_version": urgent.score_version,
+                } if urgent.score is not None else None,
+                "created_at": urgent.created_at.astimezone(tz).isoformat(),
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class MyUrgentRequestsView(APIView):
+    permission_classes = [IsDoctor]
+
+    def get(self, request):
+        user = request.user
+
+        # IMPORTANT: keep default "open" for doctor UX (as you had),
+        # but implement "handled" as a group (handled + rejected + cancelled).
+        status_q = (request.query_params.get("status") or "open").strip().lower()
+
+        allowed_statuses = {"open", "handled", "rejected", "cancelled", "all"}
+        if status_q not in allowed_statuses:
+            return Response(
+                {"detail": "Invalid status. Use status=open|handled|rejected|cancelled|all"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        qs = UrgentRequest.objects.select_related(
+            "patient", "doctor", "appointment_type"
+        ).filter(doctor_id=user.id)
+
+        if status_q == "open":
+            qs = qs.filter(status="open")
+
+        elif status_q == "handled":
+            # "handled" in UI means: processed (scheduled OR rejected OR cancelled)
+            qs = qs.filter(status__in=["handled", "rejected", "cancelled"])
+
+        elif status_q == "rejected":
+            qs = qs.filter(status="rejected")
+
+        elif status_q == "cancelled":
+            qs = qs.filter(status="cancelled")
+
+        elif status_q == "all":
+            # no filter
+            pass
+
+        # Ordering:
+        # - open: triage-first (score desc), then newest
+        # - others: newest first
+        if status_q == "open":
+            qs = qs.order_by(F("score").desc(nulls_last=True), "-created_at")
+        else:
+            qs = qs.order_by("-created_at")
+
+        qs = qs[:200]
+        return Response(
+            {"results": UrgentRequestReadSerializer(qs, many=True).data},
+            status=status.HTTP_200_OK,
+        )
+
+
+class UrgentRequestRejectView(APIView):
+    permission_classes = [IsDoctor]
+
+    @transaction.atomic
+    def post(self, request, pk: int):
+        urgent = get_object_or_404(
+            UrgentRequest.objects.select_for_update(),
+            pk=pk,
+        )
+
+        serializer = UrgentRequestRejectSerializer(
+            data=request.data,
+            context={"request": request, "urgent": urgent},
+        )
+        serializer.is_valid(raise_exception=True)
+
+        reason = (serializer.validated_data.get("reason") or "").strip() or None
+        tz = timezone.get_current_timezone()
+
+        urgent.status = "rejected"
+        urgent.handled_type = "rejected"          
+        urgent.scheduled_appointment = None     
+        urgent.handled_at = timezone.now()
+
+        if hasattr(urgent, "handled_by_id"):
+            urgent.handled_by = request.user
+
+        if hasattr(urgent, "rejected_reason"):
+            urgent.rejected_reason = reason
+
+        urgent.save(update_fields=[
+            "status",
+            "handled_type",
+            "scheduled_appointment",
+            "handled_at",
+            "handled_by",
+            "rejected_reason",
+        ])
+
+
+        # Notify patient
+        try:
+            _create_outbox_event(
+                event_type="urgent_request_rejected",
+                actor=request.user,
+                recipient=urgent.patient,
+                obj=None,
+                entity_type="urgent_request",
+                entity_id=urgent.id,
+                route="/app/appointments",
+                payload={
+                    "urgent_request_id": urgent.id,
+                    "status": urgent.status,
+                    "urgent_request_status": urgent.status,
+                    "doctor_name": getattr(urgent.doctor, "username", None),
+                    "patient_name": getattr(urgent.patient, "username", None),
+                    "doctor_id": urgent.doctor_id,
+                    "patient_id": urgent.patient_id,
+                    "appointment_type_id": urgent.appointment_type_id,
+                    "reason": reason,
+                    "title": "تم رفض الطلب العاجل",
+                    "message": "قام الطبيب برفض الطلب العاجل." + (f" السبب: {reason}" if reason else ""),
+                },
+            )
+        except Exception:
+            pass
+
+        return Response(
+            {
+                "id": urgent.id,
+                "status": urgent.status,
+                "handled_at": urgent.handled_at.astimezone(tz).isoformat() if urgent.handled_at else None,
+                "rejected_reason": getattr(urgent, "rejected_reason", None),
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class UrgentRequestScheduleView(APIView):
+    permission_classes = [IsDoctor]
+
+    @transaction.atomic
+    def post(self, request, pk: int):
+        urgent = get_object_or_404(
+            UrgentRequest.objects.select_for_update(),
+            pk=pk,
+        )
+
+
+        serializer = UrgentRequestScheduleSerializer(
+            data=request.data,
+            context={"request": request, "urgent": urgent},
+        )
+        serializer.is_valid(raise_exception=True)
+        v = serializer.validated_data
+
+        tz = timezone.get_current_timezone()
+        start_dt = v["date_time"]
+        duration_minutes = int(v["duration_minutes"])
+        allow_overbook = bool(v.get("allow_overbook", False))
+
+        # Create appointment (confirmed immediately for urgent workflow)
+        appointment = Appointment.objects.create(
+            patient=urgent.patient,
+            doctor=urgent.doctor,
+            appointment_type=urgent.appointment_type,
+            date_time=start_dt,
+            duration_minutes=duration_minutes,
+            status="confirmed",
+            notes=(v.get("notes") or "").strip(),
+        )
+
+        # Close urgent request — handled by scheduling
+        urgent.status = "handled"
+        urgent.handled_type = "scheduled"          # NEW: نوع المعالجة
+        urgent.scheduled_appointment = appointment # NEW: ربط الموعد الناتج
+        urgent.handled_at = timezone.now()
+
+        if hasattr(urgent, "handled_by_id"):
+            urgent.handled_by = request.user
+
+        urgent.save(update_fields=[
+            "status",
+            "handled_type",
+            "scheduled_appointment",
+            "handled_at",
+            "handled_by",
+        ])
+
+
+        # Notify patient
+        try:
+            _create_outbox_event(
+                event_type="urgent_request_scheduled",
+                actor=request.user,
+                recipient=urgent.patient,
+                obj=appointment,
+                entity_type="appointment",
+                entity_id=appointment.id,
+                route="/app/appointments",
+                payload={
+                    "urgent_request_id": urgent.id,
+                    "appointment_id": appointment.id,
+                    "doctor_id": urgent.doctor_id,
+                    "patient_id": urgent.patient_id,
+                    "appointment_type_id": urgent.appointment_type_id,
+                    "date_time": appointment.date_time.isoformat() if appointment.date_time else None,
+                    "duration_minutes": appointment.duration_minutes,
+                    "status": appointment.status,
+                    "urgent_request_status": urgent.status,
+                    "doctor_name": getattr(urgent.doctor, "username", None),
+                    "patient_name": getattr(urgent.patient, "username", None),
+                    "scheduled_date_time": appointment.date_time.isoformat() if appointment.date_time else None,
+                    "is_overbooked": allow_overbook,
+                    "allow_overbook": allow_overbook,
+                    "title": "تم تحديد موعد عاجل",
+                    "message": "تم تحديد موعد عاجل بناءً على طلبك.",
+                },
+            )
+        except Exception:
+            pass
+
+        return Response(
+            {
+                "urgent_request": {
+                    "id": urgent.id,
+                    "status": urgent.status,
+                    "handled_at": urgent.handled_at.astimezone(tz).isoformat() if urgent.handled_at else None,
+                },
+                "appointment": {
+                    "id": appointment.id,
+                    "patient": appointment.patient_id,
+                    "doctor": appointment.doctor_id,
+                    "appointment_type": appointment.appointment_type_id,
+                    "date_time": appointment.date_time.astimezone(tz).isoformat(),
+                    "duration_minutes": appointment.duration_minutes,
+                    "status": appointment.status,
+                    "notes": appointment.notes,
+                },
             },
             status=status.HTTP_201_CREATED,
         )
@@ -722,6 +1059,18 @@ class DoctorAvailableSlotsView(APIView):
             cursor = jump_to
             if cursor >= end_dt:
                 break
+        
+        priority = None
+        if getattr(request.user, "role", "") == "patient":
+            tok = RebookingPriorityToken.objects.filter(
+                patient_id=request.user.id,
+                doctor_id=doctor.id,
+                is_active=True,
+                expires_at__gt=timezone.now(),
+            ).order_by("-issued_at").first()
+            if tok:
+                priority = {"active": True, "expires_at": tok.expires_at.astimezone(tz).isoformat()}
+
 
         return Response(
             {
@@ -734,6 +1083,7 @@ class DoctorAvailableSlotsView(APIView):
                     "end": availability.end_time.strftime("%H:%M"),
                 },
                 "slots": slots,
+                "rebooking_priority": priority,
                 "timezone": str(tz),
             },
             status=status.HTTP_200_OK,
@@ -836,17 +1186,35 @@ class DoctorAvailableSlotsRangeView(APIView):
             day_name = day_date.strftime("%A")
             availability = availability_by_dayname.get(day_name)
 
+            # إذا لا يوجد دوام لهذا اليوم → نعيد اليوم مع slots فارغة
             if not availability:
-                return None
+                return {
+                    "date": day_date.isoformat(),
+                    "availability": {"start": "", "end": ""},
+                    "slots": [],
+                }
 
-            start_dt = timezone.make_aware(datetime.combine(day_date, availability.start_time), tz)
-            end_dt = timezone.make_aware(datetime.combine(day_date, availability.end_time), tz)
+            start_dt = timezone.make_aware(
+                datetime.combine(day_date, availability.start_time), tz
+            )
+            end_dt = timezone.make_aware(
+                datetime.combine(day_date, availability.end_time), tz
+            )
 
+            # Clamp لليوم الحالي
             if day_date == now_local.date() and now_local > start_dt:
                 start_dt = now_local.replace(second=0, microsecond=0)
 
+            # إذا صار الدوام غير صالح بعد الـ clamp → نعيد اليوم مع slots فارغة
             if start_dt >= end_dt:
-                return None
+                return {
+                    "date": day_date.isoformat(),
+                    "availability": {
+                        "start": availability.start_time.strftime("%H:%M"),
+                        "end": availability.end_time.strftime("%H:%M"),
+                    },
+                    "slots": [],
+                }
 
             raw_intervals = intervals_by_date.get(day_date, [])
             intervals = []
@@ -901,9 +1269,6 @@ class DoctorAvailableSlotsRangeView(APIView):
                 if cursor >= end_dt:
                     break
 
-            if not slots:
-                return None
-
             return {
                 "date": day_date.isoformat(),
                 "availability": {
@@ -913,12 +1278,27 @@ class DoctorAvailableSlotsRangeView(APIView):
                 "slots": slots,
             }
 
+        # Optional: Rebooking priority info (patient only)
+        priority = None
+        if getattr(request.user, "role", "") == "patient":
+            tok = RebookingPriorityToken.objects.filter(
+                patient_id=request.user.id,
+                doctor_id=doctor.id,
+                is_active=True,
+                expires_at__gt=timezone.now(),
+            ).order_by("-issued_at").first()
+
+            if tok:
+                priority = {
+                    "active": True,
+                    "expires_at": tok.expires_at.astimezone(tz).isoformat(),
+                }
+
+        # IMPORTANT: return ALL days in range (including empty slots days)
         days_out = []
         d = start_date
         while d <= end_date:
-            payload = compute_day_slots(d)
-            if payload is not None:
-                days_out.append(payload)
+            days_out.append(compute_day_slots(d))
             d = d + timedelta(days=1)
 
         return Response(
@@ -929,6 +1309,7 @@ class DoctorAvailableSlotsRangeView(APIView):
                 "timezone": str(tz),
                 "range": {"from": start_date.isoformat(), "to": end_date.isoformat()},
                 "days": days_out,
+                "rebooking_priority": priority,
             },
             status=status.HTTP_200_OK,
         )
@@ -1053,6 +1434,20 @@ class MyAppointmentsView(APIView):
         appointments_list = list(qs)
         appt_ids = [a.id for a in appointments_list]
 
+        tokens = RebookingPriorityToken.objects.filter(
+            consumed_appointment_id__in=appt_ids
+        ).values(
+            "consumed_appointment_id",
+            "expires_at",
+            "issued_at",
+            "absence_id",
+            "patient_id",
+            "doctor_id",
+        )
+        token_by_appt = {}
+        for t in tokens:
+            token_by_appt[t["consumed_appointment_id"]] = t
+
         order_rows = ClinicalOrder.objects.filter(
             appointment_id__in=appt_ids
         ).values("appointment_id", "status")
@@ -1088,6 +1483,25 @@ class MyAppointmentsView(APIView):
                     "score_version": triage_obj.score_version,
                     "created_at": triage_obj.created_at.astimezone(tz).isoformat(),
                 }
+            def iso_local(dt):
+                if dt is None:
+                    return None
+                if timezone.is_naive(dt):
+                    dt = timezone.make_aware(dt, tz)
+                return dt.astimezone(tz).isoformat()
+
+            tok = token_by_appt.get(ap.id)
+            priority_badge = None
+            tok = token_by_appt.get(ap.id)
+            priority_badge = None
+
+            if tok is not None:
+                priority_badge = {
+                    "type": "rebooking_priority",
+                    "expires_at": iso_local(tok.get("expires_at")),
+                    "issued_at": iso_local(tok.get("issued_at")),
+                    "absence_id": tok.get("absence_id"),
+                }
 
             results.append(
                 {
@@ -1106,6 +1520,7 @@ class MyAppointmentsView(APIView):
                     "has_any_orders": has_any_orders,
                     "has_open_orders": has_open_orders,
                     "triage": triage_payload,
+                    "priority_badge": priority_badge,
                 }
             )
 
@@ -1231,3 +1646,122 @@ class DoctorAbsenceDetailView(APIView):
         absence = self.get_object(request, pk)
         absence.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class EmergencyAbsenceCreateView(APIView):
+    """
+    Doctor-only endpoint:
+    - Creates an emergency absence even if upcoming appointments exist.
+    - Cancels affected appointments (pending/confirmed) that overlap.
+    - Issues RebookingPriorityToken for affected patients.
+    - Emits outbox notifications.
+    """
+    permission_classes = [IsDoctor]
+
+    @transaction.atomic
+    def post(self, request):
+        user = request.user
+        data = request.data.copy()
+        data["type"] = "emergency"
+
+        # validate absence times but allow conflicts with appointments
+        serializer = DoctorAbsenceSerializer(
+            data=data,
+            context={"request": request, "allow_emergency_conflicts": True},
+        )
+        serializer.is_valid(raise_exception=True)
+        absence = serializer.save()
+
+        tz = timezone.get_current_timezone()
+        now = timezone.now().astimezone(tz)
+
+        # find affected appointments overlapping [start, end)
+        blocking_statuses = ["pending", "confirmed", "Pending", "Confirmed"]
+        qs = Appointment.objects.filter(
+            doctor_id=user.id,
+            status__in=blocking_statuses,
+            date_time__lt=absence.end_time,
+            date_time__gte=absence.start_time - timedelta(days=1),
+        ).only("id", "patient_id", "date_time", "duration_minutes", "status")
+
+        affected = []
+        for ap in qs:
+            ap_start = ap.date_time
+            if timezone.is_naive(ap_start):
+                ap_start = timezone.make_aware(ap_start, tz)
+            else:
+                ap_start = ap_start.astimezone(tz)
+
+            ap_dur = int(ap.duration_minutes or 0) or 0
+            ap_end = ap_start + timedelta(minutes=ap_dur)
+
+            if ap_start < absence.end_time and absence.start_time < ap_end:
+                affected.append(ap)
+
+        # cancel + issue tokens
+        token_days = int(request.data.get("token_days") or 7)
+        expires_at = now + timedelta(days=token_days)
+
+        cancelled_ids = []
+        token_patient_ids = set()
+
+        for ap in affected:
+            ap.status = "cancelled"
+            ap.save(update_fields=["status", "updated_at"])
+            cancelled_ids.append(ap.id)
+
+            AbsenceCancellationLog.objects.create(absence=absence, appointment=ap)
+
+            # one token per patient per absence
+            if ap.patient_id not in token_patient_ids:
+                RebookingPriorityToken.objects.create(
+                    patient_id=ap.patient_id,
+                    doctor_id=user.id,
+                    absence=absence,
+                    issued_at=now,
+                    expires_at=expires_at,
+                    is_active=True,
+                )
+                token_patient_ids.add(ap.patient_id)
+
+            # notify patient
+            try:
+                _create_outbox_event(
+                    event_type="appointment_cancelled_due_to_emergency_absence",
+                    actor=user,
+                    recipient=ap.patient,
+                    obj=ap,
+                    entity_type="appointment",
+                    entity_id=ap.id,
+                    route="/app/appointments",
+                    payload={
+                        "appointment_id": ap.id,
+                        "status": "cancelled",
+                        "doctor_id": ap.doctor_id,
+                        "patient_id": ap.patient_id,
+                        "date_time": ap.date_time.isoformat() if ap.date_time else None,
+                        "absence_id": absence.id,
+                        "priority_token_days": token_days,
+                        "title": "تم إلغاء موعدك بسبب غياب طارئ",
+                        "message": "تم إلغاء الموعد بسبب غياب طارئ للطبيب. لديك أولوية لإعادة الحجز لفترة محدودة.",
+                    },
+                )
+            except Exception:
+                pass
+
+        return Response(
+            {
+                "absence": {
+                    "id": absence.id,
+                    "doctor": absence.doctor_id,
+                    "start_time": absence.start_time.astimezone(tz).isoformat(),
+                    "end_time": absence.end_time.astimezone(tz).isoformat(),
+                    "type": absence.type,
+                    "notes": absence.notes,
+                },
+                "cancelled_appointments": cancelled_ids,
+                "tokens_issued_for_patients": list(token_patient_ids),
+                "token_expires_at": expires_at.isoformat(),
+            },
+            status=status.HTTP_201_CREATED,
+        )

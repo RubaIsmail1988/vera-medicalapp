@@ -11,6 +11,8 @@ from accounts.models import (
     CustomUser,
     DoctorAbsence,
     TriageAssessment,
+    UrgentRequest,
+    RebookingPriorityToken,
 )
 
 from clinical.models import ClinicalOrder, MedicalRecordFile
@@ -51,6 +53,247 @@ class TriageReadSerializer(serializers.ModelSerializer):
             "created_at",
         ]
         read_only_fields = fields
+
+class UrgentRequestCreateSerializer(serializers.Serializer):
+    doctor_id = serializers.IntegerField()
+    appointment_type_id = serializers.IntegerField()
+    notes = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+
+    triage = TriageInputSerializer(required=False)
+
+    def validate(self, attrs):
+        request = self.context["request"]
+        patient = request.user
+
+        if getattr(patient, "role", "") != "patient":
+            raise serializers.ValidationError({"detail": "Only patients can create urgent requests."})
+
+        doctor_id = attrs["doctor_id"]
+        try:
+            doctor = CustomUser.objects.get(id=doctor_id, role="doctor", is_active=True)
+        except CustomUser.DoesNotExist:
+            raise serializers.ValidationError({"doctor_id": "Doctor not found."})
+
+        appointment_type_id = attrs["appointment_type_id"]
+        try:
+            appt_type = AppointmentType.objects.get(id=appointment_type_id)
+        except AppointmentType.DoesNotExist:
+            raise serializers.ValidationError({"appointment_type_id": "AppointmentType not found."})
+
+        attrs["doctor_obj"] = doctor
+        attrs["appointment_type_obj"] = appt_type
+        return attrs
+
+    def create(self, validated_data):
+        patient = self.context["request"].user
+        doctor = validated_data["doctor_obj"]
+        appt_type = validated_data["appointment_type_obj"]
+
+        triage_data = validated_data.get("triage") or {}
+
+        payload = {}
+        if triage_data:
+            has_any = any(
+                triage_data.get(k) not in (None, "", [])
+                for k in ["symptoms_text", "temperature_c", "bp_systolic", "bp_diastolic", "heart_rate"]
+            )
+            if has_any:
+                result = compute_triage_score(triage_data)
+                payload = {
+                    "symptoms_text": (triage_data.get("symptoms_text") or "").strip() or None,
+                    "temperature_c": triage_data.get("temperature_c"),
+                    "bp_systolic": triage_data.get("bp_systolic"),
+                    "bp_diastolic": triage_data.get("bp_diastolic"),
+                    "heart_rate": triage_data.get("heart_rate"),
+                    "score": result.score,
+                    "confidence": result.confidence,
+                    "missing_fields": result.missing_fields,
+                    "score_version": result.score_version,
+                }
+
+        urgent = UrgentRequest.objects.create(
+            patient=patient,
+            doctor=doctor,
+            appointment_type=appt_type,
+            notes=(validated_data.get("notes") or "").strip() or None,
+            **payload,
+        )
+        return urgent
+
+class UrgentRequestReadSerializer(serializers.ModelSerializer):
+    patient_name = serializers.CharField(source="patient.username", read_only=True)
+    doctor_name = serializers.CharField(source="doctor.username", read_only=True)
+    appointment_type_name = serializers.CharField(source="appointment_type.type_name", read_only=True)
+
+    # NEW
+    handled_type = serializers.CharField(read_only=True)
+    scheduled_appointment_id = serializers.IntegerField(read_only=True, required=False)
+
+    class Meta:
+        model = UrgentRequest
+        fields = [
+            "id",
+            "patient",
+            "patient_name",
+            "doctor",
+            "doctor_name",
+            "appointment_type",
+            "appointment_type_name",
+            "symptoms_text",
+            "temperature_c",
+            "bp_systolic",
+            "bp_diastolic",
+            "heart_rate",
+            "score",
+            "confidence",
+            "missing_fields",
+            "score_version",
+            "notes",
+            "status",
+            "created_at",
+            "handled_at",
+            "handled_by",
+            "rejected_reason",
+
+            # NEW
+            "handled_type",
+            "scheduled_appointment_id",
+        ]
+        read_only_fields = fields
+
+
+class UrgentRequestRejectSerializer(serializers.Serializer):
+    reason = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+
+    def validate(self, attrs):
+        request = self.context["request"]
+        user = request.user
+        urgent: UrgentRequest = self.context["urgent"]
+
+        if getattr(user, "role", "") != "doctor":
+            raise serializers.ValidationError({"detail": "Only doctors can reject urgent requests."})
+
+        if urgent.doctor_id != user.id:
+            raise serializers.ValidationError({"detail": "Not found."})
+
+        if urgent.status != "open":
+            raise serializers.ValidationError({"detail": "Only open urgent requests can be rejected."})
+
+        return attrs
+
+
+class UrgentRequestScheduleSerializer(serializers.Serializer):
+    date_time = serializers.DateTimeField()
+    notes = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    allow_overbook = serializers.BooleanField(required=False, default=False)
+
+    def validate(self, attrs):
+        request = self.context["request"]
+        user = request.user
+        urgent: UrgentRequest = self.context["urgent"]
+
+        if getattr(user, "role", "") != "doctor":
+            raise serializers.ValidationError({"detail": "Only doctors can schedule urgent requests."})
+
+        if urgent.doctor_id != user.id:
+            raise serializers.ValidationError({"detail": "Not found."})
+
+        if urgent.status != "open":
+            raise serializers.ValidationError({"detail": "Only open urgent requests can be scheduled."})
+
+        # Normalize date_time to current tz (aware) + clamp seconds + prevent past
+        tz = timezone.get_current_timezone()
+        now_local = timezone.now().astimezone(tz).replace(second=0, microsecond=0)
+
+        start_dt = attrs["date_time"]
+        if timezone.is_naive(start_dt):
+            start_dt = timezone.make_aware(start_dt, tz)
+        else:
+            start_dt = start_dt.astimezone(tz)
+
+        # Clamp seconds/micros for consistency with slots
+        start_dt = start_dt.replace(second=0, microsecond=0)
+
+        if start_dt < now_local:
+            raise serializers.ValidationError({"detail": "Cannot schedule an urgent appointment in the past."})
+
+        attrs["date_time"] = start_dt
+
+
+        doctor = urgent.doctor
+        appt_type = urgent.appointment_type
+
+        # Resolve duration (doctor override > default)
+        dat = DoctorAppointmentType.objects.filter(
+            doctor_id=doctor.id,
+            appointment_type_id=appt_type.id,
+        ).first()
+
+        default_minutes = int(getattr(appt_type, "default_duration_minutes", 15) or 15)
+        duration_minutes = int(dat.duration_minutes) if dat else default_minutes
+        if duration_minutes <= 0:
+            raise serializers.ValidationError({"detail": "Invalid duration."})
+
+        end_dt = start_dt + timedelta(minutes=duration_minutes)
+
+        # Guard: must be within availability window for that day (MVP decision)
+        day_name = start_dt.strftime("%A")
+        availability = DoctorAvailability.objects.filter(
+            doctor_id=doctor.id,
+            day_of_week=day_name,
+        ).first()
+        if not availability:
+            raise serializers.ValidationError({"detail": "Doctor is not available on this day."})
+
+        start_t = start_dt.timetz().replace(tzinfo=None)
+        end_t = end_dt.timetz().replace(tzinfo=None)
+
+        if not (availability.start_time <= start_t < availability.end_time):
+            raise serializers.ValidationError({"detail": "Appointment start time is outside doctor availability."})
+        if end_t > availability.end_time:
+            raise serializers.ValidationError({"detail": "Appointment exceeds doctor availability window."})
+
+        # Absence guard: even urgent scheduling cannot be inside absences
+        if DoctorAbsence.objects.filter(
+            doctor_id=doctor.id,
+            start_time__lt=end_dt,
+            end_time__gt=start_dt,
+        ).exists():
+            raise serializers.ValidationError({"detail": "Doctor is absent during this time."})
+
+        # Overlap with existing appointments:
+        # - If allow_overbook=false => reject overlap.
+        # - If allow_overbook=true  => allow overlap (no shift).
+        allow_overbook = bool(attrs.get("allow_overbook", False))
+        blocking_statuses = ["pending", "confirmed", "Pending", "Confirmed"]
+
+        window_start = start_dt - timedelta(days=1)
+        window_end = end_dt
+
+        candidates = Appointment.objects.filter(
+            doctor_id=doctor.id,
+            status__in=blocking_statuses,
+            date_time__lt=window_end,
+            date_time__gte=window_start,
+        ).only("date_time", "duration_minutes")
+
+        for ap in candidates:
+            ap_start = ap.date_time
+            if timezone.is_naive(ap_start):
+                ap_start = timezone.make_aware(ap_start, tz)
+            else:
+                ap_start = ap_start.astimezone(tz)
+
+            ap_dur = int(ap.duration_minutes or 0) or duration_minutes
+            ap_end = ap_start + timedelta(minutes=ap_dur)
+
+            if ap_start < end_dt and start_dt < ap_end:
+                if not allow_overbook:
+                    raise serializers.ValidationError({"detail": "This time overlaps an existing appointment."})
+                break  # overlap exists but allowed
+
+        attrs["duration_minutes"] = duration_minutes
+        return attrs
 
 
 class AppointmentCreateSerializer(serializers.Serializer):
@@ -229,6 +472,30 @@ class AppointmentCreateSerializer(serializers.Serializer):
             status="pending",
             notes=validated_data.get("notes", ""),
         )
+        
+        # ---------------------------------------------
+        # Consume rebooking priority token (one-time use)
+        # If the patient has an active token for this doctor, consume the oldest valid one.
+        # ---------------------------------------------
+        now = timezone.now()
+        tok = (
+            RebookingPriorityToken.objects.select_for_update()
+            .filter(
+                patient_id=patient.id,
+                doctor_id=doctor.id,
+                is_active=True,
+                expires_at__gt=now,
+            )
+            .order_by("issued_at")
+            .first()
+        )
+
+        if tok is not None:
+            tok.is_active = False
+            tok.consumed_at = now
+            tok.consumed_appointment = appointment
+            tok.save(update_fields=["is_active", "consumed_at", "consumed_appointment_id"])
+ 
 
         # Create triage only if at least one triage field is provided
         if triage_data:
@@ -396,7 +663,17 @@ class DoctorAbsenceSerializer(serializers.ModelSerializer):
                     "overlapping_absences": overlaps,
                 }
             )
+        
+        
+        # If emergency + explicitly allowed, do NOT block on upcoming appointments.
+        allow_conflicts = bool(self.context.get("allow_emergency_conflicts", False))
 
+        absence_type = attrs.get("type", getattr(self.instance, "type", "planned"))
+        if absence_type == "emergency" and allow_conflicts:
+            return attrs
+
+
+        
         # ----------------------------------------------------
         # Conflict guard only against upcoming appointments
         # ----------------------------------------------------

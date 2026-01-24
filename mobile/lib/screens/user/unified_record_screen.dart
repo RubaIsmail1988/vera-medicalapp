@@ -444,7 +444,7 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
                     ? _stateCard(
                       icon: Icons.hourglass_top,
                       title: "جاري التحميل",
-                      message: "يتم تحميل قائمة المرضى المرتبطين بطلباتك…",
+                      message: "يتم تحميل قائمة المرضى المرتبطين بمواعيدك",
                       tone: AppSnackBarType.info,
                       action: const Padding(
                         padding: EdgeInsets.only(top: 4),

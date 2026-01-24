@@ -32,6 +32,8 @@ import 'screens/doctor/doctor_scheduling_settings_screen.dart';
 import 'screens/doctor/doctor_availability_screen.dart';
 import 'screens/doctor/doctor_visit_types_screen.dart';
 import 'screens/doctor/doctor_absences_screen.dart';
+// DoctorUrgentSearchScrean
+import 'screens/doctor/doctor_urgent_requests_screen.dart';
 
 // Appointment
 import 'screens/user/appointments/book_appointment_screen.dart';
@@ -433,6 +435,11 @@ class MyAppState extends State<MyApp> {
                     },
                   ),
                 ],
+              ),
+              // NEW: Doctor urgent requests list
+              GoRoute(
+                path: 'urgent-requests',
+                builder: (context, state) => const DoctorUrgentRequestsScreen(),
               ),
             ],
           ),

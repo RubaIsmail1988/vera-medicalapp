@@ -56,6 +56,22 @@ class _InboxScreenState extends State<InboxScreen> {
     return true;
   }
 
+  DateTime? _parseCreatedAt(Map<String, dynamic> item) {
+    final raw = (item["created_at"] ?? "").toString().trim();
+    if (raw.isEmpty) return null;
+    try {
+      return DateTime.parse(raw).toLocal();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  int _parseId(Map<String, dynamic> item) {
+    final raw = item["id"];
+    if (raw is int) return raw;
+    return int.tryParse(raw?.toString() ?? "") ?? 0;
+  }
+
   Future<void> loadInbox() async {
     setState(() => loading = true);
 
@@ -93,12 +109,28 @@ class _InboxScreenState extends State<InboxScreen> {
 
       final List<Map<String, dynamic>> parsed = <Map<String, dynamic>>[];
       for (final x in decoded) {
-        if (x is Map) {
-          parsed.add(Map<String, dynamic>.from(x));
-        }
+        if (x is Map) parsed.add(Map<String, dynamic>.from(x));
       }
 
       final visible = parsed.where((e) => !_shouldHideFromInbox(e)).toList();
+
+      // ترتيب: الأحدث أولاً (created_at desc) ثم id desc كـ tie-breaker
+      visible.sort((a, b) {
+        final adt = _parseCreatedAt(a);
+        final bdt = _parseCreatedAt(b);
+
+        if (adt != null && bdt != null) {
+          final cmp = bdt.compareTo(adt); // desc
+          if (cmp != 0) return cmp;
+        } else if (adt == null && bdt != null) {
+          return 1; // b first
+        } else if (adt != null && bdt == null) {
+          return -1; // a first
+        }
+
+        // tie-break by id (desc)
+        return _parseId(b).compareTo(_parseId(a));
+      });
 
       setState(() {
         items = visible;
@@ -140,18 +172,20 @@ class _InboxScreenState extends State<InboxScreen> {
     Map<String, dynamic> item,
     Map<String, dynamic> payload,
   ) {
-    // Prefer server serializer field first
     final s1 = item["actor_display_name"]?.toString();
     if (s1 != null && s1.trim().isNotEmpty) return s1.trim();
 
-    // Then enriched payload
     final s2 = payload["actor_name"]?.toString();
     if (s2 != null && s2.trim().isNotEmpty) return s2.trim();
 
-    // Fallback
     final actorId = item["actor"]?.toString() ?? "";
     if (actorId.trim().isNotEmpty) return "User #$actorId";
     return "مستخدم";
+  }
+
+  int? _toInt(dynamic v) {
+    if (v is int) return v;
+    return int.tryParse(v?.toString() ?? "");
   }
 
   Future<void> _routeFromInboxEvent({
@@ -160,9 +194,10 @@ class _InboxScreenState extends State<InboxScreen> {
     required Map<String, dynamic> item,
   }) async {
     final role = await _currentRole();
+    final safeRole = role.trim() == "doctor" ? "doctor" : "patient";
 
     // status-driven
-    final status = (payload["status"] ?? "").toString().toLowerCase();
+    final status = (payload["status"] ?? "").toString().toLowerCase().trim();
 
     if (status == "taken" || status == "skipped") {
       if (!mounted) return;
@@ -175,6 +210,49 @@ class _InboxScreenState extends State<InboxScreen> {
       context.go("/app/appointments");
       return;
     }
+
+    // ------------------- NEW: urgent + emergency absence cases -------------------
+    // 1) urgent_request_scheduled -> patient -> appointments
+    if (eventType == "urgent_request_scheduled") {
+      if (!mounted) return;
+      context.go("/app/appointments");
+      return;
+    }
+
+    // 2) urgent_request_rejected -> patient -> appointments
+    if (eventType == "urgent_request_rejected") {
+      if (!mounted) return;
+      context.go("/app/appointments");
+      return;
+    }
+
+    // 3) appointment_cancelled_due_to_emergency_absence -> appointments
+
+    if (eventType == "appointment_cancelled_due_to_emergency_absence") {
+      if (!mounted) return;
+      context.go("/app/appointments");
+      return;
+    }
+
+    // 4) urgent request without slots:
+    // you mentioned: "طلب عاجل بدون مواعيد متاحة"
+    // قد يصل بأكثر من اسم حسب الباك؛ نعالج أشهر احتمالات بأمان
+    if (eventType == "urgent_request_no_slots" ||
+        eventType == "urgent_request_no_availability" ||
+        eventType == "urgent_request_created_no_slots" ||
+        eventType == "urgent_request_without_slots" ||
+        eventType == "urgent_request_created") {
+      if (!mounted) return;
+      // الطبيب: شاشة الطلبات العاجلة
+      if (safeRole == "doctor") {
+        context.go("/app/appointments/urgent-requests");
+        return;
+      }
+      // المريض: المواعيد (مراجعة الطلب/النتيجة)
+      context.go("/app/appointments");
+      return;
+    }
+    // ---------------------------------------------------------------------------
 
     if (eventType == "appointment_created" ||
         eventType == "appointment_confirmed" ||
@@ -194,7 +272,7 @@ class _InboxScreenState extends State<InboxScreen> {
 
       if (orderId != null) {
         if (!mounted) return;
-        context.go("/app/record/orders/$orderId?role=$role");
+        context.go("/app/record/orders/$orderId?role=$safeRole");
         return;
       }
 
@@ -224,6 +302,37 @@ class _InboxScreenState extends State<InboxScreen> {
       return;
     }
 
+    // fallback: لو السيرفر يرسل route داخل payload
+    final rawRoute =
+        (payload["route"] ?? item["route"])?.toString().trim() ?? "";
+    if (rawRoute.startsWith("/app")) {
+      if (!mounted) return;
+
+      // إذا كان route خاص بطلب order، نضمن role (web-safe)
+      final uri = Uri.tryParse(rawRoute);
+      if (uri != null && uri.path.startsWith("/app/record/orders/")) {
+        final qp = Map<String, String>.from(uri.queryParameters);
+        qp.putIfAbsent("role", () => safeRole);
+
+        // enrich optional
+        final patientId = _toInt(payload["patient_id"]);
+        final appointmentId = _toInt(payload["appointment_id"]);
+        if (safeRole == "doctor" && patientId != null && patientId > 0) {
+          qp.putIfAbsent("patientId", () => patientId.toString());
+        }
+        if (appointmentId != null && appointmentId > 0) {
+          qp.putIfAbsent("appointmentId", () => appointmentId.toString());
+        }
+
+        final safe = Uri(path: uri.path, queryParameters: qp).toString();
+        context.go(safe);
+        return;
+      }
+
+      context.go(rawRoute);
+      return;
+    }
+
     if (!mounted) return;
     showAppSnackBar(
       context,
@@ -233,15 +342,31 @@ class _InboxScreenState extends State<InboxScreen> {
   }
 
   String _titleForEvent(String eventType, Map<String, dynamic> payload) {
-    // Prefer payload title (richness)
     final payloadTitle = payload["title"]?.toString();
     if (payloadTitle != null && payloadTitle.trim().isNotEmpty) {
       return payloadTitle.trim();
     }
 
-    final status = (payload["status"] ?? "").toString().toLowerCase();
+    final status = (payload["status"] ?? "").toString().toLowerCase().trim();
     if (status == "taken" || status == "skipped") return "تسجيل التزام دوائي";
     if (status == "no_show") return "لم يتم الحضور للموعد";
+
+    // NEW: urgent + emergency absence titles (fallback)
+    switch (eventType) {
+      case "urgent_request_scheduled":
+        return "تم تحديد موعد عاجل";
+      case "urgent_request_rejected":
+        return "تم رفض طلب موعد عاجل";
+      case "urgent_request_no_slots":
+      case "urgent_request_no_availability":
+      case "urgent_request_created_no_slots":
+      case "urgent_request_without_slots":
+      case "urgent_request_created":
+        return "طلب عاجل بدون مواعيد متاحة";
+      case "appointment_cancelled_due_to_emergency_absence":
+      case "appointmen_cancelled_due_to_emergency_absence":
+        return "تم إلغاء موعدك بسبب غياب طارئ";
+    }
 
     switch (eventType) {
       case "appointment_created":
@@ -269,7 +394,6 @@ class _InboxScreenState extends State<InboxScreen> {
   }
 
   String _bodyForEvent(String eventType, Map<String, dynamic> payload) {
-    // Prefer payload message (richness)
     final payloadMsg = payload["message"]?.toString();
     if (payloadMsg != null && payloadMsg.trim().isNotEmpty) {
       return payloadMsg.trim();
@@ -280,10 +404,27 @@ class _InboxScreenState extends State<InboxScreen> {
     final orderCategory = payload["order_category"]?.toString();
     final status = payload["status"]?.toString();
 
-    final statusLower = (status ?? "").toLowerCase();
+    final statusLower = (status ?? "").toLowerCase().trim();
     if (statusLower == "taken") return "تم تسجيل تناول الجرعة.";
     if (statusLower == "skipped") return "تم تسجيل تخطي الجرعة.";
     if (statusLower == "no_show") return "تم وضع الموعد بحالة عدم حضور.";
+
+    // NEW: urgent + emergency absence body (fallback)
+    switch (eventType) {
+      case "urgent_request_scheduled":
+        return "تم تحديد موعد عاجل. يمكنك مراجعة التفاصيل من شاشة المواعيد.";
+      case "urgent_request_rejected":
+        return "تم رفض طلب الموعد العاجل. يمكنك مراجعة التفاصيل من شاشة المواعيد.";
+      case "appointment_cancelled_due_to_emergency_absence":
+      case "appointmen_cancelled_due_to_emergency_absence":
+        return "تم إلغاء الموعد بسبب غياب طارئ لدى الطبيب. يرجى مراجعة المواعيد.";
+      case "urgent_request_no_slots":
+      case "urgent_request_no_availability":
+      case "urgent_request_created_no_slots":
+      case "urgent_request_without_slots":
+      case "urgent_request_created":
+        return "لا توجد مواعيد متاحة حاليًا للطلب العاجل. يرجى مراجعة شاشة المواعيد.";
+    }
 
     switch (eventType) {
       case "CLINICAL_ORDER_CREATED":
@@ -311,10 +452,27 @@ class _InboxScreenState extends State<InboxScreen> {
   }
 
   IconData _iconForEvent(String eventType, Map<String, dynamic> payload) {
-    final status = (payload["status"] ?? "").toString().toLowerCase();
+    final status = (payload["status"] ?? "").toString().toLowerCase().trim();
 
     if (status == "taken" || status == "skipped") return Icons.check_circle;
     if (status == "no_show") return Icons.event_busy;
+
+    // NEW: urgent + emergency absence icons
+    switch (eventType) {
+      case "urgent_request_scheduled":
+        return Icons.flash_on;
+      case "urgent_request_rejected":
+        return Icons.block;
+      case "urgent_request_no_slots":
+      case "urgent_request_no_availability":
+      case "urgent_request_created_no_slots":
+      case "urgent_request_without_slots":
+      case "urgent_request_created":
+        return Icons.warning_amber;
+      case "appointment_cancelled_due_to_emergency_absence":
+      case "appointmen_cancelled_due_to_emergency_absence":
+        return Icons.event_busy;
+    }
 
     switch (eventType) {
       case "appointment_created":
@@ -355,10 +513,8 @@ class _InboxScreenState extends State<InboxScreen> {
       final hh = two(dt.hour);
       final mm = two(dt.minute);
 
-      // شكل مقروء: 2026-01-16 15:17
       return "$y-$m-$d $hh:$mm";
     } catch (_) {
-      // fallback: لو جاء نص غير قابل للـ parse
       return s;
     }
   }
@@ -436,10 +592,11 @@ class _InboxScreenState extends State<InboxScreen> {
                               style: Theme.of(context).textTheme.bodySmall,
                             ),
                             const SizedBox(height: 6),
-                            Text(
-                              " ${createdAt.isNotEmpty ? "التاريخ والوقت: $createdAt" : ""}",
-                              style: Theme.of(context).textTheme.bodySmall,
-                            ),
+                            if (createdAt.isNotEmpty)
+                              Text(
+                                "التاريخ والوقت: $createdAt",
+                                style: Theme.of(context).textTheme.bodySmall,
+                              ),
                           ],
                         ),
                         onTap: () async {
