@@ -20,38 +20,52 @@ class _SplashScreenState extends State<SplashScreen> {
 
   Future<void> start() async {
     await Future.delayed(const Duration(milliseconds: 700));
-
-    final prefs = await SharedPreferences.getInstance();
-    final token = prefs.getString('access_token');
-    final role = prefs.getString('user_role');
-    final userId = prefs.getInt('user_id');
-
     if (!mounted) return;
 
-    // 1) لا يوجد تسجيل دخول
-    if (token == null || token.isEmpty) {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (!mounted) return;
+
+      final token = (prefs.getString('access_token') ?? '').trim();
+      final role = (prefs.getString('user_role') ?? '').trim();
+      final userId = prefs.getInt('user_id') ?? 0;
+
+      // مهم لتوحيد سلوك الطبيب غير المفعّل
+      final bool? isActive = prefs.getBool('user_is_active');
+
+      // 1) لا يوجد تسجيل دخول
+      if (token.isEmpty || role.isEmpty || userId == 0) {
+        context.go('/login');
+        return;
+      }
+
+      // 2) توجيه حسب الدور
+      if (role == 'admin') {
+        context.go('/admin');
+        return;
+      }
+
+      if (role == 'doctor') {
+        // إذا الطبيب غير مفعّل → شاشة انتظار التفعيل
+        if (isActive == false) {
+          context.go('/waiting-activation');
+          return;
+        }
+        context.go('/app');
+        return;
+      }
+
+      if (role == 'patient') {
+        context.go('/app');
+        return;
+      }
+
+      // 3) احتياطي
       context.go('/login');
-      return;
-    }
-
-    if (role == null || userId == null) {
+    } catch (_) {
+      if (!mounted) return;
       context.go('/login');
-      return;
     }
-
-    // 2) توجيه حسب الدور
-    if (role == 'admin') {
-      context.go('/admin');
-      return;
-    }
-
-    if (role == 'patient' || role == 'doctor') {
-      context.go('/app');
-      return;
-    }
-
-    // 3) احتياطي
-    context.go('/login');
   }
 
   @override

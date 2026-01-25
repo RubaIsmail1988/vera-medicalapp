@@ -1,10 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:go_router/go_router.dart';
 
 import '/services/account_deletion_service.dart';
 import '/utils/ui_helpers.dart';
-
-import 'package:go_router/go_router.dart';
 
 class AccountDeletionStatusScreen extends StatefulWidget {
   const AccountDeletionStatusScreen({super.key});
@@ -19,7 +18,9 @@ class _AccountDeletionStatusScreenState
   final AccountDeletionService deletionService = AccountDeletionService();
 
   bool loading = true;
-  String? errorMessage;
+
+  // Fetch errors => inline state (no SnackBar)
+  ({String title, String message, IconData icon})? inlineError;
 
   String statusMessage = '';
   bool canRequestDeletion = false;
@@ -37,7 +38,7 @@ class _AccountDeletionStatusScreenState
     if (!mounted) return;
     setState(() {
       loading = true;
-      errorMessage = null;
+      inlineError = null;
       statusMessage = '';
       canRequestDeletion = false;
     });
@@ -96,6 +97,7 @@ class _AccountDeletionStatusScreenState
       }
 
       // 2) لا يوجد pending → نأخذ آخر طلب (الأحدث)
+      // نفترض أن الخدمة تعيد النتائج مرتبة من الأحدث للأقدم.
       final latestRequest = requests.first;
       final latestStatus =
           latestRequest['status']?.toString().toLowerCase() ?? '';
@@ -131,81 +133,100 @@ class _AccountDeletionStatusScreenState
     } catch (e) {
       if (!mounted) return;
 
+      // Fetch error => Inline only (no SnackBar)
+      final mapped = mapFetchExceptionToInlineState(e);
+
       setState(() {
-        errorMessage = 'حدث خطأ أثناء تحميل حالة طلب حذف الحساب.';
         loading = false;
         canRequestDeletion = false;
+        inlineError = mapped;
       });
     }
   }
 
   Future<void> openDeletionRequestDialog() async {
     final reasonController = TextEditingController();
+
     try {
       final confirmed = await showDialog<bool>(
         context: context,
         builder: (dialogContext) {
-          return AlertDialog(
-            title: const Text('طلب حذف الحساب'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Text(
-                  'هل أنت متأكد من رغبتك في طلب حذف حسابك؟\n'
-                  'سيتم مراجعة الطلب من قبل الإدارة.',
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: reasonController,
-                  decoration: const InputDecoration(
-                    labelText: 'سبب الطلب (اختياري)',
+          return Directionality(
+            textDirection: TextDirection.rtl,
+            child: AlertDialog(
+              title: const Text('طلب حذف الحساب', textAlign: TextAlign.right),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  const Text(
+                    'هل أنت متأكد من رغبتك في طلب حذف حسابك؟\n'
+                    'سيتم مراجعة الطلب من قبل الإدارة.',
+                    textAlign: TextAlign.right,
                   ),
-                  maxLines: 3,
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: reasonController,
+                    decoration: const InputDecoration(
+                      labelText: 'سبب الطلب (اختياري)',
+                      border: OutlineInputBorder(),
+                    ),
+                    maxLines: 3,
+                    textDirection: TextDirection.rtl,
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext, false),
+                  child: const Text('إلغاء'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.pop(dialogContext, true),
+                  child: const Text('تأكيد الطلب'),
                 ),
               ],
             ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(dialogContext, false),
-                child: const Text('إلغاء'),
-              ),
-              ElevatedButton(
-                onPressed: () => Navigator.pop(dialogContext, true),
-                child: const Text('تأكيد الطلب'),
-              ),
-            ],
           );
         },
       );
 
-      if (!mounted) return; // هذا هو الحارس الصحيح لـ State.context
-
+      if (!mounted) return;
       if (confirmed != true) return;
 
-      final success = await deletionService.createDeletionRequest(
-        reason: reasonController.text,
-      );
+      // Action: مسموح SnackBar
+      try {
+        final success = await deletionService.createDeletionRequest(
+          reason: reasonController.text.trim(),
+        );
 
-      if (!mounted) return;
+        if (!mounted) return;
 
-      showAppSnackBar(
-        context,
-        success
-            ? 'تم إرسال طلب حذف الحساب بنجاح.'
-            : 'فشل إرسال طلب حذف الحساب، حاول مرة أخرى.',
-        type: success ? AppSnackBarType.success : AppSnackBarType.error,
-      );
-
-      if (success) {
-        await loadStatus();
-        // loadStatus فيها setState داخلي مع mounted، ممتاز
+        if (success) {
+          showAppSnackBar(
+            context,
+            'تم إرسال طلب حذف الحساب بنجاح.',
+            type: AppSnackBarType.success,
+          );
+          await loadStatus();
+        } else {
+          showAppSnackBar(
+            context,
+            'فشل إرسال طلب حذف الحساب، حاول مرة أخرى.',
+            type: AppSnackBarType.error,
+          );
+        }
+      } catch (e) {
+        if (!mounted) return;
+        // Action error => SnackBar
+        showActionErrorSnackBar(context, exception: e);
       }
     } finally {
       reasonController.dispose();
     }
   }
 
-  Widget statusView({
+  Widget _statusView({
     required IconData icon,
     required Color iconColor,
     required String title,
@@ -249,13 +270,12 @@ class _AccountDeletionStatusScreenState
     );
   }
 
-  Widget buildStatusContent(BuildContext context) {
+  Widget _buildStatusContent() {
     final cs = Theme.of(context).colorScheme;
-
     final msg = statusMessage;
 
     if (msg.contains('قيد المراجعة')) {
-      return statusView(
+      return _statusView(
         icon: Icons.hourglass_top,
         iconColor: cs.tertiary,
         title: 'طلب حذف الحساب قيد المراجعة',
@@ -264,7 +284,7 @@ class _AccountDeletionStatusScreenState
     }
 
     if (msg.contains('تم رفض')) {
-      return statusView(
+      return _statusView(
         icon: Icons.cancel_outlined,
         iconColor: cs.secondary,
         title: 'تم رفض طلب حذف الحساب',
@@ -273,7 +293,7 @@ class _AccountDeletionStatusScreenState
     }
 
     if (msg.contains('تمت الموافقة')) {
-      return statusView(
+      return _statusView(
         icon: Icons.manage_accounts_outlined,
         iconColor: cs.primary,
         title: 'تمت الموافقة على طلب حذف سابق',
@@ -281,7 +301,7 @@ class _AccountDeletionStatusScreenState
       );
     }
 
-    return statusView(
+    return _statusView(
       icon: Icons.info_outline,
       iconColor: cs.outline,
       title: 'حالة طلب حذف الحساب',
@@ -291,13 +311,11 @@ class _AccountDeletionStatusScreenState
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-
     return PopScope(
-      canPop: false, // نمنع الرجوع الافتراضي
+      canPop: false,
       onPopInvokedWithResult: (didPop, result) {
         if (didPop) return;
-        context.go('/app/account'); // الرجوع إلى صفحة الاعدادات
+        context.go('/app/account');
       },
       child: Directionality(
         textDirection: TextDirection.rtl,
@@ -306,25 +324,30 @@ class _AccountDeletionStatusScreenState
             title: const Text('حالة طلب حذف الحساب'),
             leading: IconButton(
               icon: const Icon(Icons.arrow_back),
-              onPressed: () {
-                context.go('/app/account'); // نفس السلوك عند الضغط على السهم
-              },
+              onPressed: () => context.go('/app/account'),
             ),
+            actions: [
+              IconButton(
+                tooltip: 'تحديث',
+                onPressed: loading ? null : loadStatus,
+                icon: const Icon(Icons.refresh),
+              ),
+            ],
           ),
           body:
               loading
                   ? const Center(child: CircularProgressIndicator())
-                  : errorMessage != null
-                  ? statusView(
-                    icon: Icons.error_outline,
-                    iconColor: cs.error,
-                    title: 'حدث خطأ',
-                    message: errorMessage!,
+                  : (inlineError != null)
+                  ? AppInlineErrorState(
+                    title: inlineError!.title,
+                    message: inlineError!.message,
+                    icon: inlineError!.icon,
+                    onRetry: loadStatus,
                   )
-                  : buildStatusContent(context),
+                  : _buildStatusContent(),
           bottomNavigationBar:
               (!loading &&
-                      errorMessage == null &&
+                      inlineError == null &&
                       canRequestDeletion &&
                       isActive)
                   ? SafeArea(

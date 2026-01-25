@@ -23,11 +23,20 @@ class _HospitalPublicListScreenState extends State<HospitalPublicListScreen> {
   Map<int, String> governorateNamesById = {};
   bool loadingGovernorates = true;
 
+  final TextEditingController searchController = TextEditingController();
+  String searchQuery = '';
+
   @override
   void initState() {
     super.initState();
     loadHospitals();
     loadGovernorates();
+  }
+
+  @override
+  void dispose() {
+    searchController.dispose();
+    super.dispose();
   }
 
   void loadHospitals() {
@@ -47,16 +56,9 @@ class _HospitalPublicListScreenState extends State<HospitalPublicListScreen> {
         governorateNamesById = {for (final g in items) g.id: g.name};
         loadingGovernorates = false;
       });
-    } catch (e) {
+    } catch (_) {
       if (!mounted) return;
-
       setState(() => loadingGovernorates = false);
-
-      showAppSnackBar(
-        context,
-        'فشل تحميل المحافظات: $e',
-        type: AppSnackBarType.error,
-      );
     }
   }
 
@@ -84,6 +86,35 @@ class _HospitalPublicListScreenState extends State<HospitalPublicListScreen> {
     );
   }
 
+  List<Hospital> _applySearchAndSort(List<Hospital> hospitals) {
+    final q = searchQuery.trim().toLowerCase();
+    if (q.isEmpty) return hospitals;
+
+    bool matches(Hospital h) {
+      final nameMatch = h.name.toLowerCase().contains(q);
+      final govName = governorateNamesById[h.governorate]?.toLowerCase() ?? '';
+      final govMatch = govName.contains(q);
+      return nameMatch || govMatch;
+    }
+
+    final filtered = hospitals.where(matches).toList();
+
+    // ترتيب: المطابق للمحافظة أولًا
+    filtered.sort((a, b) {
+      final govA = governorateNamesById[a.governorate]?.toLowerCase() ?? '';
+      final govB = governorateNamesById[b.governorate]?.toLowerCase() ?? '';
+
+      final aGovMatch = govA.contains(q);
+      final bGovMatch = govB.contains(q);
+
+      if (aGovMatch && !bGovMatch) return -1;
+      if (!aGovMatch && bGovMatch) return 1;
+      return a.name.compareTo(b.name);
+    });
+
+    return filtered;
+  }
+
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
@@ -98,6 +129,26 @@ class _HospitalPublicListScreenState extends State<HospitalPublicListScreen> {
               padding: EdgeInsets.symmetric(horizontal: 12),
               child: LinearProgressIndicator(),
             ),
+
+          // ---- Search Field ----
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+            child: TextField(
+              controller: searchController,
+              onChanged: (v) => setState(() => searchQuery = v),
+              decoration: InputDecoration(
+                hintText: 'ابحث باسم المشفى أو المحافظة',
+                prefixIcon: const Icon(Icons.search),
+                filled: true,
+                fillColor: cs.surface,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide.none,
+                ),
+              ),
+            ),
+          ),
+
           Expanded(
             child: FutureBuilder<List<Hospital>>(
               future: futureHospitals,
@@ -107,17 +158,32 @@ class _HospitalPublicListScreenState extends State<HospitalPublicListScreen> {
                 }
 
                 if (snapshot.hasError) {
-                  return const Center(
-                    child: Text('حدث خطأ أثناء جلب قائمة المشافي.'),
+                  final mapped = mapFetchExceptionToInlineState(
+                    snapshot.error!,
+                  );
+
+                  return RefreshIndicator(
+                    onRefresh: refresh,
+                    child: ListView(
+                      children: [
+                        const SizedBox(height: 80),
+                        AppInlineErrorState(
+                          title: mapped.title,
+                          message: mapped.message,
+                          icon: mapped.icon,
+                          onRetry: refresh,
+                        ),
+                        const SizedBox(height: 40),
+                      ],
+                    ),
                   );
                 }
 
                 final hospitals = snapshot.data ?? [];
+                final visible = _applySearchAndSort(hospitals);
 
-                if (hospitals.isEmpty) {
-                  return const Center(
-                    child: Text('لا توجد مشافي متاحة حاليًا.'),
-                  );
+                if (visible.isEmpty) {
+                  return const Center(child: Text('لا توجد نتائج مطابقة.'));
                 }
 
                 return RefreshIndicator(
@@ -125,10 +191,10 @@ class _HospitalPublicListScreenState extends State<HospitalPublicListScreen> {
                   child: ListView.separated(
                     physics: const AlwaysScrollableScrollPhysics(),
                     padding: const EdgeInsets.all(16),
-                    itemCount: hospitals.length,
+                    itemCount: visible.length,
                     separatorBuilder: (_, __) => const SizedBox(height: 8),
                     itemBuilder: (context, index) {
-                      final hospital = hospitals[index];
+                      final hospital = visible[index];
                       final govName =
                           governorateNamesById[hospital.governorate];
 

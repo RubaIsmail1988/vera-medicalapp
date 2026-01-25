@@ -4,9 +4,9 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../models/doctor_search_result.dart';
 import '../../../services/appointments_service.dart';
 import '../../../services/auth_service.dart';
-import '../../../models/doctor_search_result.dart';
 import '../../../utils/ui_helpers.dart';
 
 class DoctorSearchScreen extends StatefulWidget {
@@ -26,12 +26,14 @@ class _DoctorSearchScreenState extends State<DoctorSearchScreen> {
   bool loading = false;
   String query = '';
   List<DoctorSearchResult> results = const [];
-  String? errorMessage;
 
   int? selectedGovernorateId; // null => الكل
   int? myGovernorateId; // from /api/accounts/me/
   bool profileLoaded = false;
   bool userTouchedGovernorateFilter = false;
+
+  // Fetch error (موحّد)
+  ({String title, String message, IconData icon})? inlineError;
 
   @override
   void initState() {
@@ -77,9 +79,9 @@ class _DoctorSearchScreenState extends State<DoctorSearchScreen> {
 
         // Default selection = patient's governorate,
         // but do not override if user already changed it.
-        // if (!userTouchedGovernorateFilter && selectedGovernorateId == null) {
-        // selectedGovernorateId = govId;
-        //  }
+        if (!userTouchedGovernorateFilter && selectedGovernorateId == null) {
+          selectedGovernorateId = govId;
+        }
       });
     } catch (_) {
       if (!mounted) return;
@@ -103,13 +105,10 @@ class _DoctorSearchScreenState extends State<DoctorSearchScreen> {
       }
     }
 
-    final options =
-        map.entries
-            .map((e) => _GovernorateOption(id: e.key, name: e.value))
-            .toList()
-          ..sort((a, b) => a.name.compareTo(b.name));
-
-    return options;
+    return map.entries
+        .map((e) => _GovernorateOption(id: e.key, name: e.value))
+        .toList()
+      ..sort((a, b) => a.name.compareTo(b.name));
   }
 
   List<DoctorSearchResult> get filteredResults {
@@ -146,16 +145,16 @@ class _DoctorSearchScreenState extends State<DoctorSearchScreen> {
 
   Future<void> runSearch() async {
     final q = searchController.text.trim();
+
     if (q.isEmpty) {
       setState(() {
         query = '';
         results = const [];
-        errorMessage = null;
+        inlineError = null;
 
-        // keep user's selected governorate; but if they never touched it, keep default
-        //   if (!userTouchedGovernorateFilter) {
-        //   selectedGovernorateId = myGovernorateId;
-        // }
+        // لا نلمس فلتر المحافظة هنا:
+        // - إذا المستخدم لم يلمس الفلتر: يبقى الافتراضي (محافظة الحساب)
+        // - إذا المستخدم اختار: نحترم اختياره
       });
       return;
     }
@@ -163,30 +162,13 @@ class _DoctorSearchScreenState extends State<DoctorSearchScreen> {
     setState(() {
       loading = true;
       query = q;
-      errorMessage = null;
+      inlineError = null;
     });
 
     try {
       final data = await appointmentsService.searchDoctors(query: q);
       if (!mounted) return;
 
-      // Ensure default gov is applied after first search (if user didn't touch filter)
-      //  int? newSelectedGov = selectedGovernorateId;
-      //  if (!userTouchedGovernorateFilter && newSelectedGov == null) {
-      //    newSelectedGov = myGovernorateId;
-      //  }
-
-      // If the selected governorate is not present in this search results, fallback to "all"
-      // final ids = data.map((d) => d.governorateId).whereType<int>().toSet();
-      // if (newSelectedGov != null && !ids.contains(newSelectedGov)) {
-      //  newSelectedGov = null;
-      //}
-
-      //  setState(() {
-      //    results = data;
-      //   selectedGovernorateId = newSelectedGov;
-      //   loading = false;
-      // });
       setState(() {
         results = data;
         loading = false;
@@ -200,34 +182,19 @@ class _DoctorSearchScreenState extends State<DoctorSearchScreen> {
           }
         }
       });
-    } on ApiException catch (e) {
+    } catch (e) {
       if (!mounted) return;
 
-      Object? body;
-      try {
-        body = jsonDecode(e.body);
-      } catch (_) {
-        body = e.body;
-      }
-
-      showApiErrorSnackBar(context, statusCode: e.statusCode, data: body);
+      final mapped = mapFetchExceptionToInlineState(e);
 
       setState(() {
         loading = false;
-        errorMessage = mapHttpErrorToArabicMessage(
-          statusCode: e.statusCode,
-          data: body,
+        results = const [];
+        inlineError = (
+          title: mapped.title,
+          message: mapped.message,
+          icon: mapped.icon,
         );
-      });
-    } catch (_) {
-      if (!mounted) return;
-
-      const msg = 'حدث خطأ غير متوقع. حاول مرة أخرى لاحقًا.';
-      showAppErrorSnackBar(context, msg);
-
-      setState(() {
-        loading = false;
-        errorMessage = msg;
       });
     }
   }
@@ -331,8 +298,14 @@ class _DoctorSearchScreenState extends State<DoctorSearchScreen> {
                     return const Center(child: CircularProgressIndicator());
                   }
 
-                  if (errorMessage != null && results.isEmpty) {
-                    return Center(child: Text(errorMessage!));
+                  if (inlineError != null && results.isEmpty) {
+                    final err = inlineError!;
+                    return AppInlineErrorState(
+                      title: err.title,
+                      message: err.message,
+                      icon: err.icon,
+                      onRetry: runSearch,
+                    );
                   }
 
                   if (dataToShow.isEmpty) {

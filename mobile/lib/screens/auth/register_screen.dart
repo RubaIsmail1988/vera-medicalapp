@@ -1,3 +1,4 @@
+// lib/screens/auth/register_screen.dart
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
@@ -17,8 +18,8 @@ class RegisterScreen extends StatefulWidget {
 class _RegisterScreenState extends State<RegisterScreen> {
   final formKey = GlobalKey<FormState>();
 
-  final authService = AuthService();
-  final governorateService = GovernorateService();
+  final AuthService authService = AuthService();
+  final GovernorateService governorateService = GovernorateService();
 
   final TextEditingController emailController = TextEditingController();
   final TextEditingController usernameController = TextEditingController();
@@ -68,7 +69,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
               governorates.isEmpty ? null : governorates.first.id;
         }
       });
-    } catch (_) {
+    } catch (e) {
       if (!mounted) return;
 
       setState(() {
@@ -77,10 +78,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
         selectedGovernorateId = null;
       });
 
-      showAppSnackBar(
+      // هذا Fetch -> سلوك موحّد: SnackBar فقط إذا أردتِ، لكن هنا نتركه لأنه داخل شاشة Form (Action context)
+      showActionErrorSnackBar(
         context,
-        'تعذّر تحميل المحافظات. تأكد من الاتصال بالخادم ثم أعد المحاولة.',
-        type: AppSnackBarType.error,
+        exception: e,
+        fallback:
+            'تعذّر تحميل المحافظات. تأكد من الاتصال بالخادم ثم أعد المحاولة.',
       );
     }
   }
@@ -152,16 +155,15 @@ class _RegisterScreenState extends State<RegisterScreen> {
       final response = await authService.register(request);
       if (!mounted) return;
 
-      setState(() => loading = false);
-
       if (response.statusCode == 201) {
+        setState(() => loading = false);
+
         final email = emailController.text.trim().toLowerCase();
 
         if (role == 'patient') {
-          showAppSnackBar(
+          showAppSuccessSnackBar(
             context,
             'تم إنشاء حساب المريض بنجاح. يمكنك الآن تسجيل الدخول.',
-            type: AppSnackBarType.success,
           );
           context.go('/login', extra: {'prefillEmail': email});
           return;
@@ -177,28 +179,29 @@ class _RegisterScreenState extends State<RegisterScreen> {
           return;
         }
 
-        showAppSnackBar(
-          context,
-          'تم إنشاء الحساب بنجاح.',
-          type: AppSnackBarType.success,
-        );
+        showAppSuccessSnackBar(context, 'تم إنشاء الحساب بنجاح.');
         context.go('/login');
         return;
       }
 
-      showAppSnackBar(
+      // HTTP non-201 -> Action error موحّد عبر statusCode + data
+      setState(() => loading = false);
+
+      showActionErrorSnackBar(
         context,
-        'فشل إنشاء الحساب. يرجى التأكد من البيانات والمحاولة مرة أخرى.',
-        type: AppSnackBarType.error,
+        statusCode: response.statusCode,
+        data: response.body,
+        fallback:
+            'فشل إنشاء الحساب. يرجى التأكد من البيانات والمحاولة مرة أخرى.',
       );
-    } catch (_) {
+    } catch (e) {
       if (!mounted) return;
       setState(() => loading = false);
 
-      showAppSnackBar(
+      showActionErrorSnackBar(
         context,
-        'حدث خطأ غير متوقع أثناء التسجيل. حاول مرة أخرى.',
-        type: AppSnackBarType.error,
+        exception: e,
+        fallback: 'حدث خطأ غير متوقع أثناء التسجيل. حاول مرة أخرى.',
       );
     }
   }
@@ -244,6 +247,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                             ),
                             keyboardType: TextInputType.emailAddress,
                             validator: emailValidator,
+                            enabled: !loading,
                           ),
                           const SizedBox(height: 16),
 
@@ -253,6 +257,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                               labelText: 'اسم المستخدم',
                             ),
                             validator: usernameValidator,
+                            enabled: !loading,
                           ),
                           const SizedBox(height: 16),
 
@@ -267,15 +272,19 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                       ? Icons.visibility_off
                                       : Icons.visibility,
                                 ),
-                                onPressed: () {
-                                  setState(
-                                    () => obscurePassword = !obscurePassword,
-                                  );
-                                },
+                                onPressed:
+                                    loading
+                                        ? null
+                                        : () {
+                                          setState(() {
+                                            obscurePassword = !obscurePassword;
+                                          });
+                                        },
                               ),
                             ),
                             obscureText: obscurePassword,
                             validator: passwordValidator,
+                            enabled: !loading,
                           ),
                           const SizedBox(height: 16),
 
@@ -286,6 +295,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                             ),
                             keyboardType: TextInputType.phone,
                             validator: phoneValidator,
+                            enabled: !loading,
                           ),
                           const SizedBox(height: 16),
 
@@ -345,6 +355,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                               labelText: 'العنوان',
                             ),
                             validator: addressValidator,
+                            enabled: !loading,
                           ),
                           const SizedBox(height: 16),
 

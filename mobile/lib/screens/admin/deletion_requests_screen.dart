@@ -88,16 +88,21 @@ class _DeletionRequestsScreenState extends State<DeletionRequestsScreen> {
     }
   }
 
-  Map<String, dynamic> statusInfo(String? status) {
+  ({String label, Color color}) statusInfo(ColorScheme cs, String? status) {
     final s = (status ?? '').toLowerCase();
+
     if (s == 'pending') {
-      return {'label': 'قيد المراجعة', 'color': Colors.orangeAccent};
+      return (label: 'قيد المراجعة', color: cs.tertiary);
     } else if (s == 'approved') {
-      return {'label': 'مقبول', 'color': Colors.greenAccent};
+      return (label: 'مقبول', color: cs.primary);
     } else if (s == 'rejected') {
-      return {'label': 'مرفوض', 'color': Colors.redAccent};
+      return (label: 'مرفوض', color: cs.error);
     }
-    return {'label': status ?? 'غير معروف', 'color': Colors.grey};
+
+    return (
+      label: status ?? 'غير معروف',
+      color: cs.onSurface.withValues(alpha: 0.55),
+    );
   }
 
   bool requestMatchesQuery(Map<String, dynamic> req) {
@@ -132,7 +137,15 @@ class _DeletionRequestsScreenState extends State<DeletionRequestsScreen> {
   }
 
   Future<void> handleApprove(Map<String, dynamic> req) async {
-    final int id = req['id'] as int;
+    final int id = int.tryParse(req['id']?.toString() ?? '') ?? 0;
+    if (id == 0) {
+      showAppSnackBar(
+        context,
+        'معرّف الطلب غير صالح.',
+        type: AppSnackBarType.error,
+      );
+      return;
+    }
 
     final confirmed = await showConfirmDialog(
       context,
@@ -167,7 +180,15 @@ class _DeletionRequestsScreenState extends State<DeletionRequestsScreen> {
   }
 
   Future<void> handleReject(Map<String, dynamic> req) async {
-    final int id = req['id'] as int;
+    final int id = int.tryParse(req['id']?.toString() ?? '') ?? 0;
+    if (id == 0) {
+      showAppSnackBar(
+        context,
+        'معرّف الطلب غير صالح.',
+        type: AppSnackBarType.error,
+      );
+      return;
+    }
 
     final confirmed = await showConfirmDialog(
       context,
@@ -234,6 +255,8 @@ class _DeletionRequestsScreenState extends State<DeletionRequestsScreen> {
                             icon: const Icon(Icons.close),
                             onPressed: () {
                               searchController.clear();
+                              if (!mounted) return;
+                              setState(() => searchQuery = '');
                               onSearchChanged('');
                             },
                           ),
@@ -417,11 +440,9 @@ class _DeletionRequestsScreenState extends State<DeletionRequestsScreen> {
                                       req['comment']?.toString() ??
                                       req['description']?.toString();
 
-                                  final info = statusInfo(status);
-                                  final String statusLabel =
-                                      info['label'] as String;
-                                  final Color statusColor =
-                                      info['color'] as Color;
+                                  final info = statusInfo(cs, status);
+                                  final String statusLabel = info.label;
+                                  final Color statusColor = info.color;
 
                                   String roleLabel;
                                   switch (role) {
@@ -481,12 +502,13 @@ class _DeletionRequestsScreenState extends State<DeletionRequestsScreen> {
                                                       ),
                                                 ),
                                               ),
-                                              if (perUserCount > 1)
-                                                const _Chip(
+                                              if (perUserCount > 1) ...[
+                                                const SizedBox(width: 6),
+                                                _Chip(
                                                   label: 'طلبات متعددة',
-                                                  color:
-                                                      Colors.deepOrangeAccent,
+                                                  color: cs.tertiary,
                                                 ),
+                                              ],
                                               if (roleLabel.isNotEmpty) ...[
                                                 const SizedBox(width: 6),
                                                 Container(
@@ -523,7 +545,7 @@ class _DeletionRequestsScreenState extends State<DeletionRequestsScreen> {
                                               reason.trim().isNotEmpty) ...[
                                             _InfoRow(
                                               icon: Icons.notes_outlined,
-                                              iconColor: Colors.amber,
+                                              iconColor: cs.tertiary,
                                               text: 'السبب: $reason',
                                             ),
                                             const SizedBox(height: 8),
@@ -578,9 +600,9 @@ class _DeletionRequestsScreenState extends State<DeletionRequestsScreen> {
                                                   label: const Text('موافقة'),
                                                   style: ButtonStyle(
                                                     foregroundColor:
-                                                        const WidgetStatePropertyAll<
+                                                        WidgetStatePropertyAll<
                                                           Color
-                                                        >(Colors.greenAccent),
+                                                        >(cs.primary),
                                                   ),
                                                 ),
                                               ],

@@ -32,9 +32,7 @@ class _ResetPasswordNewPasswordScreenState
   String? passwordValidator(String? value) {
     final text = value?.trim() ?? '';
     if (text.isEmpty) return 'كلمة المرور الجديدة مطلوبة';
-    if (text.length < 6) {
-      return 'كلمة المرور يجب أن تكون 6 أحرف على الأقل';
-    }
+    if (text.length < 6) return 'كلمة المرور يجب أن تكون 6 أحرف على الأقل';
     return null;
   }
 
@@ -59,45 +57,43 @@ class _ResetPasswordNewPasswordScreenState
     setState(() => loading = true);
 
     final service = PasswordResetService();
+    final newPassword = passwordController.text.trim();
 
-    bool success = false;
     try {
-      success = await service.confirmNewPassword(
+      final success = await service.confirmNewPassword(
         email: widget.email,
         code: widget.code,
-        newPassword: passwordController.text.trim(),
+        newPassword: newPassword,
       );
-    } catch (_) {
+
       if (!mounted) return;
       setState(() => loading = false);
 
+      if (!success) {
+        showActionErrorSnackBar(
+          context,
+          fallback: 'فشل تغيير كلمة المرور. تحقق من الرمز وحاول مجددًا.',
+        );
+        return;
+      }
+
       showAppSnackBar(
         context,
-        'تعذّر تغيير كلمة المرور. تحقق من الاتصال ثم حاول مرة أخرى.',
-        type: AppSnackBarType.error,
+        'تم تغيير كلمة المرور بنجاح. يمكنك تسجيل الدخول الآن.',
+        type: AppSnackBarType.success,
       );
-      return;
-    }
 
-    if (!mounted) return;
-    setState(() => loading = false);
+      context.go('/login');
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => loading = false);
 
-    if (!success) {
-      showAppSnackBar(
+      showActionErrorSnackBar(
         context,
-        'فشل تغيير كلمة المرور. تحقق من الرمز وحاول مجددًا.',
-        type: AppSnackBarType.error,
+        exception: e,
+        fallback: 'تعذّر تغيير كلمة المرور. تحقق من الاتصال ثم حاول مرة أخرى.',
       );
-      return;
     }
-
-    showAppSnackBar(
-      context,
-      'تم تغيير كلمة المرور بنجاح. يمكنك تسجيل الدخول الآن.',
-      type: AppSnackBarType.success,
-    );
-
-    context.go('/login');
   }
 
   @override
@@ -145,7 +141,6 @@ class _ResetPasswordNewPasswordScreenState
                     ),
                   ),
                   const SizedBox(height: 16),
-
                   Card(
                     child: Padding(
                       padding: const EdgeInsets.all(16),
@@ -164,9 +159,9 @@ class _ResetPasswordNewPasswordScreenState
                                       : Icons.visibility,
                                 ),
                                 onPressed: () {
-                                  setState(
-                                    () => obscurePassword = !obscurePassword,
-                                  );
+                                  setState(() {
+                                    obscurePassword = !obscurePassword;
+                                  });
                                 },
                               ),
                             ),
@@ -175,7 +170,6 @@ class _ResetPasswordNewPasswordScreenState
                             textInputAction: TextInputAction.next,
                           ),
                           const SizedBox(height: 16),
-
                           TextFormField(
                             controller: confirmController,
                             obscureText: obscureConfirm,
@@ -189,19 +183,20 @@ class _ResetPasswordNewPasswordScreenState
                                       : Icons.visibility,
                                 ),
                                 onPressed: () {
-                                  setState(
-                                    () => obscureConfirm = !obscureConfirm,
-                                  );
+                                  setState(() {
+                                    obscureConfirm = !obscureConfirm;
+                                  });
                                 },
                               ),
                             ),
                             validator: confirmValidator,
                             enabled: !loading,
                             textInputAction: TextInputAction.done,
-                            onFieldSubmitted: (_) => submit(),
+                            onFieldSubmitted: (_) {
+                              if (!loading) submit();
+                            },
                           ),
                           const SizedBox(height: 18),
-
                           SizedBox(
                             width: double.infinity,
                             child: ElevatedButton(
@@ -218,9 +213,7 @@ class _ResetPasswordNewPasswordScreenState
                                       : const Text('حفظ كلمة المرور'),
                             ),
                           ),
-
                           const SizedBox(height: 8),
-
                           TextButton(
                             onPressed:
                                 loading ? null : () => context.go('/login'),

@@ -1,77 +1,99 @@
 import 'dart:convert';
 
+import '/utils/api_exception.dart';
 import 'auth_service.dart';
 
 class AdminUserService {
   final AuthService authService = AuthService();
 
-  /// جلب جميع المستخدمين
-  Future<List<Map<String, dynamic>>> fetchAllUsers() async {
-    final response = await authService.authorizedRequest("/users/", "GET");
+  // ----------------------------
+  // Helpers
+  // ----------------------------
 
-    if (response.statusCode == 200) {
-      final List<dynamic> data = jsonDecode(response.body);
+  List<Map<String, dynamic>> _decodeList(String body) {
+    final dynamic data = jsonDecode(body);
+
+    // أغلب endpoints هنا ترجع List مباشرة
+    if (data is List) {
       return data.cast<Map<String, dynamic>>();
     }
 
-    throw Exception('Failed to load users: ${response.statusCode}');
+    // احتياط لو رجع Pagination
+    if (data is Map && data['results'] is List) {
+      return (data['results'] as List).cast<Map<String, dynamic>>();
+    }
+
+    return <Map<String, dynamic>>[];
+  }
+
+  // ----------------------------
+  // Users
+  // ----------------------------
+
+  /// جلب جميع المستخدمين
+  Future<List<Map<String, dynamic>>> fetchAllUsers() async {
+    final response = await authService.authorizedRequestOrThrow(
+      "/users/",
+      "GET",
+    );
+    return _decodeList(response.body);
   }
 
   /// جلب المرضى فقط
   Future<List<Map<String, dynamic>>> fetchPatients() async {
-    final response = await authService.authorizedRequest("/patients/", "GET");
-
-    if (response.statusCode == 200) {
-      final List<dynamic> data = jsonDecode(response.body);
-      return data.cast<Map<String, dynamic>>();
-    }
-
-    throw Exception('Failed to load patients: ${response.statusCode}');
+    final response = await authService.authorizedRequestOrThrow(
+      "/patients/",
+      "GET",
+    );
+    return _decodeList(response.body);
   }
 
   /// جلب الأطباء فقط
   Future<List<Map<String, dynamic>>> fetchDoctors() async {
-    final response = await authService.authorizedRequest("/doctors/", "GET");
-
-    if (response.statusCode == 200) {
-      final List<dynamic> data = jsonDecode(response.body);
-      return data.cast<Map<String, dynamic>>();
-    }
-
-    throw Exception('Failed to load doctors: ${response.statusCode}');
+    final response = await authService.authorizedRequestOrThrow(
+      "/doctors/",
+      "GET",
+    );
+    return _decodeList(response.body);
   }
 
   /// تعطيل مستخدم
   Future<bool> deactivateUser(int userId) async {
-    final response = await authService.authorizedRequest(
-      "/users/$userId/deactivate/",
-      "POST",
-    );
-    return response.statusCode == 200;
+    try {
+      await authService.authorizedRequestOrThrow(
+        "/users/$userId/deactivate/",
+        "POST",
+      );
+      return true;
+    } on ApiException {
+      return false;
+    }
   }
 
   /// تفعيل مستخدم
   Future<bool> activateUser(int userId) async {
-    final response = await authService.authorizedRequest(
-      "/users/$userId/activate/",
-      "POST",
-    );
-    return response.statusCode == 200;
+    try {
+      await authService.authorizedRequestOrThrow(
+        "/users/$userId/activate/",
+        "POST",
+      );
+      return true;
+    } on ApiException {
+      return false;
+    }
   }
+
+  // ----------------------------
+  // Account deletion requests (Admin)
+  // ----------------------------
 
   /// جلب جميع طلبات حذف الحساب (للأدمن)
   Future<List<Map<String, dynamic>>> fetchDeletionRequests() async {
-    final response = await authService.authorizedRequest(
+    final response = await authService.authorizedRequestOrThrow(
       "/account-deletion/requests/",
       "GET",
     );
-
-    if (response.statusCode == 200) {
-      final List<dynamic> data = jsonDecode(response.body);
-      return data.cast<Map<String, dynamic>>();
-    }
-
-    throw Exception('Failed to load deletion requests: ${response.statusCode}');
+    return _decodeList(response.body);
   }
 
   /// الموافقة على طلب حذف حساب
@@ -79,29 +101,39 @@ class AdminUserService {
     int requestId, {
     String? adminNote,
   }) async {
-    final response = await authService.authorizedRequest(
-      "/account-deletion/requests/$requestId/approve/",
-      "POST",
-      body:
-          adminNote != null && adminNote.trim().isNotEmpty
-              ? {"admin_note": adminNote.trim()}
-              : {},
-    );
+    final Map<String, dynamic> body =
+        adminNote != null && adminNote.trim().isNotEmpty
+            ? {"admin_note": adminNote.trim()}
+            : <String, dynamic>{};
 
-    return response.statusCode == 200;
+    try {
+      await authService.authorizedRequestOrThrow(
+        "/account-deletion/requests/$requestId/approve/",
+        "POST",
+        body: body,
+      );
+      return true;
+    } on ApiException {
+      return false;
+    }
   }
 
   /// رفض طلب حذف حساب
   Future<bool> rejectDeletionRequest(int requestId, {String? adminNote}) async {
-    final response = await authService.authorizedRequest(
-      "/account-deletion/requests/$requestId/reject/",
-      "POST",
-      body:
-          adminNote != null && adminNote.trim().isNotEmpty
-              ? {"admin_note": adminNote.trim()}
-              : {},
-    );
+    final Map<String, dynamic> body =
+        adminNote != null && adminNote.trim().isNotEmpty
+            ? {"admin_note": adminNote.trim()}
+            : <String, dynamic>{};
 
-    return response.statusCode == 200;
+    try {
+      await authService.authorizedRequestOrThrow(
+        "/account-deletion/requests/$requestId/reject/",
+        "POST",
+        body: body,
+      );
+      return true;
+    } on ApiException {
+      return false;
+    }
   }
 }

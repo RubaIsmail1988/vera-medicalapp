@@ -147,24 +147,20 @@ class _OrdersTabState extends State<OrdersTab> {
       return filtered;
     }
 
-    if (response.statusCode == 401) {
-      throw _HttpException(401, "انتهت الجلسة، يرجى تسجيل الدخول مجددًا.");
-    }
-
-    if (response.statusCode == 403) {
-      throw _HttpException(403, "لا تملك الصلاحية لعرض الطلبات.");
-    }
-
+    // Fetch error: throw "mapped" message (يتم تحويله إلى Inline بالـ UI)
+    Object? body;
     try {
-      final body = jsonDecode(response.body);
-      final detail =
-          body is Map && body["detail"] != null
-              ? body["detail"].toString()
-              : null;
-      throw _HttpException(response.statusCode, detail ?? "حدث خطأ غير متوقع.");
+      body = jsonDecode(response.body);
     } catch (_) {
-      throw _HttpException(response.statusCode, "حدث خطأ غير متوقع.");
+      body = response.body;
     }
+
+    final message = mapHttpErrorToArabicMessage(
+      statusCode: response.statusCode,
+      data: body,
+    );
+
+    throw Exception(message);
   }
 
   Future<void> _reload() async {
@@ -175,7 +171,7 @@ class _OrdersTabState extends State<OrdersTab> {
   }
 
   Future<void> _createOrderFlow() async {
-    // هذا التحقق يبقى موجودًا كحماية ثانية (حتى لو أخفينا الزر)
+    // Action guard (SnackBar مسموح)
     if (!isDoctor) {
       showAppSnackBar(
         context,
@@ -222,42 +218,15 @@ class _OrdersTabState extends State<OrdersTab> {
       return;
     }
 
-    if (response.statusCode == 401) {
-      showAppSnackBar(
-        context,
-        "انتهت الجلسة، يرجى تسجيل الدخول مجددًا.",
-        type: AppSnackBarType.error,
-      );
-      return;
-    }
-
-    if (response.statusCode == 403) {
-      showAppSnackBar(
-        context,
-        "لا تملك الصلاحية لإنشاء طلب.",
-        type: AppSnackBarType.error,
-      );
-      return;
-    }
-
+    // Action error: SnackBar موحّد عبر ui_helpers
+    Object? body;
     try {
-      final decoded = jsonDecode(response.body);
-      final detail =
-          decoded is Map && decoded["detail"] != null
-              ? decoded["detail"].toString()
-              : null;
-      showAppSnackBar(
-        context,
-        detail ?? "فشل إنشاء الطلب (${response.statusCode}).",
-        type: AppSnackBarType.error,
-      );
+      body = jsonDecode(response.body);
     } catch (_) {
-      showAppSnackBar(
-        context,
-        "فشل إنشاء الطلب (${response.statusCode}).",
-        type: AppSnackBarType.error,
-      );
+      body = response.body;
     }
+
+    showApiErrorSnackBar(context, statusCode: response.statusCode, data: body);
   }
 
   String _buildQuery({int? patientId, int? appointmentId, String? role}) {
@@ -323,37 +292,24 @@ class _OrdersTabState extends State<OrdersTab> {
                 return const Center(child: CircularProgressIndicator());
               }
 
+              // Fetch error (Inline only)
               if (snapshot.hasError) {
-                final err = snapshot.error;
-                var message = "حدث خطأ.";
-                if (err is _HttpException) message = err.message;
+                final mapped = mapFetchExceptionToInlineState(snapshot.error!);
 
-                return Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(Icons.error_outline, size: 40),
-                        const SizedBox(height: 12),
-                        Text(message, textAlign: TextAlign.center),
-                        const SizedBox(height: 16),
-                        ElevatedButton.icon(
-                          onPressed: () async {
-                            await _reload();
-                            if (!mounted) return;
-                            showAppSnackBar(
-                              // ignore: use_build_context_synchronously
-                              context,
-                              "تمت إعادة المحاولة.",
-                              type: AppSnackBarType.info,
-                            );
-                          },
-                          icon: const Icon(Icons.refresh),
-                          label: const Text("إعادة المحاولة"),
-                        ),
-                      ],
-                    ),
+                return RefreshIndicator(
+                  onRefresh: _reload,
+                  child: ListView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    children: [
+                      const SizedBox(height: 80),
+                      AppInlineErrorState(
+                        title: mapped.title,
+                        message: mapped.message,
+                        icon: mapped.icon,
+                        onRetry: _reload,
+                      ),
+                      const SizedBox(height: 40),
+                    ],
                   ),
                 );
               }
@@ -361,17 +317,26 @@ class _OrdersTabState extends State<OrdersTab> {
               final orders = snapshot.data ?? [];
 
               if (orders.isEmpty) {
-                return Center(
-                  child: Text(
-                    hasApptFilter
-                        ? "لا توجد طلبات مرتبطة بهذا الموعد."
-                        : "لا توجد طلبات حتى الآن.",
+                return RefreshIndicator(
+                  onRefresh: _reload,
+                  child: ListView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    children: [
+                      const SizedBox(height: 140),
+                      Center(
+                        child: Text(
+                          hasApptFilter
+                              ? "لا توجد طلبات مرتبطة بهذا الموعد."
+                              : "لا توجد طلبات حتى الآن.",
+                        ),
+                      ),
+                    ],
                   ),
                 );
               }
 
               return RefreshIndicator(
-                onRefresh: () async => _reload(),
+                onRefresh: _reload,
                 child: ListView.separated(
                   padding: const EdgeInsets.all(12),
                   itemCount: orders.length,
@@ -439,7 +404,7 @@ class _OrdersTabState extends State<OrdersTab> {
                           if (oid == null) {
                             showAppSnackBar(
                               context,
-                              "Invalid order id.",
+                              "معرّف الطلب غير صالح.",
                               type: AppSnackBarType.error,
                             );
                             return;
@@ -457,16 +422,6 @@ class _OrdersTabState extends State<OrdersTab> {
       ],
     );
   }
-}
-
-class _HttpException implements Exception {
-  final int statusCode;
-  final String message;
-
-  _HttpException(this.statusCode, this.message);
-
-  @override
-  String toString() => "HTTP $statusCode: $message";
 }
 
 class _CreateOrderPayload {

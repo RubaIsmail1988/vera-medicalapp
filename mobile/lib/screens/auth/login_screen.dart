@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import '../../services/auth_service.dart';
 import '../../utils/ui_helpers.dart';
 import '../../widgets/app_logo.dart';
+import '../../main.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -64,74 +65,81 @@ class _LoginScreenState extends State<LoginScreen> {
 
     setState(() => loading = true);
 
-    final result = await authService.login(
-      emailController.text.trim(),
-      passwordController.text.trim(),
-    );
-
-    if (!mounted) return;
-
-    setState(() => loading = false);
-
-    if (result == null) {
-      showAppSnackBar(
-        context,
-        'البريد الإلكتروني أو كلمة المرور غير صحيحة',
-        type: AppSnackBarType.error,
+    try {
+      final result = await authService.login(
+        emailController.text.trim(),
+        passwordController.text.trim(),
       );
-      return;
-    }
 
-    final data = result;
+      if (!mounted) return;
 
-    if (data['error'] == 'not_active') {
-      context.go('/waiting-activation');
-      return;
-    }
+      if (result == null) {
+        setState(() => loading = false);
+        showAppErrorSnackBar(
+          context,
+          'البريد الإلكتروني أو كلمة المرور غير صحيحة',
+        );
+        return;
+      }
 
-    final String role = (data['role'] ?? '').toString();
-    final bool isActive = data['is_active'] == true;
+      final data = result;
 
-    final dynamic rawUserId = data['user_id'];
-    final int userId =
-        rawUserId is int
-            ? rawUserId
-            : int.tryParse(rawUserId?.toString() ?? '') ?? 0;
+      if (data['error'] == 'not_active') {
+        setState(() => loading = false);
+        context.go('/waiting-activation');
+        return;
+      }
 
-    final String accessToken = (data['access_token'] ?? '').toString();
+      final String role = (data['role'] ?? '').toString();
+      final bool isActive = data['is_active'] == true;
 
-    if (!isActive) {
-      context.go('/waiting-activation');
-      return;
-    }
+      final dynamic rawUserId = data['user_id'];
+      final int userId =
+          rawUserId is int
+              ? rawUserId
+              : int.tryParse(rawUserId?.toString() ?? '') ?? 0;
 
-    if (accessToken.isEmpty || userId == 0 || role.isEmpty) {
-      showAppSnackBar(
+      final String accessToken = (data['access_token'] ?? '').toString();
+
+      if (!isActive) {
+        setState(() => loading = false);
+        context.go('/waiting-activation');
+        return;
+      }
+
+      if (accessToken.isEmpty || userId == 0 || role.isEmpty) {
+        setState(() => loading = false);
+        showAppSnackBar(
+          context,
+          'الاستجابة من الخادم غير مكتملة، حاول مرة أخرى',
+          type: AppSnackBarType.warning,
+        );
+        return;
+      }
+
+      await authService.fetchAndStoreCurrentUser();
+      if (!mounted) return;
+
+      await MyApp.of(context).maybeStartPolling();
+      if (!mounted) return;
+      setState(() => loading = false);
+
+      if (role == 'admin') {
+        context.go('/admin');
+        return;
+      }
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() => loading = false);
+
+      // Action => SnackBar موحّد (بدون تسريب تفاصيل Exception)
+      showActionErrorSnackBar(
         context,
-        'الاستجابة من الخادم غير مكتملة، حاول مرة أخرى',
-        type: AppSnackBarType.warning,
+        exception: e,
+        fallback: 'تعذّر تسجيل الدخول. حاول مرة أخرى.',
       );
-      return;
     }
-
-    await authService.fetchAndStoreCurrentUser();
-    if (!mounted) return;
-
-    if (role == 'admin') {
-      context.go('/admin');
-      return;
-    }
-
-    if (role == 'patient' || role == 'doctor') {
-      context.go('/app');
-      return;
-    }
-
-    showAppSnackBar(
-      context,
-      'دور مستخدم غير معروف: $role',
-      type: AppSnackBarType.error,
-    );
   }
 
   @override
@@ -159,7 +167,6 @@ class _LoginScreenState extends State<LoginScreen> {
                 children: [
                   const AppLogo(width: 220),
                   const SizedBox(height: 18),
-
                   Text(
                     'مرحباً بعودتك',
                     style: Theme.of(context).textTheme.titleLarge?.copyWith(
@@ -173,9 +180,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       color: cs.onSurface.withValues(alpha: 0.72),
                     ),
                   ),
-
                   const SizedBox(height: 16),
-
                   Card(
                     child: Padding(
                       padding: const EdgeInsets.all(16),
@@ -192,7 +197,6 @@ class _LoginScreenState extends State<LoginScreen> {
                             textInputAction: TextInputAction.next,
                           ),
                           const SizedBox(height: 16),
-
                           TextFormField(
                             controller: passwordController,
                             decoration: InputDecoration(
@@ -222,7 +226,6 @@ class _LoginScreenState extends State<LoginScreen> {
                             },
                           ),
                           const SizedBox(height: 18),
-
                           SizedBox(
                             width: double.infinity,
                             child: ElevatedButton(
@@ -239,9 +242,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                       : const Text('تسجيل الدخول'),
                             ),
                           ),
-
                           const SizedBox(height: 16),
-
                           Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [

@@ -8,16 +8,7 @@ import '../models/doctor_search_result.dart';
 import '../services/auth_service.dart';
 import '../utils/constants.dart';
 import '../services/local_notifications_service.dart';
-
-class ApiException implements Exception {
-  final int statusCode;
-  final String body;
-
-  ApiException(this.statusCode, this.body);
-
-  @override
-  String toString() => "ApiException($statusCode): $body";
-}
+import '/utils/api_exception.dart';
 
 class AppointmentsService {
   final AuthService authService = AuthService();
@@ -52,38 +43,50 @@ class AppointmentsService {
         if (extraHeaders != null) ...extraHeaders,
       };
 
-      switch (method.toUpperCase()) {
-        case "GET":
-          return http.get(url, headers: headers);
-        case "POST":
-          return http.post(
-            url,
-            headers: headers,
-            body: body != null ? jsonEncode(body) : null,
-          );
-        case "PUT":
-          return http.put(
-            url,
-            headers: headers,
-            body: body != null ? jsonEncode(body) : null,
-          );
-        case "PATCH":
-          return http.patch(
-            url,
-            headers: headers,
-            body: body != null ? jsonEncode(body) : null,
-          );
-        case "DELETE":
-          return http.delete(url, headers: headers);
-        default:
-          throw Exception("Invalid HTTP method: $method");
+      try {
+        switch (method.toUpperCase()) {
+          case "GET":
+            return http.get(url, headers: headers);
+          case "POST":
+            return http.post(
+              url,
+              headers: headers,
+              body: body != null ? jsonEncode(body) : null,
+            );
+          case "PUT":
+            return http.put(
+              url,
+              headers: headers,
+              body: body != null ? jsonEncode(body) : null,
+            );
+          case "PATCH":
+            return http.patch(
+              url,
+              headers: headers,
+              body: body != null ? jsonEncode(body) : null,
+            );
+          case "DELETE":
+            return http.delete(url, headers: headers);
+          default:
+            throw ApiException(400, "Invalid HTTP method: $method");
+        }
+      } catch (e) {
+        if (ApiExceptionUtils.isNetworkException(e)) {
+          throw ApiExceptionUtils.network(e);
+        }
+        rethrow;
       }
     }
 
     String? token = await authService.getAccessToken();
 
+    // إذا لا يوجد توكن أصلًا → جرّب refresh
     if (token == null) {
-      await authService.refreshToken();
+      try {
+        await authService.refreshToken();
+      } catch (_) {
+        // تجاهل: ممكن يكون لا إنترنت أو refresh فشل
+      }
       token = await authService.getAccessToken();
     }
 
@@ -94,7 +97,13 @@ class AppointmentsService {
     final first = await send(token);
 
     if (first.statusCode == 401) {
-      await authService.refreshToken();
+      try {
+        await authService.refreshToken();
+      } catch (_) {
+        // إذا refresh فشل نرجع نفس النتيجة
+        return first;
+      }
+
       final newToken = await authService.getAccessToken();
       if (newToken == null) return first;
       return send(newToken);
@@ -140,7 +149,7 @@ class AppointmentsService {
   Map<String, dynamic> _asMap(dynamic decoded) {
     if (decoded is Map<String, dynamic>) return decoded;
     if (decoded is Map) return Map<String, dynamic>.from(decoded);
-    throw Exception("Unexpected response format.");
+    throw const ApiException(500, "Unexpected response format.");
   }
 
   // ---------------- API methods ----------------
@@ -189,7 +198,7 @@ class AppointmentsService {
     final decoded = jsonDecode(resp.body);
     if (decoded is Map<String, dynamic>) return decoded;
 
-    throw Exception("Unexpected response format.");
+    throw const ApiException(500, "Unexpected response format.");
   }
 
   Future<Appointment> createAppointment({
@@ -236,7 +245,7 @@ class AppointmentsService {
     final decoded = jsonDecode(resp.body);
     if (decoded is Map<String, dynamic>) return decoded;
 
-    throw Exception("Unexpected response format.");
+    throw const ApiException(500, "Unexpected response format.");
   }
 
   Future<List<Appointment>> fetchMyAppointments({
@@ -566,7 +575,7 @@ class AppointmentsService {
           .toList();
     }
 
-    throw Exception("Unexpected response format.");
+    throw const ApiException(500, "Unexpected response format.");
   }
 
   Future<DoctorAbsenceDto> createDoctorAbsence({

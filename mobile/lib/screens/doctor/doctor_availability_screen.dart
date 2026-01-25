@@ -84,6 +84,11 @@ class DoctorAvailabilityScreenState extends State<DoctorAvailabilityScreen> {
     setState(() => errorMessage = msg);
   }
 
+  int _dayIndex(String dayEn) {
+    final idx = daysEn.indexOf(dayEn);
+    return idx == -1 ? 999 : idx;
+  }
+
   // -------------------------------
   // Data
   // -------------------------------
@@ -96,8 +101,13 @@ class DoctorAvailabilityScreenState extends State<DoctorAvailabilityScreen> {
       final result = await service.fetchMine();
       if (!mounted) return;
 
+      final sorted = [...result];
+      sorted.sort(
+        (a, b) => _dayIndex(a.dayOfWeek).compareTo(_dayIndex(b.dayOfWeek)),
+      );
+
       setState(() {
-        items = result;
+        items = sorted;
         errorMessage = null;
       });
     } catch (_) {
@@ -215,7 +225,6 @@ class DoctorAvailabilityScreenState extends State<DoctorAvailabilityScreen> {
                     ),
                     const SizedBox(height: 12),
 
-                    // بداية (يمين) - نهاية (يسار)
                     Row(
                       children: [
                         Expanded(
@@ -250,7 +259,6 @@ class DoctorAvailabilityScreenState extends State<DoctorAvailabilityScreen> {
                   ],
                 ),
                 actions: [
-                  // في RTL: نحافظ على "إلغاء" يسار و"حفظ" يمين عبر وضع "إلغاء" أولاً.
                   TextButton(
                     onPressed: () => Navigator.pop(dialogContext),
                     child: const Text("إلغاء"),
@@ -296,6 +304,17 @@ class DoctorAvailabilityScreenState extends State<DoctorAvailabilityScreen> {
     final result = await openAvailabilityDialog(isEdit: false);
     if (result == null) return;
 
+    // حماية إضافية: لا تضيف يوم موجود (حتى لو صار bug بالـ UI/API)
+    if (isDayConfigured(result.dayOfWeek)) {
+      showAppSnackBar(
+        // ignore: use_build_context_synchronously
+        context,
+        "هذا اليوم مضاف مسبقًا.",
+        type: AppSnackBarType.warning,
+      );
+      return;
+    }
+
     setLoading(true);
 
     try {
@@ -315,13 +334,12 @@ class DoctorAvailabilityScreenState extends State<DoctorAvailabilityScreen> {
       await loadData();
     } catch (_) {
       if (!mounted) return;
-
       showAppSnackBar(
         context,
         "فشل حفظ الدوام. حاول مرة أخرى.",
         type: AppSnackBarType.error,
       );
-
+    } finally {
       setLoading(false);
     }
   }
@@ -349,13 +367,12 @@ class DoctorAvailabilityScreenState extends State<DoctorAvailabilityScreen> {
       await loadData();
     } catch (_) {
       if (!mounted) return;
-
       showAppSnackBar(
         context,
         "فشل تحديث الدوام. حاول مرة أخرى.",
         type: AppSnackBarType.error,
       );
-
+    } finally {
       setLoading(false);
     }
   }
@@ -388,13 +405,12 @@ class DoctorAvailabilityScreenState extends State<DoctorAvailabilityScreen> {
       await loadData();
     } catch (_) {
       if (!mounted) return;
-
       showAppSnackBar(
         context,
         "فشل حذف الدوام. حاول مرة أخرى.",
         type: AppSnackBarType.error,
       );
-
+    } finally {
       setLoading(false);
     }
   }

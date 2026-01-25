@@ -5,8 +5,7 @@ import '/models/patient_details.dart';
 import '/utils/ui_helpers.dart';
 
 class EditPatientDetailsScreen extends StatefulWidget {
-  final String
-  token; // غير مستخدم مباشرة (DetailsService يعتمد على التوكن المخزن)
+  final String token; // legacy
   final int userId;
 
   final String dateOfBirth;
@@ -56,11 +55,8 @@ class _EditPatientDetailsScreenState extends State<EditPatientDetailsScreen> {
     notesController = TextEditingController(text: widget.healthNotes ?? '');
     bmi = widget.bmi;
 
-    // تحديث BMI عند تغير الطول/الوزن بدون استدعاء داخل build
     heightController.addListener(_recalcBmi);
     weightController.addListener(_recalcBmi);
-
-    // حساب أولي (مرة واحدة)
     _recalcBmi();
   }
 
@@ -88,8 +84,8 @@ class _EditPatientDetailsScreenState extends State<EditPatientDetailsScreen> {
   }
 
   Future<void> submitUpdate() async {
-    if (!formKey.currentState!.validate()) return;
     if (loading) return;
+    if (!formKey.currentState!.validate()) return;
 
     setState(() => loading = true);
 
@@ -99,38 +95,32 @@ class _EditPatientDetailsScreenState extends State<EditPatientDetailsScreen> {
       height: double.tryParse(heightController.text.trim()),
       weight: double.tryParse(weightController.text.trim()),
       bmi: bmi,
-      healthNotes: notesController.text.trim(),
+      healthNotes:
+          notesController.text.trim().isEmpty
+              ? null
+              : notesController.text.trim(),
     );
 
     try {
-      final response = await DetailsService().updatePatientDetails(request);
+      await DetailsService().updatePatientDetails(request);
 
       if (!mounted) return;
       setState(() => loading = false);
 
-      if (response.statusCode == 200) {
-        showAppSnackBar(
-          context,
-          'تم تحديث البيانات بنجاح',
-          type: AppSnackBarType.success,
-        );
-        Navigator.pop(context, true);
-        return;
-      }
-
       showAppSnackBar(
         context,
-        'فشل التحديث: ${response.body}',
-        type: AppSnackBarType.error,
+        'تم تحديث البيانات بنجاح',
+        type: AppSnackBarType.success,
       );
+      Navigator.pop(context, true);
     } catch (e) {
       if (!mounted) return;
       setState(() => loading = false);
 
-      showAppSnackBar(
+      showActionErrorSnackBar(
         context,
-        'تعذّر الاتصال بالخادم. حاول لاحقاً.',
-        type: AppSnackBarType.error,
+        exception: e,
+        fallback: 'فشل تحديث بيانات المريض.',
       );
     }
   }
@@ -149,6 +139,7 @@ class _EditPatientDetailsScreenState extends State<EditPatientDetailsScreen> {
             children: [
               TextFormField(
                 controller: dobController,
+                enabled: !loading,
                 decoration: const InputDecoration(
                   labelText: 'تاريخ الميلاد (YYYY-MM-DD)',
                 ),
@@ -160,6 +151,7 @@ class _EditPatientDetailsScreenState extends State<EditPatientDetailsScreen> {
 
               TextFormField(
                 controller: heightController,
+                enabled: !loading,
                 decoration: const InputDecoration(labelText: 'الطول (سم)'),
                 keyboardType: TextInputType.number,
                 validator:
@@ -170,6 +162,7 @@ class _EditPatientDetailsScreenState extends State<EditPatientDetailsScreen> {
 
               TextFormField(
                 controller: weightController,
+                enabled: !loading,
                 decoration: const InputDecoration(labelText: 'الوزن (كغ)'),
                 keyboardType: TextInputType.number,
                 validator:
@@ -196,6 +189,7 @@ class _EditPatientDetailsScreenState extends State<EditPatientDetailsScreen> {
 
               TextFormField(
                 controller: notesController,
+                enabled: !loading,
                 decoration: const InputDecoration(labelText: 'ملاحظات صحية'),
                 maxLines: 4,
               ),

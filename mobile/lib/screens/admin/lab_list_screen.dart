@@ -60,14 +60,15 @@ class _LabListScreenState extends State<LabListScreen> {
         governorateNamesById = {for (final g in items) g.id: g.name};
         loadingGovernorates = false;
       });
-    } catch (_) {
+    } catch (e) {
       if (!mounted) return;
       setState(() => loadingGovernorates = false);
 
-      showAppSnackBar(
+      // Fetch => نعرض رسالة واضحة موحّدة بدون تفاصيل
+      showActionErrorSnackBar(
         context,
-        'فشل تحميل المحافظات.',
-        type: AppSnackBarType.error,
+        exception: e,
+        fallback: 'فشل تحميل المحافظات.',
       );
     }
   }
@@ -90,17 +91,28 @@ class _LabListScreenState extends State<LabListScreen> {
 
     if (!confirmed) return;
 
-    final success = await labService.deleteLab(lab.id!);
-    if (!mounted) return;
+    try {
+      final success = await labService.deleteLab(lab.id!);
+      if (!mounted) return;
 
-    showAppSnackBar(
-      context,
-      success ? 'تم حذف المخبر بنجاح.' : 'فشل حذف المخبر.',
-      type: success ? AppSnackBarType.success : AppSnackBarType.error,
-    );
+      showAppSnackBar(
+        context,
+        success ? 'تم حذف المخبر بنجاح.' : 'فشل حذف المخبر.',
+        type: success ? AppSnackBarType.success : AppSnackBarType.error,
+      );
 
-    if (success) {
-      await refresh();
+      if (success) {
+        await refresh();
+      }
+    } catch (e) {
+      if (!mounted) return;
+
+      // Action => SnackBar موحّد
+      showActionErrorSnackBar(
+        context,
+        exception: e,
+        fallback: 'تعذّر حذف المخبر.',
+      );
     }
   }
 
@@ -191,6 +203,7 @@ class _LabListScreenState extends State<LabListScreen> {
                   }
 
                   if (snapshot.hasError) {
+                    // Fetch => Inline (بدون SnackBar)
                     return _CenteredStatus(
                       icon: Icons.error_outline,
                       title: 'تعذّر تحميل المخابر.',

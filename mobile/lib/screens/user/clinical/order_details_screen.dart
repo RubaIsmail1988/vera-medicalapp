@@ -1,3 +1,4 @@
+// lib/screens/user/clinical/order_details_screen.dart
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -35,11 +36,7 @@ class OrderDetailsScreen extends StatefulWidget {
 class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
   late final ClinicalService clinicalService;
 
-  bool loading = true;
-  String? errorMessage;
-
-  Map<String, dynamic>? order;
-  List<Map<String, dynamic>> files = [];
+  late Future<_OrderDetailsVM> detailsFuture;
 
   bool get isDoctor => widget.role.trim().toLowerCase() == "doctor";
   bool get isPatient => !isDoctor;
@@ -48,98 +45,48 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
   void initState() {
     super.initState();
     clinicalService = ClinicalService(authService: AuthService());
-    _loadAll();
+    detailsFuture = _loadAll();
   }
 
-  Future<void> _loadAll() async {
+  Future<void> _reload() async {
     if (!mounted) return;
     setState(() {
-      loading = true;
-      errorMessage = null;
+      detailsFuture = _loadAll();
     });
+    await detailsFuture;
+  }
 
+  Future<_OrderDetailsVM> _loadAll() async {
     final orderRes = await clinicalService.getOrderDetails(widget.orderId);
-    if (!mounted) return;
 
-    if (orderRes.statusCode == 401) {
-      final msg = "انتهت الجلسة، يرجى تسجيل الدخول مجددًا.";
-      setState(() {
-        loading = false;
-        errorMessage = msg;
-      });
-      showAppSnackBar(context, msg, type: AppSnackBarType.error);
-      return;
+    if (orderRes.statusCode == 200) {
+      final decoded = jsonDecode(orderRes.body);
+      final Map<String, dynamic> orderJson =
+          decoded is Map
+              ? Map<String, dynamic>.from(decoded)
+              : <String, dynamic>{};
+
+      final filesRes = await clinicalService.listOrderFiles(widget.orderId);
+
+      if (filesRes.statusCode == 200) {
+        final decodedFiles = jsonDecode(filesRes.body);
+        final List<Map<String, dynamic>> filesList =
+            decodedFiles is List
+                ? decodedFiles
+                    .whereType<Map>()
+                    .map((e) => Map<String, dynamic>.from(e))
+                    .toList()
+                : <Map<String, dynamic>>[];
+
+        return _OrderDetailsVM(order: orderJson, files: filesList);
+      }
+
+      // Fetch error (files) -> throw for inline state (NO snackbar)
+      throw _HttpException(filesRes.statusCode, filesRes.body);
     }
 
-    if (orderRes.statusCode == 403) {
-      final msg = "لا تملك الصلاحية لعرض تفاصيل هذا الطلب.";
-      setState(() {
-        loading = false;
-        errorMessage = msg;
-      });
-      showAppSnackBar(context, msg, type: AppSnackBarType.error);
-      return;
-    }
-
-    if (orderRes.statusCode != 200) {
-      final msg = "فشل تحميل تفاصيل الطلب (${orderRes.statusCode}).";
-      setState(() {
-        loading = false;
-        errorMessage = msg;
-      });
-      showAppSnackBar(context, msg, type: AppSnackBarType.error);
-      return;
-    }
-
-    final Map<String, dynamic> orderJson =
-        jsonDecode(orderRes.body) as Map<String, dynamic>;
-
-    final filesRes = await clinicalService.listOrderFiles(widget.orderId);
-    if (!mounted) return;
-
-    if (filesRes.statusCode == 401) {
-      final msg = "انتهت الجلسة، يرجى تسجيل الدخول مجددًا.";
-      setState(() {
-        loading = false;
-        errorMessage = msg;
-      });
-      showAppSnackBar(context, msg, type: AppSnackBarType.error);
-      return;
-    }
-
-    if (filesRes.statusCode == 403) {
-      final msg = "لا تملك الصلاحية لعرض ملفات هذا الطلب.";
-      setState(() {
-        loading = false;
-        errorMessage = msg;
-      });
-      showAppSnackBar(context, msg, type: AppSnackBarType.error);
-      return;
-    }
-
-    if (filesRes.statusCode != 200) {
-      final msg = "فشل تحميل الملفات (${filesRes.statusCode}).";
-      setState(() {
-        loading = false;
-        errorMessage = msg;
-      });
-      showAppSnackBar(context, msg, type: AppSnackBarType.error);
-      return;
-    }
-
-    final decodedFiles = jsonDecode(filesRes.body);
-    final List<Map<String, dynamic>> filesList =
-        decodedFiles is List
-            ? decodedFiles.cast<Map<String, dynamic>>()
-            : <Map<String, dynamic>>[];
-
-    if (!mounted) return;
-    setState(() {
-      order = orderJson;
-      files = filesList;
-      loading = false;
-      errorMessage = null;
-    });
+    // Fetch error (order) -> throw for inline state (NO snackbar)
+    throw _HttpException(orderRes.statusCode, orderRes.body);
   }
 
   // ---------------- Helpers ----------------
@@ -194,7 +141,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
   bool _isPdf(String nameOrUrl) => nameOrUrl.toLowerCase().endsWith(".pdf");
   bool _isDicom(String nameOrUrl) => nameOrUrl.toLowerCase().endsWith(".dcm");
 
-  Map<String, int> _filesSummary() {
+  Map<String, int> _filesSummary(List<Map<String, dynamic>> files) {
     var pending = 0;
     var approved = 0;
     var rejected = 0;
@@ -290,18 +237,23 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
 
     if (res.statusCode == 200) {
       showAppSnackBar(context, "تمت الموافقة.", type: AppSnackBarType.success);
-      await _loadAll();
+      await _reload();
       return;
     }
 
-    final msg =
-        (res.statusCode == 401)
-            ? "انتهت الجلسة، يرجى تسجيل الدخول مجددًا."
-            : (res.statusCode == 403)
-            ? "لا تملك الصلاحية لمراجعة هذا الملف."
-            : "فشل العملية (${res.statusCode}).";
+    Object? decoded;
+    try {
+      decoded = jsonDecode(res.body);
+    } catch (_) {
+      decoded = res.body;
+    }
 
-    showAppSnackBar(context, msg, type: AppSnackBarType.error);
+    showActionErrorSnackBar(
+      context,
+      statusCode: res.statusCode,
+      data: decoded,
+      fallback: "فشل العملية.",
+    );
   }
 
   Future<void> _rejectFile(int fileId) async {
@@ -328,18 +280,23 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
 
     if (res.statusCode == 200) {
       showAppSnackBar(context, "تم الرفض.", type: AppSnackBarType.success);
-      await _loadAll();
+      await _reload();
       return;
     }
 
-    final msg =
-        (res.statusCode == 401)
-            ? "انتهت الجلسة، يرجى تسجيل الدخول مجددًا."
-            : (res.statusCode == 403)
-            ? "لا تملك الصلاحية لمراجعة هذا الملف."
-            : "فشل العملية (${res.statusCode}).";
+    Object? decoded;
+    try {
+      decoded = jsonDecode(res.body);
+    } catch (_) {
+      decoded = res.body;
+    }
 
-    showAppSnackBar(context, msg, type: AppSnackBarType.error);
+    showActionErrorSnackBar(
+      context,
+      statusCode: res.statusCode,
+      data: decoded,
+      fallback: "فشل العملية.",
+    );
   }
 
   void _goBackSmart() {
@@ -371,21 +328,6 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final o = order;
-    final summary = _filesSummary();
-
-    final orderTitle = (o?["title"]?.toString() ?? "").trim();
-    final doctorDisplayName =
-        (o?["doctor_display_name"]?.toString() ?? "").trim().isNotEmpty
-            ? (o?["doctor_display_name"]?.toString() ?? "").trim()
-            : (o?["doctor"]?.toString() ?? "").trim();
-
-    final doctorLabel =
-        doctorDisplayName.isNotEmpty ? "د. $doctorDisplayName" : "";
-
-    final categoryRaw = (o?["order_category"]?.toString() ?? "").trim();
-    final orderIcon = _orderCategoryIcon(categoryRaw);
-
     return Scaffold(
       appBar: AppBar(
         title: const Text("تفاصيل الطلب"),
@@ -396,7 +338,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
         actions: [
           IconButton(
             onPressed: () async {
-              await _loadAll();
+              await _reload();
               if (!mounted) return;
               showAppSnackBar(
                 // ignore: use_build_context_synchronously
@@ -409,318 +351,344 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
           ),
         ],
       ),
-      body:
-          loading
-              ? const Center(child: CircularProgressIndicator())
-              : (errorMessage != null)
-              ? Center(
+      body: FutureBuilder<_OrderDetailsVM>(
+        future: detailsFuture,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator());
+          }
+
+          if (snapshot.hasError) {
+            final err = snapshot.error!;
+            final inline = mapFetchExceptionToInlineState(err);
+
+            // Special-case 401/403 with clearer title (still inline)
+            if (err is _HttpException &&
+                (err.statusCode == 401 || err.statusCode == 403)) {
+              final message = mapHttpErrorToArabicMessage(
+                statusCode: err.statusCode,
+                data: err.parsedBody,
+              );
+              return AppInlineErrorState(
+                title:
+                    err.statusCode == 401 ? "انتهت الجلسة" : "لا تملك الصلاحية",
+                message: message,
+                icon: Icons.lock_outline,
+                onRetry: () => _reload(),
+              );
+            }
+
+            return AppInlineErrorState(
+              title: inline.title,
+              message: inline.message,
+              icon: inline.icon,
+              onRetry: () => _reload(),
+            );
+          }
+
+          final vm = snapshot.data;
+          if (vm == null || vm.order.isEmpty) {
+            return const Center(child: Text("لا توجد بيانات لعرضها."));
+          }
+
+          final o = vm.order;
+          final files = vm.files;
+
+          final summary = _filesSummary(files);
+
+          final orderTitle = (o["title"]?.toString() ?? "").trim();
+          final doctorDisplayName =
+              (o["doctor_display_name"]?.toString() ?? "").trim().isNotEmpty
+                  ? (o["doctor_display_name"]?.toString() ?? "").trim()
+                  : (o["doctor"]?.toString() ?? "").trim();
+
+          final doctorLabel =
+              doctorDisplayName.isNotEmpty ? "د. $doctorDisplayName" : "";
+
+          final categoryRaw = (o["order_category"]?.toString() ?? "").trim();
+          final orderIcon = _orderCategoryIcon(categoryRaw);
+
+          return ListView(
+            padding: const EdgeInsets.all(12),
+            children: [
+              Card(
                 child: Padding(
-                  padding: const EdgeInsets.all(24),
+                  padding: const EdgeInsets.all(12),
                   child: Column(
-                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Icon(Icons.error_outline, size: 40),
-                      const SizedBox(height: 12),
-                      Text(errorMessage!, textAlign: TextAlign.center),
-                      const SizedBox(height: 16),
-                      SizedBox(
-                        width: double.infinity,
-                        child: OutlinedButton.icon(
-                          onPressed: _loadAll,
-                          icon: const Icon(Icons.refresh),
-                          label: const Text("إعادة المحاولة"),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              orderTitle.isNotEmpty ? orderTitle : "بدون عنوان",
+                              style: Theme.of(context).textTheme.titleLarge,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          if (doctorLabel.isNotEmpty) ...[
+                            const SizedBox(width: 12),
+                            Text(
+                              doctorLabel,
+                              style: Theme.of(context).textTheme.titleSmall,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ],
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      Text("النوع: ${_categoryLabel(categoryRaw)}"),
+                      Text("الحالة: ${(o["status"]?.toString() ?? "open")}"),
+                      Text(
+                        "التاريخ: ${_formatDateTimeShort(o["created_at"]?.toString() ?? "")}",
+                      ),
+                      const SizedBox(height: 8),
+                      if ((o["details"]?.toString() ?? "").trim().isNotEmpty)
+                        Text(
+                          "تعليمات/شروط: ${(o["details"]?.toString() ?? "").trim()}",
                         ),
+                      const SizedBox(height: 12),
+                      Text(
+                        "ملخص الملفات: pending=${summary["pending"]} • approved=${summary["approved"]} • rejected=${summary["rejected"]}",
+                        style: Theme.of(context).textTheme.bodyMedium,
                       ),
                     ],
                   ),
                 ),
-              )
-              : (o == null)
-              ? const Center(child: Text("لا توجد بيانات لعرضها."))
-              : ListView(
-                padding: const EdgeInsets.all(12),
-                children: [
-                  Card(
-                    child: Padding(
-                      padding: const EdgeInsets.all(12),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  orderTitle.isNotEmpty
-                                      ? orderTitle
-                                      : "بدون عنوان",
-                                  style: Theme.of(context).textTheme.titleLarge,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                              if (doctorLabel.isNotEmpty) ...[
-                                const SizedBox(width: 12),
-                                Text(
-                                  doctorLabel,
-                                  style: Theme.of(context).textTheme.titleSmall,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ],
-                            ],
-                          ),
-                          const SizedBox(height: 10),
-                          Text("النوع: ${_categoryLabel(categoryRaw)}"),
-                          Text(
-                            "الحالة: ${(o["status"]?.toString() ?? "open")}",
-                          ),
-                          Text(
-                            "التاريخ: ${_formatDateTimeShort(o["created_at"]?.toString() ?? "")}",
-                          ),
-                          const SizedBox(height: 8),
-                          if ((o["details"]?.toString() ?? "")
-                              .trim()
-                              .isNotEmpty)
-                            Text(
-                              "تعليمات/شروط: ${(o["details"]?.toString() ?? "").trim()}",
-                            ),
-                          const SizedBox(height: 12),
-                          Text(
-                            "ملخص الملفات: pending=${summary["pending"]} • approved=${summary["approved"]} • rejected=${summary["rejected"]}",
-                            style: Theme.of(context).textTheme.bodyMedium,
-                          ),
-                        ],
-                      ),
+              ),
+              const SizedBox(height: 12),
+
+              // Files
+              Card(
+                child: Column(
+                  children: [
+                    const ListTile(
+                      leading: Icon(Icons.folder),
+                      title: Text("الملفات المرتبطة بالطلب"),
                     ),
-                  ),
-                  const SizedBox(height: 12),
+                    const Divider(height: 1),
+                    if (files.isEmpty)
+                      const Padding(
+                        padding: EdgeInsets.all(16),
+                        child: Text("لا توجد ملفات مرفوعة لهذا الطلب."),
+                      )
+                    else
+                      ...files.map((f) {
+                        final fileId = int.tryParse(f["id"]?.toString() ?? "");
 
-                  // Files
-                  Card(
-                    child: Column(
-                      children: [
-                        const ListTile(
-                          leading: Icon(Icons.folder),
-                          title: Text("الملفات المرتبطة بالطلب"),
-                        ),
-                        const Divider(height: 1),
-                        if (files.isEmpty)
-                          const Padding(
-                            padding: EdgeInsets.all(16),
-                            child: Text("لا توجد ملفات مرفوعة لهذا الطلب."),
-                          )
-                        else
-                          ...files.map((f) {
-                            final fileId = int.tryParse(
-                              f["id"]?.toString() ?? "",
-                            );
+                        final rawUrl = (f["file"]?.toString() ?? "");
+                        final fileUrl = _resolveFileUrl(rawUrl);
 
-                            final rawUrl = (f["file"]?.toString() ?? "");
-                            final fileUrl = _resolveFileUrl(rawUrl);
+                        final filename =
+                            (f["original_filename"]
+                                        ?.toString()
+                                        .trim()
+                                        .isNotEmpty ==
+                                    true)
+                                ? f["original_filename"].toString()
+                                : rawUrl;
 
-                            final filename =
-                                (f["original_filename"]
-                                            ?.toString()
-                                            .trim()
-                                            .isNotEmpty ==
-                                        true)
-                                    ? f["original_filename"].toString()
-                                    : rawUrl;
+                        final normalizedStatus = _normalizedReviewStatus(
+                          f["review_status"]?.toString() ?? "",
+                        );
 
-                            final normalizedStatus = _normalizedReviewStatus(
-                              f["review_status"]?.toString() ?? "",
-                            );
+                        final statusAr = _reviewStatusLabelAr(normalizedStatus);
 
-                            final statusAr = _reviewStatusLabelAr(
-                              normalizedStatus,
-                            );
+                        final doctorNote =
+                            (f["doctor_note"]?.toString() ?? "").trim();
 
-                            final doctorNote =
-                                (f["doctor_note"]?.toString() ?? "").trim();
+                        final isImg = _isImage(filename) || _isImage(fileUrl);
+                        final isPdf = _isPdf(filename) || _isPdf(fileUrl);
+                        final isDcm = _isDicom(filename) || _isDicom(fileUrl);
 
-                            final isImg =
-                                _isImage(filename) || _isImage(fileUrl);
-                            final isPdf = _isPdf(filename) || _isPdf(fileUrl);
-                            final isDcm =
-                                _isDicom(filename) || _isDicom(fileUrl);
+                        final canReview =
+                            isDoctor &&
+                            normalizedStatus == "pending_review" &&
+                            fileId != null;
 
-                            final canReview =
-                                isDoctor &&
-                                normalizedStatus == "pending_review" &&
-                                fileId != null;
-
-                            return Column(
-                              children: [
-                                ListTile(
-                                  leading: CircleAvatar(child: Icon(orderIcon)),
-                                  title: Text(
-                                    filename.isNotEmpty ? filename : "ملف",
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                  subtitle: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text("الحالة: $statusAr"),
-                                      if (doctorNote.isNotEmpty)
-                                        Text(
-                                          "ملاحظة الطبيب: $doctorNote",
-                                          maxLines: 2,
-                                          overflow: TextOverflow.ellipsis,
+                        return Column(
+                          children: [
+                            ListTile(
+                              leading: CircleAvatar(child: Icon(orderIcon)),
+                              title: Text(
+                                filename.isNotEmpty ? filename : "ملف",
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              subtitle: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text("الحالة: $statusAr"),
+                                  if (doctorNote.isNotEmpty)
+                                    Text(
+                                      "ملاحظة الطبيب: $doctorNote",
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                ],
+                              ),
+                            ),
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  if (isImg) ...[
+                                    SizedBox(
+                                      height: 120,
+                                      child: ClipRRect(
+                                        borderRadius: BorderRadius.circular(8),
+                                        child: Image.network(
+                                          fileUrl,
+                                          fit: BoxFit.cover,
+                                          errorBuilder:
+                                              (_, __, ___) => const Center(
+                                                child: Text(
+                                                  "تعذر تحميل الصورة.",
+                                                ),
+                                              ),
                                         ),
-                                    ],
-                                  ),
-                                ),
-                                Padding(
-                                  padding: const EdgeInsets.fromLTRB(
-                                    16,
-                                    0,
-                                    16,
-                                    12,
-                                  ),
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      if (isImg) ...[
-                                        SizedBox(
-                                          height: 120,
-                                          child: ClipRRect(
-                                            borderRadius: BorderRadius.circular(
-                                              8,
-                                            ),
-                                            child: Image.network(
-                                              fileUrl,
-                                              fit: BoxFit.cover,
-                                              errorBuilder:
-                                                  (_, __, ___) => const Center(
-                                                    child: Text(
-                                                      "تعذر تحميل الصورة.",
-                                                    ),
-                                                  ),
-                                            ),
-                                          ),
-                                        ),
-                                        const SizedBox(height: 8),
-                                        OutlinedButton.icon(
-                                          onPressed: () async {
-                                            await showDialog<void>(
-                                              context: context,
-                                              builder: (ctx) {
-                                                return AlertDialog(
-                                                  content: SizedBox(
-                                                    width: double.maxFinite,
-                                                    child: Image.network(
-                                                      fileUrl,
-                                                      fit: BoxFit.contain,
-                                                      errorBuilder:
-                                                          (
-                                                            _,
-                                                            __,
-                                                            ___,
-                                                          ) => const Text(
-                                                            "تعذر تحميل الصورة.",
-                                                          ),
-                                                    ),
-                                                  ),
-                                                  actions: [
-                                                    TextButton(
-                                                      onPressed:
-                                                          () => Navigator.pop(
-                                                            ctx,
-                                                          ),
-                                                      child: const Text(
-                                                        "إغلاق",
+                                      ),
+                                    ),
+                                    const SizedBox(height: 8),
+                                    OutlinedButton.icon(
+                                      onPressed: () async {
+                                        await showDialog<void>(
+                                          context: context,
+                                          builder: (ctx) {
+                                            return AlertDialog(
+                                              content: SizedBox(
+                                                width: double.maxFinite,
+                                                child: Image.network(
+                                                  fileUrl,
+                                                  fit: BoxFit.contain,
+                                                  errorBuilder:
+                                                      (
+                                                        _,
+                                                        __,
+                                                        ___,
+                                                      ) => const Text(
+                                                        "تعذر تحميل الصورة.",
                                                       ),
-                                                    ),
-                                                  ],
-                                                );
-                                              },
+                                                ),
+                                              ),
+                                              actions: [
+                                                TextButton(
+                                                  onPressed:
+                                                      () => Navigator.pop(ctx),
+                                                  child: const Text("إغلاق"),
+                                                ),
+                                              ],
                                             );
                                           },
-                                          icon: const Icon(Icons.image),
-                                          label: const Text("عرض الصورة"),
-                                        ),
-                                      ] else if (isPdf) ...[
-                                        ElevatedButton.icon(
-                                          onPressed:
-                                              () async =>
-                                                  _openExternal(fileUrl),
-                                          icon: const Icon(
-                                            Icons.picture_as_pdf,
-                                          ),
-                                          label: const Text("فتح / تحميل PDF"),
-                                        ),
-                                      ] else if (isDcm) ...[
-                                        ElevatedButton.icon(
-                                          onPressed:
-                                              () async =>
-                                                  _openExternal(fileUrl),
-                                          icon: const Icon(Icons.download),
-                                          label: const Text(
-                                            "تحميل فقط (DICOM)",
-                                          ),
-                                        ),
-                                      ] else ...[
-                                        ElevatedButton.icon(
-                                          onPressed:
-                                              () async =>
-                                                  _openExternal(fileUrl),
-                                          icon: const Icon(Icons.download),
-                                          label: const Text("فتح / تحميل"),
-                                        ),
-                                      ],
-                                      const SizedBox(height: 10),
+                                        );
+                                      },
+                                      icon: const Icon(Icons.image),
+                                      label: const Text("عرض الصورة"),
+                                    ),
+                                  ] else if (isPdf) ...[
+                                    ElevatedButton.icon(
+                                      onPressed:
+                                          () async => _openExternal(fileUrl),
+                                      icon: const Icon(Icons.picture_as_pdf),
+                                      label: const Text("فتح / تحميل PDF"),
+                                    ),
+                                  ] else if (isDcm) ...[
+                                    ElevatedButton.icon(
+                                      onPressed:
+                                          () async => _openExternal(fileUrl),
+                                      icon: const Icon(Icons.download),
+                                      label: const Text("تحميل فقط (DICOM)"),
+                                    ),
+                                  ] else ...[
+                                    ElevatedButton.icon(
+                                      onPressed:
+                                          () async => _openExternal(fileUrl),
+                                      icon: const Icon(Icons.download),
+                                      label: const Text("فتح / تحميل"),
+                                    ),
+                                  ],
+                                  const SizedBox(height: 10),
 
-                                      // Review buttons (doctor + pending only)
-                                      if (isDoctor &&
-                                          normalizedStatus ==
-                                              "pending_review") ...[
-                                        Row(
-                                          children: [
-                                            Expanded(
-                                              child: OutlinedButton.icon(
-                                                onPressed:
-                                                    canReview
-                                                        ? () async =>
-                                                            _approveFile(fileId)
-                                                        : null,
-                                                icon: const Icon(
-                                                  Icons.check_circle_outline,
-                                                ),
-                                                label: const Text("Approve"),
-                                              ),
+                                  // Review buttons (doctor + pending only)
+                                  if (isDoctor &&
+                                      normalizedStatus == "pending_review") ...[
+                                    Row(
+                                      children: [
+                                        Expanded(
+                                          child: OutlinedButton.icon(
+                                            onPressed:
+                                                canReview
+                                                    ? () async =>
+                                                        _approveFile(fileId)
+                                                    : null,
+                                            icon: const Icon(
+                                              Icons.check_circle_outline,
                                             ),
-                                            const SizedBox(width: 8),
-                                            Expanded(
-                                              child: OutlinedButton.icon(
-                                                onPressed:
-                                                    canReview
-                                                        ? () async =>
-                                                            _rejectFile(fileId)
-                                                        : null,
-                                                icon: const Icon(
-                                                  Icons.cancel_outlined,
-                                                ),
-                                                label: const Text("Reject"),
-                                              ),
+                                            label: const Text("Approve"),
+                                          ),
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Expanded(
+                                          child: OutlinedButton.icon(
+                                            onPressed:
+                                                canReview
+                                                    ? () async =>
+                                                        _rejectFile(fileId)
+                                                    : null,
+                                            icon: const Icon(
+                                              Icons.cancel_outlined,
                                             ),
-                                          ],
+                                            label: const Text("Reject"),
+                                          ),
                                         ),
                                       ],
-                                    ],
-                                  ),
-                                ),
-                                const Divider(height: 1),
-                              ],
-                            );
-                          }),
-                      ],
-                    ),
-                  ),
-                ],
+                                    ),
+                                  ],
+                                ],
+                              ),
+                            ),
+                            const Divider(height: 1),
+                          ],
+                        );
+                      }),
+                  ],
+                ),
               ),
+            ],
+          );
+        },
+      ),
     );
   }
+}
+
+// ---------------- ViewModel + HttpException ----------------
+
+class _OrderDetailsVM {
+  final Map<String, dynamic> order;
+  final List<Map<String, dynamic>> files;
+
+  const _OrderDetailsVM({required this.order, required this.files});
+}
+
+/// Fetch-layer exception for inline error state (no snackbars).
+class _HttpException implements Exception {
+  final int statusCode;
+  final String body;
+
+  _HttpException(this.statusCode, this.body);
+
+  Object? get parsedBody {
+    try {
+      return jsonDecode(body);
+    } catch (_) {
+      return body;
+    }
+  }
+
+  @override
+  String toString() => "HTTP $statusCode";
 }

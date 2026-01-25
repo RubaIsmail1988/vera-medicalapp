@@ -23,6 +23,9 @@ class _InboxScreenState extends State<InboxScreen> {
 
   List<Map<String, dynamic>> items = <Map<String, dynamic>>[];
 
+  // Fetch error state (inline فقط)
+  ({String title, String message, IconData icon})? inlineError;
+
   @override
   void initState() {
     super.initState();
@@ -73,35 +76,52 @@ class _InboxScreenState extends State<InboxScreen> {
   }
 
   Future<void> loadInbox() async {
-    setState(() => loading = true);
+    setState(() {
+      loading = true;
+      inlineError = null; // reset error on new attempt
+    });
 
     try {
       final resp = await clinicalService.fetchInbox(limit: 50);
 
       if (!mounted) return;
 
+      // Fetch errors: Inline only (no SnackBar)
       if (resp.statusCode != 200) {
-        showAppSnackBar(
-          context,
-          "فشل تحميل Inbox (status=${resp.statusCode})",
-          type: AppSnackBarType.error,
+        final message = mapHttpErrorToArabicMessage(
+          statusCode: resp.statusCode,
+          data:
+              (() {
+                try {
+                  return jsonDecode(resp.body);
+                } catch (_) {
+                  return resp.body;
+                }
+              })(),
         );
+
         setState(() {
           items = <Map<String, dynamic>>[];
+          inlineError = (
+            title: 'تعذّر تحميل الإشعارات',
+            message: message,
+            icon: Icons.error_outline,
+          );
           loading = false;
         });
         return;
       }
 
       final decoded = jsonDecode(resp.body);
+
       if (decoded is! List) {
-        showAppSnackBar(
-          context,
-          "استجابة Inbox غير صحيحة",
-          type: AppSnackBarType.error,
-        );
         setState(() {
           items = <Map<String, dynamic>>[];
+          inlineError = (
+            title: 'تعذّر تحميل الإشعارات',
+            message: 'استجابة غير متوقعة من الخادم. حاول مرة أخرى.',
+            icon: Icons.error_outline,
+          );
           loading = false;
         });
         return;
@@ -134,17 +154,21 @@ class _InboxScreenState extends State<InboxScreen> {
 
       setState(() {
         items = visible;
+        inlineError = null;
         loading = false;
       });
     } catch (e) {
       if (!mounted) return;
-      showAppSnackBar(
-        context,
-        "خطأ أثناء تحميل Inbox: $e",
-        type: AppSnackBarType.error,
-      );
+
+      final mapped = mapFetchExceptionToInlineState(e);
+
       setState(() {
         items = <Map<String, dynamic>>[];
+        inlineError = (
+          title: mapped.title,
+          message: mapped.message,
+          icon: mapped.icon,
+        );
         loading = false;
       });
     }
@@ -334,6 +358,8 @@ class _InboxScreenState extends State<InboxScreen> {
     }
 
     if (!mounted) return;
+
+    // هذا ليس Fetch error، بل نتيجة تفاعل (Tap) → SnackBar info مقبول
     showAppSnackBar(
       context,
       "لا يوجد توجيه لهذا النوع: $eventType",
@@ -521,6 +547,7 @@ class _InboxScreenState extends State<InboxScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // Loading (أول تحميل)
     if (loading) {
       return Scaffold(
         appBar: AppBar(title: const Text("Inbox")),
@@ -528,6 +555,39 @@ class _InboxScreenState extends State<InboxScreen> {
       );
     }
 
+    // Fetch error state (Inline only)
+    if (inlineError != null) {
+      final err = inlineError!;
+      return Scaffold(
+        appBar: AppBar(
+          title: const Text("Inbox"),
+          actions: [
+            IconButton(
+              tooltip: "تحديث",
+              onPressed: refreshing ? null : onRefresh,
+              icon: const Icon(Icons.refresh),
+            ),
+          ],
+        ),
+        body: RefreshIndicator(
+          onRefresh: onRefresh,
+          child: ListView(
+            children: [
+              const SizedBox(height: 80),
+              AppInlineErrorState(
+                title: err.title,
+                message: err.message,
+                icon: err.icon,
+                onRetry: refreshing ? null : () => loadInbox(),
+              ),
+              const SizedBox(height: 40),
+            ],
+          ),
+        ),
+      );
+    }
+
+    // Success state (Empty or List)
     return Scaffold(
       appBar: AppBar(
         title: const Text("Inbox"),
@@ -599,6 +659,7 @@ class _InboxScreenState extends State<InboxScreen> {
                               ),
                           ],
                         ),
+
                         onTap: () async {
                           await _routeFromInboxEvent(
                             eventType: eventType,

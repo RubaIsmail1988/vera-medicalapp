@@ -1,3 +1,4 @@
+// ----------------- mobile/lib/screens/user/user_shell_screen.dart -----------------
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -6,8 +7,6 @@ import '../../main.dart';
 import '/services/auth_service.dart';
 import '/services/account_deletion_service.dart';
 import '../../utils/ui_helpers.dart';
-import '/services/clinical_service.dart';
-import '/services/polling_notifications_service.dart';
 
 import 'patient_home_screen.dart';
 import 'doctor_home_screen.dart';
@@ -27,7 +26,6 @@ class UserShellScreen extends StatefulWidget {
 
 class _UserShellScreenState extends State<UserShellScreen> {
   late int currentIndex;
-  PollingNotificationsService? pollingService;
 
   // Session from prefs
   String role = 'patient';
@@ -45,18 +43,19 @@ class _UserShellScreenState extends State<UserShellScreen> {
   final AccountDeletionService deletionService = AccountDeletionService();
 
   static const List<String> tabPaths = <String>[
-    '/app',
-    '/app/record',
-    '/app/hospitals',
-    '/app/labs',
-    '/app/account',
-    '/app/appointments',
+    '/app', // 0 الرئيسية
+    '/app/appointments', // 1 المواعيد
+    '/app/record', // 2 الإضبارة
+    '/app/hospitals', // 3 المشافي
+    '/app/labs', // 4 المخابر
+    '/app/account', // 5 الحساب
   ];
 
   @override
   void initState() {
     super.initState();
     currentIndex = widget.initialIndex;
+    // ignore: unawaited_futures
     loadSession();
   }
 
@@ -110,18 +109,16 @@ class _UserShellScreenState extends State<UserShellScreen> {
       context.go('/waiting-activation');
       return;
     }
-    // Start polling notifications (MVP)
-    pollingService ??= PollingNotificationsService(
-      authService: AuthService(),
-      clinicalService: ClinicalService(authService: AuthService()),
-    );
-    pollingService!.start();
+
+    // IMPORTANT:
+    // Polling is managed centrally in MyAppState only.
+    // Do NOT start polling here.
   }
 
   Future<void> logout() async {
-    try {
-      await pollingService?.stop();
-    } catch (_) {}
+    // IMPORTANT: grab reference before awaiting (avoid BuildContext across async gaps)
+    final app = MyApp.of(context);
+    await app.stopPolling();
 
     final authService = AuthService();
     await authService.logout();
@@ -276,7 +273,6 @@ class _UserShellScreenState extends State<UserShellScreen> {
                   color: cs.onSurface.withValues(alpha: 0.85),
                 ),
                 const SizedBox(height: 16),
-
                 Text(
                   displayName,
                   textAlign: TextAlign.center,
@@ -285,14 +281,12 @@ class _UserShellScreenState extends State<UserShellScreen> {
                   ),
                 ),
                 const SizedBox(height: 6),
-
                 Text(
                   'الدور: $roleLabel',
                   style: textTheme.bodyMedium?.copyWith(
                     color: cs.onSurface.withValues(alpha: 0.80),
                   ),
                 ),
-
                 if (userEmail != null && userEmail!.trim().isNotEmpty) ...[
                   const SizedBox(height: 4),
                   Text(
@@ -302,7 +296,6 @@ class _UserShellScreenState extends State<UserShellScreen> {
                     ),
                   ),
                 ],
-
                 const SizedBox(height: 10),
                 Text(
                   activationText,
@@ -311,7 +304,6 @@ class _UserShellScreenState extends State<UserShellScreen> {
                     fontWeight: FontWeight.w600,
                   ),
                 ),
-
                 const SizedBox(height: 24),
 
                 // 1) إدارة الحساب (أساسي)
@@ -354,7 +346,6 @@ class _UserShellScreenState extends State<UserShellScreen> {
                     child: const Text('طلب حذف الحساب'),
                   ),
                 ),
-
                 const SizedBox(height: 6),
                 TextButton(
                   onPressed: () => context.go('/app/account/deletion-status'),
@@ -387,15 +378,15 @@ class _UserShellScreenState extends State<UserShellScreen> {
       case 0:
         return buildHomeTab();
       case 1:
-        return UnifiedRecordScreen(role: role, userId: userId);
-      case 2:
-        return const HospitalPublicListScreen();
-      case 3:
-        return const LabPublicListScreen();
-      case 4:
-        return buildAccountTab(context);
-      case 5:
         return const MyAppointmentsScreen();
+      case 2:
+        return UnifiedRecordScreen(role: role, userId: userId);
+      case 3:
+        return const HospitalPublicListScreen();
+      case 4:
+        return const LabPublicListScreen();
+      case 5:
+        return buildAccountTab(context);
       default:
         return buildHomeTab();
     }
@@ -408,22 +399,22 @@ class _UserShellScreenState extends State<UserShellScreen> {
             ? 'الصفحة الرئيسية - الطبيب'
             : 'الصفحة الرئيسية - المريض';
       case 1:
-        return 'الإضبارة الطبية';
-      case 2:
-        return 'المشافي';
-      case 3:
-        return 'المخابر';
-      case 4:
-        return 'الحساب';
-      case 5:
         return 'المواعيد';
+      case 2:
+        return 'الإضبارة الطبية';
+      case 3:
+        return 'المشافي';
+      case 4:
+        return 'المخابر';
+      case 5:
+        return 'الحساب';
       default:
         return 'Vera Smart Health';
     }
   }
 
   Widget? _buildFloatingActionButton() {
-    final bool isAppointmentsTab = currentIndex == 5;
+    final bool isAppointmentsTab = currentIndex == 1;
     final bool canBook = role == 'patient';
 
     if (!isAppointmentsTab || !canBook) return null;
@@ -436,14 +427,6 @@ class _UserShellScreenState extends State<UserShellScreen> {
   }
 
   @override
-  void dispose() {
-    try {
-      pollingService?.stop();
-    } catch (_) {}
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
     final themeMode = MyApp.of(context).themeMode;
 
@@ -453,7 +436,7 @@ class _UserShellScreenState extends State<UserShellScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        automaticallyImplyLeading: false, // يمنع سهم الرجوع في التابات الأساسية
+        automaticallyImplyLeading: false,
         title: Text(appBarTitle()),
         actions:
             currentIndex == 0
@@ -474,7 +457,6 @@ class _UserShellScreenState extends State<UserShellScreen> {
                 ]
                 : null,
       ),
-
       floatingActionButton: _buildFloatingActionButton(),
       body: buildBody(context),
       bottomNavigationBar: BottomNavigationBar(
@@ -483,6 +465,10 @@ class _UserShellScreenState extends State<UserShellScreen> {
         type: BottomNavigationBarType.fixed,
         items: const [
           BottomNavigationBarItem(icon: Icon(Icons.home), label: 'الرئيسية'),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.event_available),
+            label: 'المواعيد',
+          ),
           BottomNavigationBarItem(
             icon: Icon(Icons.folder_shared),
             label: 'الإضبارة',
@@ -493,10 +479,6 @@ class _UserShellScreenState extends State<UserShellScreen> {
           ),
           BottomNavigationBarItem(icon: Icon(Icons.science), label: 'المخابر'),
           BottomNavigationBarItem(icon: Icon(Icons.person), label: 'الحساب'),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.event_available),
-            label: 'المواعيد',
-          ),
         ],
       ),
     );

@@ -69,22 +69,26 @@ class _HospitalFormScreenState extends State<HospitalFormScreen> {
         governorates = items;
         loadingGovernorates = false;
 
-        // في وضع التعديل: إن لم تعد القيمة موجودة لأي سبب
         if (selectedGovernorateId != null) {
           final exists = governorates.any((g) => g.id == selectedGovernorateId);
-          if (!exists) {
-            selectedGovernorateId = null;
-          }
+          if (!exists) selectedGovernorateId = null;
+        }
+
+        // في حالة الإضافة: اختاري أول محافظة تلقائياً إن لم يكن هناك اختيار
+        if (widget.hospital == null &&
+            selectedGovernorateId == null &&
+            governorates.isNotEmpty) {
+          selectedGovernorateId = governorates.first.id;
         }
       });
-    } catch (_) {
+    } catch (e) {
       if (!mounted) return;
       setState(() => loadingGovernorates = false);
 
-      showAppSnackBar(
+      showActionErrorSnackBar(
         context,
-        'فشل تحميل المحافظات.',
-        type: AppSnackBarType.error,
+        exception: e,
+        fallback: 'فشل تحميل المحافظات.',
       );
     }
   }
@@ -101,6 +105,7 @@ class _HospitalFormScreenState extends State<HospitalFormScreen> {
   }
 
   Future<void> submit() async {
+    if (loading) return;
     if (!formKey.currentState!.validate()) return;
 
     if (selectedGovernorateId == null) {
@@ -143,32 +148,28 @@ class _HospitalFormScreenState extends State<HospitalFormScreen> {
     try {
       final bool isEdit = widget.hospital != null;
 
-      final response =
-          isEdit
-              ? await hospitalService.updateHospital(hospital)
-              : await hospitalService.createHospital(hospital);
-
-      if (!mounted) return;
-
-      if (response.statusCode == 200 || response.statusCode == 201) {
-        showAppSnackBar(
-          context,
-          isEdit ? 'تم تحديث المشفى بنجاح.' : 'تم إنشاء المشفى بنجاح.',
-          type: AppSnackBarType.success,
-        );
-        Navigator.pop(context, true);
-        return;
+      if (isEdit) {
+        await hospitalService.updateHospital(hospital);
+      } else {
+        await hospitalService.createHospital(hospital);
       }
 
-      final msg = hospitalService.extractErrorMessage(response);
-
-      showAppSnackBar(context, 'فشل الحفظ: $msg', type: AppSnackBarType.error);
-    } catch (_) {
       if (!mounted) return;
+
       showAppSnackBar(
         context,
-        'حدث خطأ أثناء الحفظ.',
-        type: AppSnackBarType.error,
+        isEdit ? 'تم تحديث المشفى بنجاح.' : 'تم إنشاء المشفى بنجاح.',
+        type: AppSnackBarType.success,
+      );
+
+      Navigator.pop(context, true);
+    } catch (e) {
+      if (!mounted) return;
+
+      showActionErrorSnackBar(
+        context,
+        exception: e,
+        fallback: 'فشل حفظ بيانات المشفى.',
       );
     } finally {
       if (mounted) {
@@ -192,8 +193,10 @@ class _HospitalFormScreenState extends State<HospitalFormScreen> {
               TextFormField(
                 controller: nameController,
                 decoration: const InputDecoration(labelText: 'اسم المشفى'),
+                enabled: !loading,
                 validator:
-                    (v) => v == null || v.trim().isEmpty ? 'الحقل مطلوب' : null,
+                    (v) =>
+                        (v == null || v.trim().isEmpty) ? 'الحقل مطلوب' : null,
               ),
               const SizedBox(height: 12),
 
@@ -214,7 +217,10 @@ class _HospitalFormScreenState extends State<HospitalFormScreen> {
                             ),
                           )
                           .toList(),
-                  onChanged: (v) => setState(() => selectedGovernorateId = v),
+                  onChanged:
+                      loading
+                          ? null
+                          : (v) => setState(() => selectedGovernorateId = v),
                   decoration: const InputDecoration(labelText: 'المحافظة'),
                   validator: (v) => v == null ? 'الحقل مطلوب' : null,
                 ),
@@ -224,6 +230,7 @@ class _HospitalFormScreenState extends State<HospitalFormScreen> {
               TextFormField(
                 controller: addressController,
                 decoration: const InputDecoration(labelText: 'العنوان'),
+                enabled: !loading,
               ),
               const SizedBox(height: 12),
 
@@ -232,6 +239,7 @@ class _HospitalFormScreenState extends State<HospitalFormScreen> {
                 decoration: const InputDecoration(
                   labelText: 'خط العرض (latitude)',
                 ),
+                enabled: !loading,
                 keyboardType: const TextInputType.numberWithOptions(
                   decimal: true,
                 ),
@@ -243,6 +251,7 @@ class _HospitalFormScreenState extends State<HospitalFormScreen> {
                 decoration: const InputDecoration(
                   labelText: 'خط الطول (longitude)',
                 ),
+                enabled: !loading,
                 keyboardType: const TextInputType.numberWithOptions(
                   decimal: true,
                 ),
@@ -252,12 +261,14 @@ class _HospitalFormScreenState extends State<HospitalFormScreen> {
               TextFormField(
                 controller: specialtyController,
                 decoration: const InputDecoration(labelText: 'التخصص'),
+                enabled: !loading,
               ),
               const SizedBox(height: 12),
 
               TextFormField(
                 controller: contactInfoController,
                 decoration: const InputDecoration(labelText: 'بيانات الاتصال'),
+                enabled: !loading,
               ),
               const SizedBox(height: 20),
 

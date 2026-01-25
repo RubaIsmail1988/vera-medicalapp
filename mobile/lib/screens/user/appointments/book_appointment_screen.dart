@@ -3,9 +3,10 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../../models/appointment_create_request.dart';
-import '../../../services/appointments_service.dart';
-import '../../../utils/ui_helpers.dart';
+import '/models/appointment_create_request.dart';
+import '/services/appointments_service.dart';
+import '/utils/ui_helpers.dart';
+import '/utils/api_exception.dart';
 
 class BookAppointmentScreen extends StatefulWidget {
   final int doctorId;
@@ -30,6 +31,10 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
   bool loadingRange = false;
   bool booking = false;
   bool creatingUrgent = false;
+
+  // Fetch errors (INLINE ONLY)
+  Object? typesFetchError;
+  Object? rangeFetchError;
 
   // payload from /api/appointments/doctors/<id>/visit-types/
   List<Map<String, dynamic>> central = const [];
@@ -173,7 +178,6 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
     final hh = int.tryParse(parts.isNotEmpty ? parts[0] : '') ?? 0;
     final mi = int.tryParse(parts.length > 1 ? parts[1] : '') ?? 0;
 
-    // slot = local time
     return DateTime(date.year, date.month, date.day, hh, mi);
   }
 
@@ -222,17 +226,23 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
     return payload.isEmpty ? null : payload;
   }
 
+  // ---------------------------------------------------------------------------
+  // Fetch: Types (INLINE only on error)
+  // ---------------------------------------------------------------------------
+
   Future<void> loadTypes() async {
     if (!mounted) return;
 
     setState(() {
       loadingTypes = true;
+      typesFetchError = null;
 
       central = const [];
       specific = const [];
       selectedCentral = null;
 
       loadingRange = false;
+      rangeFetchError = null;
       availableDays = const [];
       selectedDay = null;
       slots = const [];
@@ -304,18 +314,22 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
         body = e.body;
       }
 
-      showApiErrorSnackBar(context, statusCode: e.statusCode, data: body);
-
       setState(() {
         loadingTypes = false;
+        typesFetchError = _FetchHttpException(e.statusCode, body);
       });
-    } catch (_) {
+    } catch (e) {
       if (!mounted) return;
-
-      showAppErrorSnackBar(context, 'تعذّر تحميل أنواع الزيارات.');
-      setState(() => loadingTypes = false);
+      setState(() {
+        loadingTypes = false;
+        typesFetchError = e;
+      });
     }
   }
+
+  // ---------------------------------------------------------------------------
+  // Range controls
+  // ---------------------------------------------------------------------------
 
   Future<void> pickRangeFromDate() async {
     final now = DateTime.now();
@@ -357,12 +371,19 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
     await loadSlotsRange();
   }
 
+  // ---------------------------------------------------------------------------
+  // Fetch: Slots range (INLINE only on error)
+  // ---------------------------------------------------------------------------
+
   Future<void> loadSlotsRange() async {
     if (!mounted) return;
 
     final selected = selectedCentral;
     if (selected == null) {
       setState(() {
+        loadingRange = false;
+        rangeFetchError = null;
+
         availableDays = const [];
         selectedDay = null;
         slots = const [];
@@ -379,6 +400,9 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
     final appointmentTypeId = _toInt(selected['appointment_type_id']);
     if (appointmentTypeId == 0) {
       setState(() {
+        loadingRange = false;
+        rangeFetchError = null;
+
         availableDays = const [];
         selectedDay = null;
         slots = const [];
@@ -397,6 +421,7 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
 
     setState(() {
       loadingRange = true;
+      rangeFetchError = null;
 
       availableDays = const [];
       selectedDay = null;
@@ -496,6 +521,7 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
         rebookingPriorityExpiresAt = rpExpires;
 
         loadingRange = false;
+        rangeFetchError = null;
       });
     } on ApiException catch (e) {
       if (!mounted) return;
@@ -507,13 +533,16 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
         body = e.body;
       }
 
-      showApiErrorSnackBar(context, statusCode: e.statusCode, data: body);
-      setState(() => loadingRange = false);
-    } catch (_) {
+      setState(() {
+        loadingRange = false;
+        rangeFetchError = _FetchHttpException(e.statusCode, body);
+      });
+    } catch (e) {
       if (!mounted) return;
-
-      showAppErrorSnackBar(context, 'تعذّر تحميل الأوقات المتاحة ضمن النطاق.');
-      setState(() => loadingRange = false);
+      setState(() {
+        loadingRange = false;
+        rangeFetchError = e;
+      });
     }
   }
 
@@ -707,6 +736,7 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
         body = e.body;
       }
 
+      // Action -> SnackBar (allowed)
       showApiErrorSnackBar(context, statusCode: e.statusCode, data: body);
     } catch (_) {
       if (!mounted) return;
@@ -739,8 +769,19 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
     final daysTitle =
         rangeDays == 7 ? 'الأيام المتاحة (7 أيام)' : 'الأيام المتاحة';
 
-    final bool hasTypesLoaded = !loadingTypes;
-    final bool hasCentralSelected = selectedCentral != null;
+    final hasTypesLoaded = !loadingTypes;
+    final hasCentralSelected = selectedCentral != null;
+
+    // Build inline states from errors (if any)
+    final typesInline =
+        (typesFetchError != null)
+            ? mapFetchExceptionToInlineState(typesFetchError!)
+            : null;
+
+    final rangeInline =
+        (rangeFetchError != null)
+            ? mapFetchExceptionToInlineState(rangeFetchError!)
+            : null;
 
     final bannerText = _rebookingBannerText();
 
@@ -768,6 +809,9 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
             ),
             const SizedBox(height: 12),
 
+            // -----------------------------
+            // Types section
+            // -----------------------------
             Text('نوع الزيارة', style: theme.textTheme.titleMedium),
             const SizedBox(height: 8),
 
@@ -777,6 +821,13 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
                   padding: EdgeInsets.all(12),
                   child: CircularProgressIndicator(),
                 ),
+              )
+            else if (typesInline != null)
+              AppInlineErrorState(
+                title: typesInline.title,
+                message: typesInline.message,
+                icon: typesInline.icon,
+                onRetry: () => loadTypes(),
               )
             else if (central.isEmpty)
               const Text('لا توجد أنواع زيارات متاحة حالياً لهذا الطبيب.')
@@ -819,6 +870,7 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
               ),
 
             if (hasTypesLoaded &&
+                typesInline == null &&
                 specificBookingEnabled &&
                 specific.isNotEmpty) ...[
               const SizedBox(height: 12),
@@ -888,6 +940,13 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
                   child: CircularProgressIndicator(),
                 ),
               )
+            else if (rangeInline != null)
+              AppInlineErrorState(
+                title: rangeInline.title,
+                message: rangeInline.message,
+                icon: rangeInline.icon,
+                onRetry: () => loadSlotsRange(),
+              )
             else if (!hasCentralSelected)
               const Text('اختر نوع الزيارة أولاً.')
             else if (availableDays.isEmpty)
@@ -932,7 +991,7 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
                     }).toList(),
               ),
 
-            if (availabilityText != null) ...[
+            if (availabilityText != null && rangeInline == null) ...[
               const SizedBox(height: 8),
               Text(availabilityText, style: theme.textTheme.bodySmall),
             ],
@@ -941,7 +1000,7 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
             Text('الأوقات المتاحة', style: theme.textTheme.titleMedium),
             const SizedBox(height: 8),
 
-            if (loadingRange)
+            if (loadingRange || rangeInline != null)
               const SizedBox.shrink()
             else if (selectedDay == null)
               const Text('اختر يومًا متاحًا أولاً.')
@@ -1140,4 +1199,15 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
       ),
     );
   }
+}
+
+// Local wrapper so mapFetchExceptionToInlineState can interpret HTTP-ish errors
+class _FetchHttpException implements Exception {
+  final int statusCode;
+  final Object? data;
+
+  _FetchHttpException(this.statusCode, this.data);
+
+  @override
+  String toString() => 'HTTP $statusCode';
 }

@@ -6,7 +6,7 @@ import '/models/patient_details.dart';
 import '/utils/ui_helpers.dart';
 
 class PatientDetailsFormScreen extends StatefulWidget {
-  final String token;
+  final String token; // legacy
   final int userId;
 
   const PatientDetailsFormScreen({
@@ -40,6 +40,7 @@ class _PatientDetailsFormScreenState extends State<PatientDetailsFormScreen> {
     super.initState();
     heightController.addListener(recalcBmi);
     weightController.addListener(recalcBmi);
+    recalcBmi();
   }
 
   void recalcBmi() {
@@ -67,56 +68,97 @@ class _PatientDetailsFormScreenState extends State<PatientDetailsFormScreen> {
     super.dispose();
   }
 
+  double? _parsePositiveDoubleOrNull(String raw) {
+    final t = raw.trim();
+    if (t.isEmpty) return null;
+    final v = double.tryParse(t);
+    if (v == null) return null;
+    if (v <= 0) return null;
+    return v;
+  }
+
   Future<void> submitDetails() async {
-    if (!formKey.currentState!.validate()) return;
     if (loading) return;
+    if (!formKey.currentState!.validate()) return;
+
+    final height = _parsePositiveDoubleOrNull(heightController.text);
+    final weight = _parsePositiveDoubleOrNull(weightController.text);
+
+    if (height == null) {
+      showAppSnackBar(
+        context,
+        'يرجى إدخال طول صحيح أكبر من 0.',
+        type: AppSnackBarType.warning,
+      );
+      return;
+    }
+
+    if (weight == null) {
+      showAppSnackBar(
+        context,
+        'يرجى إدخال وزن صحيح أكبر من 0.',
+        type: AppSnackBarType.warning,
+      );
+      return;
+    }
+
+    if (bmi == null) {
+      showAppSnackBar(
+        context,
+        'تعذر حساب BMI. تأكد من إدخال الطول والوزن بشكل صحيح.',
+        type: AppSnackBarType.warning,
+      );
+      return;
+    }
 
     setState(() => loading = true);
 
     final request = PatientDetailsRequest(
       userId: widget.userId,
       dateOfBirth: dobController.text.trim(),
-      height: double.tryParse(heightController.text.trim()) ?? 0,
-      weight: double.tryParse(weightController.text.trim()) ?? 0,
-      bmi: bmi ?? 0,
+      height: height,
+      weight: weight,
+      bmi: bmi!,
       gender: selectedGender,
       bloodType: selectedBloodType,
-      chronicDisease: chronicController.text.trim(),
-      healthNotes: notesController.text.trim(),
+      chronicDisease:
+          chronicController.text.trim().isEmpty
+              ? null
+              : chronicController.text.trim(),
+      healthNotes:
+          notesController.text.trim().isEmpty
+              ? null
+              : notesController.text.trim(),
     );
 
     try {
-      final response = await DetailsService().createPatientDetails(request);
+      await DetailsService().createPatientDetails(request);
 
       if (!mounted) return;
       setState(() => loading = false);
 
-      if (response.statusCode == 201 || response.statusCode == 200) {
-        showAppSnackBar(
-          context,
-          'تم حفظ بيانات المريض بنجاح',
-          type: AppSnackBarType.success,
-        );
-
-        // رجوع آمن (مثل ما اعتمدنا في شاشة الطبيب)
-        if (context.canPop()) {
-          context.pop();
-          return;
-        }
-        context.go('/app/account');
-        return;
-      }
-
       showAppSnackBar(
         context,
-        'فشل الحفظ: ${response.body}',
-        type: AppSnackBarType.error,
+        'تم حفظ بيانات المريض بنجاح',
+        type: AppSnackBarType.success,
       );
+
+      // رجوع آمن
+      if (context.canPop()) {
+        context.pop();
+        return;
+      }
+      context.go('/app/account');
     } catch (e) {
       if (!mounted) return;
       setState(() => loading = false);
 
-      showAppSnackBar(context, 'حدث خطأ: $e', type: AppSnackBarType.error);
+      // Action error => SnackBar موحّد (يتعامل مع NO_INTERNET/401/500...)
+      showActionErrorSnackBar(
+        context,
+        exception: e,
+        fallback: 'تعذّر حفظ بيانات المريض.',
+      );
     }
   }
 
@@ -134,6 +176,7 @@ class _PatientDetailsFormScreenState extends State<PatientDetailsFormScreen> {
             children: [
               TextFormField(
                 controller: dobController,
+                enabled: !loading,
                 decoration: const InputDecoration(
                   labelText: "تاريخ الميلاد (YYYY-MM-DD)",
                 ),
@@ -145,8 +188,11 @@ class _PatientDetailsFormScreenState extends State<PatientDetailsFormScreen> {
 
               TextFormField(
                 controller: heightController,
+                enabled: !loading,
                 decoration: const InputDecoration(labelText: "الطول (سم)"),
-                keyboardType: TextInputType.number,
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
                 validator:
                     (v) =>
                         (v == null || v.trim().isEmpty) ? "الحقل مطلوب" : null,
@@ -155,8 +201,11 @@ class _PatientDetailsFormScreenState extends State<PatientDetailsFormScreen> {
 
               TextFormField(
                 controller: weightController,
-                decoration: const InputDecoration(labelText: "الوزن ( (كغ)"),
-                keyboardType: TextInputType.number,
+                enabled: !loading,
+                decoration: const InputDecoration(labelText: "الوزن (كغ)"),
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
                 validator:
                     (v) =>
                         (v == null || v.trim().isEmpty) ? "الحقل مطلوب" : null,
@@ -171,7 +220,7 @@ class _PatientDetailsFormScreenState extends State<PatientDetailsFormScreen> {
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Text(
-                  "BMI: ${bmi?.toStringAsFixed(2) ?? "--"}",
+                  "BMI: ${bmi?.toStringAsFixed(2) ?? '--'}",
                   style: Theme.of(context).textTheme.titleMedium?.copyWith(
                     color: cs.onSurface,
                     fontWeight: FontWeight.w600,
@@ -187,7 +236,10 @@ class _PatientDetailsFormScreenState extends State<PatientDetailsFormScreen> {
                   DropdownMenuItem(value: "male", child: Text("ذكر")),
                   DropdownMenuItem(value: "female", child: Text("أنثى")),
                 ],
-                onChanged: (val) => setState(() => selectedGender = val),
+                onChanged:
+                    loading
+                        ? null
+                        : (val) => setState(() => selectedGender = val),
                 validator: (v) => v == null ? "الحقل مطلوب" : null,
               ),
               const SizedBox(height: 15),
@@ -205,19 +257,24 @@ class _PatientDetailsFormScreenState extends State<PatientDetailsFormScreen> {
                   DropdownMenuItem(value: "O+", child: Text("O+")),
                   DropdownMenuItem(value: "O-", child: Text("O-")),
                 ],
-                onChanged: (val) => setState(() => selectedBloodType = val),
+                onChanged:
+                    loading
+                        ? null
+                        : (val) => setState(() => selectedBloodType = val),
                 validator: (v) => v == null ? "الحقل مطلوب" : null,
               ),
               const SizedBox(height: 15),
 
               TextFormField(
                 controller: chronicController,
+                enabled: !loading,
                 decoration: const InputDecoration(labelText: "أمراض مزمنة"),
               ),
               const SizedBox(height: 15),
 
               TextFormField(
                 controller: notesController,
+                enabled: !loading,
                 decoration: const InputDecoration(labelText: "ملاحظات صحية"),
                 maxLines: 4,
               ),

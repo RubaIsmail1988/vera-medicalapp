@@ -1,4 +1,5 @@
 import 'dart:convert';
+
 import 'package:flutter/material.dart';
 
 import '/services/auth_service.dart';
@@ -75,15 +76,12 @@ class _AdherenceTabState extends State<AdherenceTab> {
 
     if (patientChanged || apptChanged) {
       setState(() {
-        // refresh adherence for both roles
         adherenceFuture = _fetchAdherence();
 
-        // refresh prescriptions for patient dropdown
         if (isPatient) {
           prescriptionsFuture = _fetchPrescriptions();
         }
 
-        // clear selection if appointment filter changed to avoid stale selection
         if (apptChanged) {
           selectedPrescriptionItemId = null;
           selectedItem = null;
@@ -102,23 +100,45 @@ class _AdherenceTabState extends State<AdherenceTab> {
   }
 
   // ---------------------------------------------------------------------------
-  // Data fetchers
+  // Data fetchers (Fetch -> Inline errors only)
   // ---------------------------------------------------------------------------
 
   Future<List<Map<String, dynamic>>> _fetchAdherence() async {
     final res = await clinicalService.listAdherence();
-    if (res.statusCode != 200) return [];
-    final decoded = jsonDecode(res.body);
-    if (decoded is! List) return [];
-    return decoded.cast<Map<String, dynamic>>();
+
+    if (res.statusCode == 200) {
+      final decoded = jsonDecode(res.body);
+      if (decoded is! List) return <Map<String, dynamic>>[];
+      return decoded.cast<Map<String, dynamic>>();
+    }
+
+    Object? decoded;
+    try {
+      decoded = jsonDecode(res.body);
+    } catch (_) {
+      decoded = res.body;
+    }
+
+    throw _HttpException(res.statusCode, decoded);
   }
 
   Future<List<Map<String, dynamic>>> _fetchPrescriptions() async {
     final res = await clinicalService.listPrescriptions();
-    if (res.statusCode != 200) return [];
-    final decoded = jsonDecode(res.body);
-    if (decoded is! List) return [];
-    return decoded.cast<Map<String, dynamic>>();
+
+    if (res.statusCode == 200) {
+      final decoded = jsonDecode(res.body);
+      if (decoded is! List) return <Map<String, dynamic>>[];
+      return decoded.cast<Map<String, dynamic>>();
+    }
+
+    Object? decoded;
+    try {
+      decoded = jsonDecode(res.body);
+    } catch (_) {
+      decoded = res.body;
+    }
+
+    throw _HttpException(res.statusCode, decoded);
   }
 
   // ---------------------------------------------------------------------------
@@ -175,7 +195,6 @@ class _AdherenceTabState extends State<AdherenceTab> {
     final v = raw.trim().toLowerCase();
     if (v == "taken") return "تم تناول الجرعة";
     if (v == "skipped") return "تم تفويت الجرعة";
-    // (اختياري) قراءة فقط
     if (v == "missed") return "تم تفويت الجرعة";
     return "غير معروف";
   }
@@ -194,7 +213,6 @@ class _AdherenceTabState extends State<AdherenceTab> {
     return "skipped";
   }
 
-  // Doctor-only: try to show prescription date beside medicine name if backend provides it.
   String _prescriptionCreatedAtFromAdherence(Map<String, dynamic> a) {
     return _safeText(a["prescription_created_at"]).isNotEmpty
         ? _safeText(a["prescription_created_at"])
@@ -215,7 +233,6 @@ class _AdherenceTabState extends State<AdherenceTab> {
     final start = _tryParseDate(startRaw);
     final end = _tryParseDate(endRaw);
 
-    // المطلوب: السماح فقط عندما start_date <= اليوم <= end_date
     if (start == null || end == null) return _RangeGate.invalidOrMissing;
 
     final today = _today();
@@ -304,7 +321,6 @@ class _AdherenceTabState extends State<AdherenceTab> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Header: doctor + prescription date
                   Row(
                     children: [
                       Expanded(
@@ -328,7 +344,6 @@ class _AdherenceTabState extends State<AdherenceTab> {
                     ],
                   ),
 
-                  // No title and no medicine name (as agreed)
                   if (_doseFreqLine(dosage, freq).isNotEmpty) ...[
                     const SizedBox(height: 12),
                     Text(
@@ -429,13 +444,11 @@ class _AdherenceTabState extends State<AdherenceTab> {
           ),
         );
       },
-    ).whenComplete(() {
-      localController.dispose();
-    });
+    ).whenComplete(localController.dispose);
   }
 
   // ---------------------------------------------------------------------------
-  // Submit adherence (patient)
+  // Submit adherence (patient) -> Action (SnackBar allowed)
   // ---------------------------------------------------------------------------
 
   bool get _canSubmitCore {
@@ -457,7 +470,7 @@ class _AdherenceTabState extends State<AdherenceTab> {
 
     final res = await clinicalService.createAdherence(
       prescriptionItemId: itemId,
-      status: _statusForSend(selectedStatus), // taken | skipped فقط
+      status: _statusForSend(selectedStatus),
       takenAt: DateTime.now(),
       note: noteController.text.trim(),
     );
@@ -465,7 +478,11 @@ class _AdherenceTabState extends State<AdherenceTab> {
     if (!mounted) return;
 
     if (res.statusCode == 201 || res.statusCode == 200) {
-      showAppSnackBar(context, "تم تسجيل الالتزام بنجاح.");
+      showAppSnackBar(
+        context,
+        "تم تسجيل الالتزام بنجاح.",
+        type: AppSnackBarType.success,
+      );
 
       setState(() {
         noteController.clear();
@@ -475,7 +492,19 @@ class _AdherenceTabState extends State<AdherenceTab> {
       return;
     }
 
-    showAppSnackBar(context, "فشل تسجيل الالتزام.");
+    Object? decoded;
+    try {
+      decoded = jsonDecode(res.body);
+    } catch (_) {
+      decoded = res.body;
+    }
+
+    showActionErrorSnackBar(
+      context,
+      statusCode: res.statusCode,
+      data: decoded,
+      fallback: "فشل تسجيل الالتزام.",
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -521,21 +550,15 @@ class _AdherenceTabState extends State<AdherenceTab> {
 
     List<Map<String, dynamic>> view = all;
 
-    // Doctor context: filter by selected patient
     if (isDoctor && pid != null && pid > 0) {
       view = view.where((a) => _asInt(a["patient"]) == pid).toList();
     }
 
-    // Appointment context: filter by appointmentId (works for doctor & patient)
     if (apptId != null && apptId > 0) {
       view =
           view.where((a) {
-            // NEW: backend sends appointment_id
             final aApptId = _asInt(a["appointment_id"]);
-
-            // Backward-compat fallback (in case older payloads exist)
             final legacy = _asInt(a["appointment"]);
-
             return (aApptId ?? legacy) == apptId;
           }).toList();
     }
@@ -595,7 +618,6 @@ class _AdherenceTabState extends State<AdherenceTab> {
 
     final titleLeft = medicineName.isNotEmpty ? medicineName : "دواء";
 
-    // Doctor: show prescription date only (no doctor name, no extra line)
     final rxCreatedAtRaw = _prescriptionCreatedAtFromAdherence(a);
     final rxCreatedAtShort =
         rxCreatedAtRaw.isNotEmpty ? _formatShortDate(rxCreatedAtRaw) : "";
@@ -606,7 +628,6 @@ class _AdherenceTabState extends State<AdherenceTab> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // line 1: medicine (left) + rx date (right, subtle) + chip
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -791,11 +812,10 @@ class _AdherenceTabState extends State<AdherenceTab> {
   }
 
   // ---------------------------------------------------------------------------
-  // Patient: Medicine dropdown (two lines) with Rx date on right (no doctor here)
+  // Patient: Medicine dropdown (two lines) + Rx date on right
   // ---------------------------------------------------------------------------
 
   Widget _medicineDropdownTwoLines(List<Map<String, dynamic>> prescriptions) {
-    // NEW: apply appointment filter to prescriptions list (patient context)
     final apptId = widget.selectedAppointmentId;
     final List<Map<String, dynamic>> rxList =
         (apptId != null && apptId > 0)
@@ -844,7 +864,6 @@ class _AdherenceTabState extends State<AdherenceTab> {
         _safeText(it["frequency"]),
       );
 
-      // Right side: prescription date only
       final createdAtRaw = _safeText(p["created_at"]);
       final createdAtShort =
           createdAtRaw.isNotEmpty ? _formatShortDate(createdAtRaw) : "";
@@ -986,7 +1005,7 @@ class _AdherenceTabState extends State<AdherenceTab> {
   @override
   Widget build(BuildContext context) {
     // -------------------------------
-    // PATIENT VIEW (Mobile: fixed split)
+    // PATIENT VIEW
     // -------------------------------
     if (isPatient) {
       final scheme = Theme.of(context).colorScheme;
@@ -1009,12 +1028,35 @@ class _AdherenceTabState extends State<AdherenceTab> {
 
       return Column(
         children: [
-          // Top: form (flex 2)
+          // Top: form
           Expanded(
             flex: 2,
             child: FutureBuilder<List<Map<String, dynamic>>>(
               future: prescriptionsFuture,
               builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+
+                if (snapshot.hasError) {
+                  final inline = mapFetchExceptionToInlineState(
+                    snapshot.error!,
+                  );
+                  return Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: AppInlineErrorState(
+                      title: inline.title,
+                      message: inline.message,
+                      icon: inline.icon,
+                      onRetry: () {
+                        setState(() {
+                          prescriptionsFuture = _fetchPrescriptions();
+                        });
+                      },
+                    ),
+                  );
+                }
+
                 final prescriptions = snapshot.data ?? [];
 
                 return Padding(
@@ -1028,7 +1070,6 @@ class _AdherenceTabState extends State<AdherenceTab> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           const SizedBox(height: 12),
-
                           _medicineDropdownTwoLines(prescriptions),
 
                           if (gateMsg.isNotEmpty) ...[
@@ -1042,7 +1083,6 @@ class _AdherenceTabState extends State<AdherenceTab> {
 
                           const SizedBox(height: 12),
 
-                          // Row 1: status segmented + details + note
                           Wrap(
                             spacing: 10,
                             runSpacing: 10,
@@ -1066,7 +1106,6 @@ class _AdherenceTabState extends State<AdherenceTab> {
 
                           const SizedBox(height: 12),
 
-                          // Row 2: submit full-width
                           SizedBox(
                             width: double.infinity,
                             child: ElevatedButton(
@@ -1083,7 +1122,7 @@ class _AdherenceTabState extends State<AdherenceTab> {
             ),
           ),
 
-          // Bottom: adherence log (flex 3)
+          // Bottom: adherence log
           Expanded(
             flex: 3,
             child: Column(
@@ -1109,6 +1148,23 @@ class _AdherenceTabState extends State<AdherenceTab> {
                       if (snapshot.connectionState == ConnectionState.waiting) {
                         return const Center(child: CircularProgressIndicator());
                       }
+
+                      if (snapshot.hasError) {
+                        final inline = mapFetchExceptionToInlineState(
+                          snapshot.error!,
+                        );
+                        return AppInlineErrorState(
+                          title: inline.title,
+                          message: inline.message,
+                          icon: inline.icon,
+                          onRetry: () {
+                            setState(() {
+                              adherenceFuture = _fetchAdherence();
+                            });
+                          },
+                        );
+                      }
+
                       final all = snapshot.data ?? [];
                       final view = _filterAndSortForView(all);
                       return _buildTimeList(view);
@@ -1136,6 +1192,20 @@ class _AdherenceTabState extends State<AdherenceTab> {
                 return const Center(child: CircularProgressIndicator());
               }
 
+              if (snapshot.hasError) {
+                final inline = mapFetchExceptionToInlineState(snapshot.error!);
+                return AppInlineErrorState(
+                  title: inline.title,
+                  message: inline.message,
+                  icon: inline.icon,
+                  onRetry: () {
+                    setState(() {
+                      adherenceFuture = _fetchAdherence();
+                    });
+                  },
+                );
+              }
+
               final all = snapshot.data ?? [];
               final view = _filterAndSortForView(all);
 
@@ -1150,4 +1220,18 @@ class _AdherenceTabState extends State<AdherenceTab> {
       ],
     );
   }
+}
+
+// ---------------------------------------------------------------------------
+// Local HttpException wrapper for fetch (inline errors)
+// ---------------------------------------------------------------------------
+
+class _HttpException implements Exception {
+  final int statusCode;
+  final Object? data;
+
+  _HttpException(this.statusCode, this.data);
+
+  @override
+  String toString() => "HTTP $statusCode";
 }

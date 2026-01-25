@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -13,7 +14,7 @@ class FilesTab extends StatefulWidget {
   final int userId;
   final int? selectedPatientId; // doctor context
 
-  // NEW: appointment context
+  // appointment context
   final int? selectedAppointmentId;
 
   const FilesTab({
@@ -31,22 +32,18 @@ class FilesTab extends StatefulWidget {
 class _FilesTabState extends State<FilesTab> {
   late final ClinicalService clinicalService;
 
-  bool loadingOrders = true;
-  bool loadingFiles = false;
+  Future<List<Map<String, dynamic>>>? ordersFuture;
+  Future<List<Map<String, dynamic>>>? filesFuture;
+
   bool uploading = false;
 
-  String? ordersErrorMessage;
-  String? filesErrorMessage;
-
-  List<Map<String, dynamic>> orders = [];
+  List<Map<String, dynamic>> lastOrders = [];
   int? selectedOrderId;
-
-  List<Map<String, dynamic>> orderFiles = [];
 
   bool get isPatient => widget.role == "patient";
   bool get isDoctor => widget.role == "doctor";
 
-  bool get _hasAppointmentFilter {
+  bool get hasAppointmentFilter {
     final apptId = widget.selectedAppointmentId;
     return apptId != null && apptId > 0;
   }
@@ -55,7 +52,7 @@ class _FilesTabState extends State<FilesTab> {
   void initState() {
     super.initState();
     clinicalService = ClinicalService(authService: AuthService());
-    _loadOrders();
+    ordersFuture = _fetchOrders();
   }
 
   @override
@@ -68,12 +65,10 @@ class _FilesTabState extends State<FilesTab> {
         oldWidget.selectedAppointmentId != widget.selectedAppointmentId;
 
     if (patientChanged || apptChanged) {
-      setState(() {
-        selectedOrderId = null;
-        orderFiles = [];
-        filesErrorMessage = null;
-      });
-      _loadOrders();
+      selectedOrderId = null;
+      filesFuture = null;
+      ordersFuture = _fetchOrders();
+      if (mounted) setState(() {});
     }
   }
 
@@ -109,7 +104,7 @@ class _FilesTabState extends State<FilesTab> {
     final v = raw.trim().toLowerCase();
     if (v == "lab_test") return "تحليل";
     if (v == "medical_imaging") return "صورة";
-    return raw;
+    return raw.trim();
   }
 
   IconData _categoryIcon(String raw) {
@@ -133,7 +128,7 @@ class _FilesTabState extends State<FilesTab> {
     final oid = selectedOrderId;
     if (oid == null) return "";
 
-    final match = orders.where((o) => _asInt(o["id"]) == oid);
+    final match = lastOrders.where((o) => _asInt(o["id"]) == oid);
     if (match.isEmpty) return "";
     return match.first["order_category"]?.toString().trim() ?? "";
   }
@@ -143,17 +138,11 @@ class _FilesTabState extends State<FilesTab> {
   }
 
   // ---------------------------------------------------------------------------
-  // Load orders / files
+  // Fetch (orders / files) -- NO SnackBar
   // ---------------------------------------------------------------------------
 
-  Future<void> _loadOrders() async {
-    setState(() {
-      loadingOrders = true;
-      ordersErrorMessage = null;
-    });
-
+  Future<List<Map<String, dynamic>>> _fetchOrders() async {
     final res = await clinicalService.listOrders();
-    if (!mounted) return;
 
     if (res.statusCode == 200) {
       final decoded = jsonDecode(res.body);
@@ -166,7 +155,7 @@ class _FilesTabState extends State<FilesTab> {
       final selectedPid = widget.selectedPatientId;
       final apptId = widget.selectedAppointmentId;
 
-      List<Map<String, dynamic>> filtered = list;
+      var filtered = list;
 
       // Doctor context: filter by selected patient
       if (isDoctor && selectedPid != null && selectedPid > 0) {
@@ -187,86 +176,85 @@ class _FilesTabState extends State<FilesTab> {
         return db.compareTo(da);
       });
 
-      // Ensure selectedOrderId still exists after filtering
-      final currentSelected = selectedOrderId;
-      final stillExists =
-          currentSelected != null &&
-          filtered.any((o) => _asInt(o["id"]) == currentSelected);
-
-      setState(() {
-        orders = filtered;
-        loadingOrders = false;
-
-        if (!stillExists) {
-          selectedOrderId = null;
-          orderFiles = [];
-          filesErrorMessage = null;
-        }
-      });
-
-      return;
+      return filtered;
     }
 
-    final message =
-        (res.statusCode == 401)
-            ? "انتهت الجلسة، يرجى تسجيل الدخول مجددًا."
-            : (res.statusCode == 403)
-            ? "لا تملك الصلاحية لعرض الطلبات."
-            : "فشل تحميل الطلبات (${res.statusCode}).";
+    Object? body;
+    try {
+      body = jsonDecode(res.body);
+    } catch (_) {
+      body = res.body;
+    }
 
-    setState(() {
-      loadingOrders = false;
-      ordersErrorMessage = message;
-    });
+    final message = mapHttpErrorToArabicMessage(
+      statusCode: res.statusCode,
+      data: body,
+    );
 
-    showAppSnackBar(context, message, type: AppSnackBarType.error);
+    throw Exception(message);
   }
 
-  Future<void> _loadFilesForSelectedOrder() async {
-    final oid = selectedOrderId;
-    if (oid == null) {
-      setState(() {
-        orderFiles = [];
-        filesErrorMessage = null;
-      });
-      return;
-    }
-
-    setState(() {
-      loadingFiles = true;
-      filesErrorMessage = null;
-    });
-
-    final res = await clinicalService.listOrderFiles(oid);
-    if (!mounted) return;
+  Future<List<Map<String, dynamic>>> _fetchFiles(int orderId) async {
+    final res = await clinicalService.listOrderFiles(orderId);
 
     if (res.statusCode == 200) {
       final decoded = jsonDecode(res.body);
+
       final List<Map<String, dynamic>> list =
           decoded is List
               ? decoded.cast<Map<String, dynamic>>()
               : <Map<String, dynamic>>[];
 
-      setState(() {
-        orderFiles = list;
-        loadingFiles = false;
-      });
-      return;
+      return list;
     }
 
-    final message =
-        (res.statusCode == 401)
-            ? "انتهت الجلسة، يرجى تسجيل الدخول مجددًا."
-            : (res.statusCode == 403)
-            ? "لا تملك الصلاحية لعرض ملفات هذا الطلب."
-            : "فشل تحميل الملفات (${res.statusCode}).";
+    Object? body;
+    try {
+      body = jsonDecode(res.body);
+    } catch (_) {
+      body = res.body;
+    }
 
+    final message = mapHttpErrorToArabicMessage(
+      statusCode: res.statusCode,
+      data: body,
+    );
+
+    throw Exception(message);
+  }
+
+  Future<void> _reloadOrders() async {
+    final future = _fetchOrders();
+    if (!mounted) return;
+    setState(() => ordersFuture = future);
+    final list = await future;
+
+    if (!mounted) return;
+    lastOrders = list;
+
+    // Ensure selectedOrderId still exists after filtering
+    final currentSelected = selectedOrderId;
+    final stillExists =
+        currentSelected != null &&
+        list.any((o) => _asInt(o["id"]) == currentSelected);
+
+    if (!stillExists) {
+      setState(() {
+        selectedOrderId = null;
+        filesFuture = null;
+      });
+    }
+  }
+
+  Future<void> _selectOrderAndLoadFiles(int? orderId) async {
     setState(() {
-      loadingFiles = false;
-      filesErrorMessage = message;
+      selectedOrderId = orderId;
+      filesFuture = (orderId == null) ? null : _fetchFiles(orderId);
     });
 
-    showAppSnackBar(context, message, type: AppSnackBarType.error);
+    if (orderId != null) {
+      await filesFuture;
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -296,10 +284,10 @@ class _FilesTabState extends State<FilesTab> {
     }
   }
 
-  Map<String, dynamic>? _latestFile() {
-    if (orderFiles.isEmpty) return null;
+  Map<String, dynamic>? _latestFileFrom(List<Map<String, dynamic>> files) {
+    if (files.isEmpty) return null;
 
-    final sorted = [...orderFiles];
+    final sorted = [...files];
     sorted.sort((a, b) {
       final aTime = a["uploaded_at"]?.toString() ?? "";
       final bTime = b["uploaded_at"]?.toString() ?? "";
@@ -313,16 +301,17 @@ class _FilesTabState extends State<FilesTab> {
     return sorted.first;
   }
 
-  bool get _canUploadForPatient {
+  bool _canUploadForPatientWithFiles(List<Map<String, dynamic>> files) {
     if (!isPatient) return false;
     if (selectedOrderId == null) return false;
 
-    final last = _latestFile();
+    final last = _latestFileFrom(files);
     if (last == null) return true;
 
     final status = _normalizedReviewStatus(
       last["review_status"]?.toString() ?? "",
     );
+
     if (status == "pending_review") return false;
     if (status == "approved") return false;
     if (status == "rejected") return true;
@@ -331,7 +320,7 @@ class _FilesTabState extends State<FilesTab> {
   }
 
   // ---------------------------------------------------------------------------
-  // Upload
+  // Upload (Action) -- SnackBar allowed
   // ---------------------------------------------------------------------------
 
   bool _isAllowedExtension(String filename) {
@@ -342,8 +331,8 @@ class _FilesTabState extends State<FilesTab> {
         lower.endsWith(".pdf");
   }
 
-  Future<void> _pickAndUpload() async {
-    if (!_canUploadForPatient) {
+  Future<void> _pickAndUpload(List<Map<String, dynamic>> currentFiles) async {
+    if (!_canUploadForPatientWithFiles(currentFiles)) {
       showAppSnackBar(
         context,
         "لا يمكن الرفع الآن. يوجد ملف قيد المراجعة أو تم اعتماد النتيجة.",
@@ -388,68 +377,57 @@ class _FilesTabState extends State<FilesTab> {
 
     setState(() => uploading = true);
 
-    final streamed = await clinicalService.uploadFileToOrderBytes(
-      orderId: oid,
-      bytes: bytes,
-      filename: filename,
-    );
-
-    final statusCode = streamed.statusCode;
-    final bodyText = await streamed.stream.bytesToString();
-
-    if (!mounted) return;
-    setState(() => uploading = false);
-
-    if (statusCode == 201) {
-      showAppSnackBar(
-        context,
-        "تم رفع الملف بنجاح.",
-        type: AppSnackBarType.success,
-      );
-      await _loadFilesForSelectedOrder();
-      return;
-    }
-
-    if (statusCode == 401) {
-      showAppSnackBar(
-        context,
-        "انتهت الجلسة، يرجى تسجيل الدخول مجددًا.",
-        type: AppSnackBarType.error,
-      );
-      return;
-    }
-
-    if (statusCode == 403) {
-      showAppSnackBar(
-        context,
-        "لا تملك الصلاحية لرفع ملف لهذا الطلب.",
-        type: AppSnackBarType.error,
-      );
-      return;
-    }
-
     try {
-      final decoded = jsonDecode(bodyText);
-      final detail =
-          (decoded is Map && decoded["detail"] != null)
-              ? decoded["detail"].toString()
-              : null;
-      showAppSnackBar(
-        context,
-        detail ?? "فشل رفع الملف ($statusCode).",
-        type: AppSnackBarType.error,
+      final streamed = await clinicalService.uploadFileToOrderBytes(
+        orderId: oid,
+        bytes: bytes,
+        filename: filename,
       );
-    } catch (_) {
-      showAppSnackBar(
+
+      final statusCode = streamed.statusCode;
+      final bodyText = await streamed.stream.bytesToString();
+
+      if (!mounted) return;
+      setState(() => uploading = false);
+
+      if (statusCode == 201) {
+        showAppSnackBar(
+          context,
+          "تم رفع الملف بنجاح.",
+          type: AppSnackBarType.success,
+        );
+
+        if (selectedOrderId != null) {
+          setState(() {
+            filesFuture = _fetchFiles(selectedOrderId!);
+          });
+          await filesFuture;
+        }
+        return;
+      }
+
+      Object? body;
+      try {
+        body = jsonDecode(bodyText);
+      } catch (_) {
+        body = bodyText;
+      }
+
+      showApiErrorSnackBar(context, statusCode: statusCode, data: body);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => uploading = false);
+
+      showActionErrorSnackBar(
         context,
-        "فشل رفع الملف ($statusCode).",
-        type: AppSnackBarType.error,
+        exception: e,
+        fallback: 'فشل رفع الملف.',
       );
     }
   }
 
   // ---------------------------------------------------------------------------
-  // Delete (patient, pending only)
+  // Delete (Action) -- SnackBar allowed
   // ---------------------------------------------------------------------------
 
   Future<void> _deleteFile(int fileId) async {
@@ -469,44 +447,46 @@ class _FilesTabState extends State<FilesTab> {
 
     setState(() => uploading = true);
 
-    final res = await clinicalService.deleteMedicalFile(fileId);
+    try {
+      final res = await clinicalService.deleteMedicalFile(fileId);
 
-    if (!mounted) return;
-    setState(() => uploading = false);
+      if (!mounted) return;
+      setState(() => uploading = false);
 
-    if (res.statusCode == 204 || res.statusCode == 200) {
-      showAppSnackBar(
+      if (res.statusCode == 204 || res.statusCode == 200) {
+        showAppSnackBar(
+          context,
+          "تم حذف الملف بنجاح.",
+          type: AppSnackBarType.success,
+        );
+
+        if (selectedOrderId != null) {
+          setState(() {
+            filesFuture = _fetchFiles(selectedOrderId!);
+          });
+          await filesFuture;
+        }
+        return;
+      }
+
+      Object? body;
+      try {
+        body = jsonDecode(res.body);
+      } catch (_) {
+        body = res.body;
+      }
+
+      showApiErrorSnackBar(context, statusCode: res.statusCode, data: body);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => uploading = false);
+
+      showActionErrorSnackBar(
         context,
-        "تم حذف الملف بنجاح.",
-        type: AppSnackBarType.success,
+        exception: e,
+        fallback: 'فشل حذف الملف.',
       );
-      await _loadFilesForSelectedOrder();
-      return;
     }
-
-    if (res.statusCode == 401) {
-      showAppSnackBar(
-        context,
-        "انتهت الجلسة، يرجى تسجيل الدخول مجددًا.",
-        type: AppSnackBarType.error,
-      );
-      return;
-    }
-
-    if (res.statusCode == 403) {
-      showAppSnackBar(
-        context,
-        "لا تملك الصلاحية لحذف هذا الملف (مسموح فقط عندما يكون قيد المراجعة).",
-        type: AppSnackBarType.error,
-      );
-      return;
-    }
-
-    showAppSnackBar(
-      context,
-      "فشل حذف الملف (${res.statusCode}).",
-      type: AppSnackBarType.error,
-    );
   }
 
   // ---------------------------------------------------------------------------
@@ -534,50 +514,18 @@ class _FilesTabState extends State<FilesTab> {
     return parts.join(" • ");
   }
 
-  Widget _stateView({
-    required IconData icon,
-    required String title,
-    required String message,
-    Widget? action,
-  }) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 40),
-            const SizedBox(height: 12),
-            Text(
-              title,
-              style: Theme.of(context).textTheme.titleMedium,
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 8),
-            Text(message, textAlign: TextAlign.center),
-            if (action != null) ...[const SizedBox(height: 16), action],
-          ],
-        ),
-      ),
-    );
-  }
-
   // ---------------------------------------------------------------------------
   // Build
   // ---------------------------------------------------------------------------
 
   @override
   Widget build(BuildContext context) {
-    final hasOrders = orders.isNotEmpty;
-    final canInteractWithDropdown = !loadingOrders && hasOrders;
-    final uploadEnabled = _canUploadForPatient && !uploading;
-
     final emptyOrdersMessage =
         isDoctor
-            ? (_hasAppointmentFilter
+            ? (hasAppointmentFilter
                 ? "لا توجد طلبات لهذا المريض ضمن هذا الموعد."
                 : "لا توجد طلبات لهذا المريض.")
-            : (_hasAppointmentFilter
+            : (hasAppointmentFilter
                 ? "لا توجد طلبات مرتبطة بهذا الموعد."
                 : "لا توجد طلبات طبية حتى الآن.");
 
@@ -585,182 +533,303 @@ class _FilesTabState extends State<FilesTab> {
       padding: const EdgeInsets.all(12),
       child: Column(
         children: [
-          // Orders dropdown / state
-          if (loadingOrders)
-            const Padding(
-              padding: EdgeInsets.all(24),
-              child: CircularProgressIndicator(),
-            )
-          else if (ordersErrorMessage != null)
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(12),
-                child: Column(
-                  children: [
-                    Text(ordersErrorMessage!, textAlign: TextAlign.center),
-                    const SizedBox(height: 10),
-                    SizedBox(
-                      width: double.infinity,
-                      child: OutlinedButton.icon(
-                        onPressed: () => _loadOrders(),
-                        icon: const Icon(Icons.refresh),
-                        label: const Text("إعادة المحاولة"),
-                      ),
+          FutureBuilder<List<Map<String, dynamic>>>(
+            future: ordersFuture,
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const Padding(
+                  padding: EdgeInsets.all(24),
+                  child: CircularProgressIndicator(),
+                );
+              }
+
+              if (snapshot.hasError) {
+                final mapped = mapFetchExceptionToInlineState(snapshot.error!);
+
+                return Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                      children: [
+                        AppInlineErrorState(
+                          title: mapped.title,
+                          message: mapped.message,
+                          icon: mapped.icon,
+                          onRetry: _reloadOrders,
+                        ),
+                      ],
                     ),
-                  ],
+                  ),
+                );
+              }
+
+              final list = snapshot.data ?? [];
+              lastOrders = list;
+
+              if (list.isEmpty) {
+                return Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Text(
+                      emptyOrdersMessage,
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                );
+              }
+
+              final canInteract = !uploading;
+
+              return DropdownButtonFormField<int>(
+                isExpanded: true,
+                menuMaxHeight: 320,
+                value: selectedOrderId,
+                decoration: const InputDecoration(
+                  labelText: "اختر طلبًا طبيًا",
+                  border: OutlineInputBorder(),
                 ),
-              ),
-            )
-          else if (!hasOrders)
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(12),
-                child: Text(emptyOrdersMessage, textAlign: TextAlign.center),
-              ),
-            )
-          else
-            DropdownButtonFormField<int>(
-              isExpanded: true,
-              menuMaxHeight: 320,
-              value: selectedOrderId,
-              decoration: const InputDecoration(
-                labelText: "اختر طلبًا طبيًا",
-                border: OutlineInputBorder(),
-              ),
-              items:
-                  orders
-                      .map((o) {
-                        final id = int.tryParse(o["id"]?.toString() ?? "");
-                        if (id == null) return null;
-                        return DropdownMenuItem<int>(
-                          value: id,
-                          child: Text(
-                            _orderTitle(o),
-                            overflow: TextOverflow.ellipsis,
-                            maxLines: 1,
-                          ),
-                        );
-                      })
-                      .whereType<DropdownMenuItem<int>>()
-                      .toList(),
-              onChanged:
-                  canInteractWithDropdown
-                      ? (value) async {
-                        setState(() {
-                          selectedOrderId = value;
-                          orderFiles = [];
-                          filesErrorMessage = null;
-                        });
-                        await _loadFilesForSelectedOrder();
-                      }
-                      : null,
-            ),
+                items:
+                    list
+                        .map((o) {
+                          final id = int.tryParse(o["id"]?.toString() ?? "");
+                          if (id == null) return null;
+                          return DropdownMenuItem<int>(
+                            value: id,
+                            child: Text(
+                              _orderTitle(o),
+                              overflow: TextOverflow.ellipsis,
+                              maxLines: 1,
+                            ),
+                          );
+                        })
+                        .whereType<DropdownMenuItem<int>>()
+                        .toList(),
+                onChanged:
+                    canInteract
+                        ? (value) async {
+                          await _selectOrderAndLoadFiles(value);
+                        }
+                        : null,
+              );
+            },
+          ),
 
           const SizedBox(height: 12),
 
-          // Upload button (patient only)
-          if (isPatient)
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                onPressed: uploadEnabled ? _pickAndUpload : null,
-                icon:
-                    uploading
-                        ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                        : const Icon(Icons.upload_file),
-                label: Text(
-                  uploading ? "جارٍ الرفع..." : "رفع ملف (JPG/PNG/PDF)",
-                ),
-              ),
-            ),
-
-          const SizedBox(height: 12),
-
-          // Files list / state
           Expanded(
             child:
                 selectedOrderId == null
-                    ? _stateView(
-                      icon: Icons.info_outline,
-                      title: "اختر طلبًا",
-                      message: "اختر طلبًا من الأعلى لعرض ملفاته.",
+                    ? const Center(
+                      child: Text("اختر طلبًا من الأعلى لعرض ملفاته."),
                     )
-                    : loadingFiles
-                    ? const Center(child: CircularProgressIndicator())
-                    : (filesErrorMessage != null)
-                    ? _stateView(
-                      icon: Icons.error_outline,
-                      title: "تعذر تحميل الملفات",
-                      message: filesErrorMessage!,
-                      action: SizedBox(
-                        width: double.infinity,
-                        child: OutlinedButton.icon(
-                          onPressed: _loadFilesForSelectedOrder,
-                          icon: const Icon(Icons.refresh),
-                          label: const Text("إعادة المحاولة"),
-                        ),
-                      ),
-                    )
-                    : orderFiles.isEmpty
-                    ? _stateView(
-                      icon: Icons.folder_off_outlined,
-                      title: "لا توجد ملفات",
-                      message: "لا توجد ملفات مرفوعة لهذا الطلب.",
-                    )
-                    : ListView.separated(
-                      itemCount: orderFiles.length,
-                      separatorBuilder: (_, __) => const SizedBox(height: 8),
-                      itemBuilder: (context, index) {
-                        final f = orderFiles[index];
+                    : FutureBuilder<List<Map<String, dynamic>>>(
+                      future: filesFuture,
+                      builder: (context, snapshot) {
+                        // أول اختيار للطلب قد يجعل filesFuture null لحظة
+                        if (filesFuture == null) {
+                          return const Center(
+                            child: CircularProgressIndicator(),
+                          );
+                        }
 
-                        final fileId = int.tryParse(f["id"]?.toString() ?? "");
-                        final filename =
-                            (f["original_filename"]
-                                        ?.toString()
-                                        .trim()
-                                        .isNotEmpty ==
-                                    true)
-                                ? f["original_filename"].toString()
-                                : (f["file"]?.toString() ?? "");
+                        if (snapshot.connectionState ==
+                            ConnectionState.waiting) {
+                          return const Center(
+                            child: CircularProgressIndicator(),
+                          );
+                        }
 
-                        final statusNorm = _normalizedReviewStatus(
-                          f["review_status"]?.toString() ?? "",
-                        );
-                        final statusLabel = _reviewStatusLabel(statusNorm);
+                        if (snapshot.hasError) {
+                          final mapped = mapFetchExceptionToInlineState(
+                            snapshot.error!,
+                          );
 
-                        final note =
-                            (f["doctor_note"]?.toString() ?? "").trim();
+                          return RefreshIndicator(
+                            onRefresh: () async {
+                              final oid = selectedOrderId;
+                              if (oid == null) return;
+                              final future = _fetchFiles(oid);
+                              setState(() => filesFuture = future);
+                              await future;
+                            },
+                            child: ListView(
+                              physics: const AlwaysScrollableScrollPhysics(),
+                              children: [
+                                const SizedBox(height: 80),
+                                AppInlineErrorState(
+                                  title: mapped.title,
+                                  message: mapped.message,
+                                  icon: mapped.icon,
+                                  onRetry: () async {
+                                    final oid = selectedOrderId;
+                                    if (oid == null) return;
+                                    final future = _fetchFiles(oid);
+                                    setState(() => filesFuture = future);
+                                    await future;
+                                  },
+                                ),
+                              ],
+                            ),
+                          );
+                        }
 
-                        final canDelete =
+                        final files = snapshot.data ?? [];
+                        final uploadEnabled =
                             isPatient &&
-                            statusNorm == "pending_review" &&
-                            fileId != null &&
-                            !uploading;
+                            !uploading &&
+                            _canUploadForPatientWithFiles(files);
 
-                        return Card(
-                          child: ListTile(
-                            leading: CircleAvatar(
-                              child: Icon(_categoryIconForSelectedOrder()),
+                        return Column(
+                          children: [
+                            if (isPatient)
+                              SizedBox(
+                                width: double.infinity,
+                                child: ElevatedButton.icon(
+                                  onPressed:
+                                      uploadEnabled
+                                          ? () => _pickAndUpload(files)
+                                          : null,
+                                  icon:
+                                      uploading
+                                          ? const SizedBox(
+                                            width: 18,
+                                            height: 18,
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                            ),
+                                          )
+                                          : const Icon(Icons.upload_file),
+                                  label: Text(
+                                    uploading
+                                        ? "جارٍ الرفع..."
+                                        : "رفع ملف (JPG/PNG/PDF)",
+                                  ),
+                                ),
+                              ),
+                            if (isPatient) const SizedBox(height: 12),
+
+                            Expanded(
+                              child:
+                                  files.isEmpty
+                                      ? RefreshIndicator(
+                                        onRefresh: () async {
+                                          final oid = selectedOrderId;
+                                          if (oid == null) return;
+                                          final future = _fetchFiles(oid);
+                                          setState(() => filesFuture = future);
+                                          await future;
+                                        },
+                                        child: ListView(
+                                          physics:
+                                              const AlwaysScrollableScrollPhysics(),
+                                          children: const [
+                                            SizedBox(height: 140),
+                                            Center(
+                                              child: Text(
+                                                "لا توجد ملفات مرفوعة لهذا الطلب.",
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      )
+                                      : RefreshIndicator(
+                                        onRefresh: () async {
+                                          final oid = selectedOrderId;
+                                          if (oid == null) return;
+                                          final future = _fetchFiles(oid);
+                                          setState(() => filesFuture = future);
+                                          await future;
+                                        },
+                                        child: ListView.separated(
+                                          itemCount: files.length,
+                                          separatorBuilder:
+                                              (_, __) =>
+                                                  const SizedBox(height: 8),
+                                          itemBuilder: (context, index) {
+                                            final f = files[index];
+
+                                            final fileId = int.tryParse(
+                                              f["id"]?.toString() ?? "",
+                                            );
+
+                                            final original =
+                                                (f["original_filename"]
+                                                            ?.toString()
+                                                            .trim()
+                                                            .isNotEmpty ==
+                                                        true)
+                                                    ? f["original_filename"]
+                                                        .toString()
+                                                    : "";
+
+                                            final fallbackName =
+                                                (f["file"]?.toString() ?? "");
+
+                                            final filename =
+                                                original.isNotEmpty
+                                                    ? original
+                                                    : fallbackName;
+
+                                            final statusNorm =
+                                                _normalizedReviewStatus(
+                                                  f["review_status"]
+                                                          ?.toString() ??
+                                                      "",
+                                                );
+
+                                            final statusLabel =
+                                                _reviewStatusLabel(statusNorm);
+
+                                            final note =
+                                                (f["doctor_note"]?.toString() ??
+                                                        "")
+                                                    .trim();
+
+                                            final canDelete =
+                                                isPatient &&
+                                                !uploading &&
+                                                statusNorm ==
+                                                    "pending_review" &&
+                                                fileId != null;
+
+                                            return Card(
+                                              child: ListTile(
+                                                leading: CircleAvatar(
+                                                  child: Icon(
+                                                    _categoryIconForSelectedOrder(),
+                                                  ),
+                                                ),
+                                                title: Text(
+                                                  filename.isNotEmpty
+                                                      ? filename
+                                                      : "ملف",
+                                                ),
+                                                subtitle: Text(
+                                                  "الحالة: $statusLabel${note.isNotEmpty ? "\nملاحظة الطبيب: $note" : ""}",
+                                                ),
+                                                trailing:
+                                                    canDelete
+                                                        ? IconButton(
+                                                          tooltip:
+                                                              "حذف الملف (قيد المراجعة فقط)",
+                                                          icon: const Icon(
+                                                            Icons
+                                                                .delete_outline,
+                                                          ),
+                                                          onPressed: () async {
+                                                            await _deleteFile(
+                                                              fileId,
+                                                            );
+                                                          },
+                                                        )
+                                                        : null,
+                                              ),
+                                            );
+                                          },
+                                        ),
+                                      ),
                             ),
-                            title: Text(filename.isNotEmpty ? filename : "ملف"),
-                            subtitle: Text(
-                              "الحالة: $statusLabel${note.isNotEmpty ? "\nملاحظة الطبيب: $note" : ""}",
-                            ),
-                            trailing:
-                                canDelete
-                                    ? IconButton(
-                                      tooltip: "حذف الملف (قيد المراجعة فقط)",
-                                      icon: const Icon(Icons.delete_outline),
-                                      onPressed: () async {
-                                        await _deleteFile(fileId);
-                                      },
-                                    )
-                                    : null,
-                          ),
+                          ],
                         );
                       },
                     ),

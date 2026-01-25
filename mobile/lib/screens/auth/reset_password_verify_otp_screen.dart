@@ -38,41 +38,38 @@ class _ResetPasswordVerifyOtpScreenState
     final code = codeController.text.trim();
     final service = PasswordResetService();
 
-    bool valid = false;
     try {
-      valid = await service.verifyOtp(email: widget.email, code: code);
-    } catch (_) {
+      final valid = await service.verifyOtp(email: widget.email, code: code);
+
       if (!mounted) return;
       setState(() => loading = false);
 
-      showAppSnackBar(
+      if (!valid) {
+        showActionErrorSnackBar(
+          context,
+          fallback: 'رمز غير صحيح أو منتهي الصلاحية.',
+        );
+        return;
+      }
+
+      final encodedEmail = Uri.encodeComponent(widget.email);
+      final encodedCode = Uri.encodeComponent(code);
+      context.go('/forgot-password/new?email=$encodedEmail&code=$encodedCode');
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => loading = false);
+
+      showActionErrorSnackBar(
         context,
-        'تعذّر التحقق من الرمز. تحقق من الاتصال ثم حاول مرة أخرى.',
-        type: AppSnackBarType.error,
+        exception: e,
+        fallback: 'تعذّر التحقق من الرمز. تحقق من الاتصال ثم حاول مرة أخرى.',
       );
-      return;
     }
-
-    if (!mounted) return;
-    setState(() => loading = false);
-
-    if (!valid) {
-      showAppSnackBar(
-        context,
-        'رمز غير صحيح أو منتهي الصلاحية.',
-        type: AppSnackBarType.error,
-      );
-      return;
-    }
-
-    final encodedEmail = Uri.encodeComponent(widget.email);
-    final encodedCode = Uri.encodeComponent(code);
-    context.go('/forgot-password/new?email=$encodedEmail&code=$encodedCode');
   }
 
   void goBackToEmail() {
-    final encodedEmail = Uri.encodeComponent(widget.email);
-    context.go('/forgot-password?email=$encodedEmail');
+    // لا يوجد await هنا، فمسموح استخدام context مباشرة
+    context.go('/forgot-password');
   }
 
   @override
@@ -127,7 +124,6 @@ class _ResetPasswordVerifyOtpScreenState
                     ),
                   ),
                   const SizedBox(height: 16),
-
                   Card(
                     child: Padding(
                       padding: const EdgeInsets.all(16),
@@ -143,10 +139,11 @@ class _ResetPasswordVerifyOtpScreenState
                             validator: codeValidator,
                             enabled: !loading,
                             textInputAction: TextInputAction.done,
-                            onFieldSubmitted: (_) => verify(),
+                            onFieldSubmitted: (_) {
+                              if (!loading) verify();
+                            },
                           ),
                           const SizedBox(height: 8),
-
                           SizedBox(
                             width: double.infinity,
                             child: ElevatedButton(
@@ -164,7 +161,6 @@ class _ResetPasswordVerifyOtpScreenState
                             ),
                           ),
                           const SizedBox(height: 8),
-
                           TextButton(
                             onPressed:
                                 loading ? null : () => context.go('/login'),

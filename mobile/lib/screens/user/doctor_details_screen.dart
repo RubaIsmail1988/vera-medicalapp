@@ -88,29 +88,30 @@ class _DoctorDetailsScreenState extends State<DoctorDetailsScreen> {
         return;
       }
 
+      Object? body;
+      try {
+        body = jsonDecode(response.body);
+      } catch (_) {
+        body = response.body;
+      }
+
       setState(() {
         loading = false;
-        errorMessage = "فشل تحميل التفاصيل (Code: ${response.statusCode})";
+        errorMessage = mapHttpErrorToArabicMessage(
+          statusCode: response.statusCode,
+          data: body,
+        );
       });
-
-      showAppSnackBar(
-        context,
-        'تعذّر تحميل تفاصيل الطبيب.',
-        type: AppSnackBarType.error,
-      );
     } catch (e) {
       if (!mounted) return;
 
       setState(() {
         loading = false;
-        errorMessage = "خطأ اتصال: $e";
+        errorMessage = mapExceptionToArabicMessage(
+          e,
+          fallback: 'تعذّر تحميل تفاصيل الطبيب. حاول مرة أخرى.',
+        );
       });
-
-      showAppSnackBar(
-        context,
-        'تعذّر الاتصال بالخادم. حاول لاحقاً.',
-        type: AppSnackBarType.error,
-      );
     }
   }
 

@@ -3,8 +3,9 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../../services/appointments_service.dart';
-import '../../../utils/ui_helpers.dart';
+import '/services/appointments_service.dart';
+import '/utils/ui_helpers.dart';
+import '/utils/api_exception.dart';
 
 class DoctorAbsencesScreen extends StatefulWidget {
   const DoctorAbsencesScreen({super.key});

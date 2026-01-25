@@ -1,3 +1,4 @@
+// lib/services/auth_service.dart
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
@@ -5,6 +6,12 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/register_request.dart';
 import '/utils/constants.dart';
+import '/utils/api_exception.dart';
+import '/services/local_notifications_service.dart';
+
+extension HttpStatusX on int {
+  bool get is2xx => this >= 200 && this < 300;
+}
 
 class AuthService {
   // ---------------- حفظ واسترجاع التوكنات ----------------
@@ -35,24 +42,21 @@ class AuthService {
   // ---------------- أدوات بناء الروابط ----------------
 
   Uri buildAccountsUri(String endpoint) {
-    // endpoint قد يأتي "/users/" أو "users/"
     final cleanBase =
         accountsBaseUrl.endsWith('/')
             ? accountsBaseUrl.substring(0, accountsBaseUrl.length - 1)
             : accountsBaseUrl;
 
     final cleanEndpoint = endpoint.startsWith('/') ? endpoint : '/$endpoint';
-
     return Uri.parse('$cleanBase$cleanEndpoint');
   }
 
   // ---------------- تسجيل المستخدم ----------------
 
   Future<http.Response> register(RegisterRequest request) async {
-    // endpoint: /api/accounts/register/<role>/
     final url = buildAccountsUri('/register/${request.role}/');
 
-    final response = await http.post(
+    return http.post(
       url,
       headers: {
         "Content-Type": "application/json",
@@ -60,8 +64,6 @@ class AuthService {
       },
       body: jsonEncode(request.toJson()),
     );
-
-    return response;
   }
 
   // ---------------- تسجيل الدخول ----------------
@@ -73,7 +75,7 @@ class AuthService {
       body: {'email': email, 'password': password},
     );
 
-    // 1) حالة النجاح: مستخدم مفعّل (backend يعيد 200)
+    // 1) نجاح (200)
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
 
@@ -84,7 +86,6 @@ class AuthService {
       final access = data['access'] ?? data['access_token'] ?? data['token'];
       final refresh = data['refresh'];
 
-      //  حفظ access دائمًا إذا كان موجودًا، وحفظ refresh فقط إذا كان موجودًا
       final prefs = await SharedPreferences.getInstance();
 
       if (access is String && access.isNotEmpty) {
@@ -97,6 +98,9 @@ class AuthService {
 
       if (role is String && userId is int) {
         await saveUserInfo(role, userId);
+
+        // مهم لتوجيه الإشعارات بدون await داخل tap handler
+        LocalNotificationsService.setCurrentRole(role);
       }
 
       return {
@@ -107,7 +111,7 @@ class AuthService {
       };
     }
 
-    // 2) غير 200 → إما not_active أو invalid
+    // 2) غير 200 → not_active أو invalid
     try {
       final body = jsonDecode(response.body);
 
@@ -153,19 +157,12 @@ class AuthService {
         }
       }
 
-      // invalid
+      // invalid credentials
       return null;
     } catch (_) {
       return null;
     }
   }
-
-  //Future<void> saveAuthData(String token, String role, bool isActivated) async {
-  //  final prefs = await SharedPreferences.getInstance();
-  //  await prefs.setString('access_token', token);
-  // await prefs.setString('user_role', role);
-  // await prefs.setBool('is_activated', isActivated);
-  // }
 
   // ---------------- تحديث التوكن ----------------
 
@@ -185,7 +182,7 @@ class AuthService {
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
       final access = data["access"];
-      if (access is String) {
+      if (access is String && access.isNotEmpty) {
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString("access_token", access);
       }
@@ -238,7 +235,6 @@ class AuthService {
 
     String? token = await getAccessToken();
 
-    // إذا لا يوجد توكن أصلًا → جرّب refresh
     if (token == null) {
       await refreshToken();
       token = await getAccessToken();
@@ -253,9 +249,7 @@ class AuthService {
     if (first.statusCode == 401) {
       await refreshToken();
       final newToken = await getAccessToken();
-      if (newToken == null) {
-        return first;
-      }
+      if (newToken == null) return first;
       return send(newToken);
     }
 
@@ -266,9 +260,7 @@ class AuthService {
   Future<Map<String, dynamic>?> fetchAndStoreCurrentUser() async {
     final response = await authorizedRequest("/me/", "GET");
 
-    if (response.statusCode != 200) {
-      return null;
-    }
+    if (response.statusCode != 200) return null;
 
     final Map<String, dynamic> data = jsonDecode(response.body);
 
@@ -289,6 +281,9 @@ class AuthService {
         rawId is int ? rawId : int.tryParse(rawId?.toString() ?? "") ?? 0;
     await prefs.setInt("currentUserId", userId);
 
+    // مهم لتوجيه الإشعارات بدون await داخل tap handler
+    LocalNotificationsService.setCurrentRole(role);
+
     return data;
   }
 
@@ -307,5 +302,40 @@ class AuthService {
     await prefs.remove("currentUserRole");
     await prefs.remove("user_is_active");
     await prefs.remove("currentUserId");
+
+    // ارجع الدور الافتراضي
+    LocalNotificationsService.setCurrentRole("patient");
+  }
+
+  /// نفس authorizedRequest لكن:
+  /// - يرمي ApiException عند:
+  ///   - انقطاع الإنترنت (statusCode = -1)
+  ///   - أي حالة غير 2xx
+  /// - يعيد http.Response فقط عند النجاح (2xx)
+  Future<http.Response> authorizedRequestOrThrow(
+    String endpoint,
+    String method, {
+    Map<String, dynamic>? body,
+  }) async {
+    try {
+      final response = await authorizedRequest(endpoint, method, body: body);
+
+      if (!response.statusCode.is2xx) {
+        throw ApiException(response.statusCode, response.body);
+      }
+
+      return response;
+    } catch (e) {
+      // أي خطأ شبكة من http أو SocketException.. إلخ
+      if (ApiExceptionUtils.isNetworkException(e)) {
+        throw ApiExceptionUtils.network(e);
+      }
+
+      // لو كان ApiException أصلاً، مرّره
+      if (e is ApiException) rethrow;
+
+      // fallback: اعتبره خطأ شبكة/عميل عام
+      throw ApiException(-1, e.toString(), cause: e);
+    }
   }
 }

@@ -22,11 +22,20 @@ class _LabPublicListScreenState extends State<LabPublicListScreen> {
   Map<int, String> governorateNamesById = {};
   bool loadingGovernorates = true;
 
+  final TextEditingController searchController = TextEditingController();
+  String searchQuery = '';
+
   @override
   void initState() {
     super.initState();
     loadLabs();
     loadGovernorates();
+  }
+
+  @override
+  void dispose() {
+    searchController.dispose();
+    super.dispose();
   }
 
   void loadLabs() {
@@ -46,16 +55,10 @@ class _LabPublicListScreenState extends State<LabPublicListScreen> {
         governorateNamesById = {for (final g in items) g.id: g.name};
         loadingGovernorates = false;
       });
-    } catch (e) {
+    } catch (_) {
       if (!mounted) return;
-
+      // Fetch error ثانوي: لا SnackBar، فقط نوقف اللودينغ ونكمل.
       setState(() => loadingGovernorates = false);
-
-      showAppSnackBar(
-        context,
-        'فشل تحميل المحافظات: $e',
-        type: AppSnackBarType.error,
-      );
     }
   }
 
@@ -81,6 +84,36 @@ class _LabPublicListScreenState extends State<LabPublicListScreen> {
     );
   }
 
+  List<Lab> _applySearchAndSort(List<Lab> labs) {
+    final q = searchQuery.trim().toLowerCase();
+    if (q.isEmpty) return labs;
+
+    bool matches(Lab l) {
+      final nameMatch = l.name.toLowerCase().contains(q);
+      final govName = governorateNamesById[l.governorate]?.toLowerCase() ?? '';
+      final govMatch = govName.contains(q);
+      return nameMatch || govMatch;
+    }
+
+    final filtered = labs.where(matches).toList();
+
+    // ترتيب: المطابق للمحافظة أولًا (عندما يكون البحث يتضمن محافظة)
+    filtered.sort((a, b) {
+      final govA = governorateNamesById[a.governorate]?.toLowerCase() ?? '';
+      final govB = governorateNamesById[b.governorate]?.toLowerCase() ?? '';
+
+      final aGovMatch = govA.contains(q);
+      final bGovMatch = govB.contains(q);
+
+      if (aGovMatch && !bGovMatch) return -1;
+      if (!aGovMatch && bGovMatch) return 1;
+
+      return a.name.compareTo(b.name);
+    });
+
+    return filtered;
+  }
+
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
@@ -95,6 +128,26 @@ class _LabPublicListScreenState extends State<LabPublicListScreen> {
               padding: EdgeInsets.symmetric(horizontal: 12),
               child: LinearProgressIndicator(),
             ),
+
+          // ---- Search ----
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+            child: TextField(
+              controller: searchController,
+              onChanged: (v) => setState(() => searchQuery = v),
+              decoration: InputDecoration(
+                hintText: 'ابحث باسم المخبر أو المحافظة',
+                prefixIcon: const Icon(Icons.search),
+                filled: true,
+                fillColor: cs.surface,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide.none,
+                ),
+              ),
+            ),
+          ),
+
           Expanded(
             child: FutureBuilder<List<Lab>>(
               future: futureLabs,
@@ -103,17 +156,43 @@ class _LabPublicListScreenState extends State<LabPublicListScreen> {
                   return const Center(child: CircularProgressIndicator());
                 }
 
+                // Fetch error → Inline + Retry (موحّد)
                 if (snapshot.hasError) {
-                  return const Center(
-                    child: Text('حدث خطأ أثناء جلب قائمة المخابر.'),
+                  final mapped = mapFetchExceptionToInlineState(
+                    snapshot.error!,
+                  );
+
+                  return RefreshIndicator(
+                    onRefresh: refresh,
+                    child: ListView(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      children: [
+                        const SizedBox(height: 80),
+                        AppInlineErrorState(
+                          title: mapped.title,
+                          message: mapped.message,
+                          icon: mapped.icon,
+                          onRetry: refresh,
+                        ),
+                        const SizedBox(height: 40),
+                      ],
+                    ),
                   );
                 }
 
                 final labs = snapshot.data ?? [];
+                final visible = _applySearchAndSort(labs);
 
-                if (labs.isEmpty) {
-                  return const Center(
-                    child: Text('لا توجد مخابر متاحة حاليًا.'),
+                if (visible.isEmpty) {
+                  return RefreshIndicator(
+                    onRefresh: refresh,
+                    child: ListView(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      children: const [
+                        SizedBox(height: 140),
+                        Center(child: Text('لا توجد نتائج مطابقة.')),
+                      ],
+                    ),
                   );
                 }
 
@@ -122,10 +201,10 @@ class _LabPublicListScreenState extends State<LabPublicListScreen> {
                   child: ListView.separated(
                     physics: const AlwaysScrollableScrollPhysics(),
                     padding: const EdgeInsets.all(16),
-                    itemCount: labs.length,
+                    itemCount: visible.length,
                     separatorBuilder: (_, __) => const SizedBox(height: 8),
                     itemBuilder: (context, index) {
-                      final lab = labs[index];
+                      final lab = visible[index];
                       final govName = governorateNamesById[lab.governorate];
 
                       return Card(

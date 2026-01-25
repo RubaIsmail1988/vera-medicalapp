@@ -60,14 +60,16 @@ class _HospitalListScreenState extends State<HospitalListScreen> {
         governorateNamesById = {for (final g in items) g.id: g.name};
         loadingGovernorates = false;
       });
-    } catch (_) {
+    } catch (e) {
       if (!mounted) return;
       setState(() => loadingGovernorates = false);
 
-      showAppSnackBar(
+      // Fetch error => Inline أفضل، لكن هذا جزء مساعد للشاشة.
+      // بما أن الشاشة نفسها لديها FutureBuilder لعرض الحالة، Snackbar هنا مقبول كتنبيه سريع.
+      showActionErrorSnackBar(
         context,
-        'فشل تحميل المحافظات.',
-        type: AppSnackBarType.error,
+        exception: e,
+        fallback: 'فشل تحميل المحافظات.',
       );
     }
   }
@@ -90,18 +92,28 @@ class _HospitalListScreenState extends State<HospitalListScreen> {
 
     if (!confirmed) return;
 
-    final success = await hospitalService.deleteHospital(hospital.id!);
+    try {
+      await hospitalService.deleteHospital(hospital.id!);
+    } catch (e) {
+      if (!mounted) return;
+
+      showActionErrorSnackBar(
+        context,
+        exception: e,
+        fallback: 'تعذّر حذف المشفى. حاول مرة أخرى.',
+      );
+      return;
+    }
+
     if (!mounted) return;
 
     showAppSnackBar(
       context,
-      success ? 'تم حذف المشفى بنجاح.' : 'فشل حذف المشفى.',
-      type: success ? AppSnackBarType.success : AppSnackBarType.error,
+      'تم حذف المشفى بنجاح.',
+      type: AppSnackBarType.success,
     );
 
-    if (success) {
-      await refresh();
-    }
+    await refresh();
   }
 
   Future<void> openForm({Hospital? hospital}) async {
