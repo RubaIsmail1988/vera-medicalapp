@@ -62,7 +62,10 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
   int? selectedAppointmentId;
 
   bool loadingPatients = false;
-  String? patientsErrorMessage;
+
+  // ✅ بدل String error: Fetch errors => inline state (wifi icon) موحّد
+  ({String title, String message, IconData icon})? inlinePatientsError;
+
   List<_PatientOption> patientOptions = [];
 
   bool _initializedFromRoute = false;
@@ -89,7 +92,6 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
   void initState() {
     super.initState();
 
-    // مبدئيًا نستخدم role من widget (سيتم تصحيحه من route في didChangeDependencies)
     effectiveRole =
         widget.role.trim().toLowerCase() == "doctor" ? "doctor" : "patient";
 
@@ -181,63 +183,82 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
   // ---------------------------------------------------------------------------
 
   Future<void> _loadDoctorPatientsFromOrders() async {
-    final res = await clinicalService.listOrders();
-    if (!mounted) return;
+    // ✅ هنا نضمن أن أي فشل يتحول فوراً لواجهة Offline موحدة
+    try {
+      final res = await clinicalService.listOrders();
+      if (!mounted) return;
 
-    if (res.statusCode != 200) {
-      final msg =
-          (res.statusCode == 401)
-              ? "انتهت الجلسة، يرجى تسجيل الدخول مجددًا."
-              : (res.statusCode == 403)
-              ? "لا تملك الصلاحية لعرض المرضى."
-              : "تعذر تحميل المرضى (${res.statusCode}).";
+      if (res.statusCode != 200) {
+        Object? body;
+        try {
+          body = jsonDecode(res.body);
+        } catch (_) {
+          body = res.body;
+        }
 
+        final msg = mapHttpErrorToArabicMessage(
+          statusCode: res.statusCode,
+          data: body,
+        );
+
+        setState(() {
+          loadingPatients = false;
+          inlinePatientsError = (
+            title: 'تعذّر تحميل البيانات',
+            message: msg,
+            icon: Icons.wifi_off_rounded,
+          );
+        });
+        return;
+      }
+
+      final decoded = jsonDecode(res.body);
+      final List<Map<String, dynamic>> list =
+          decoded is List
+              ? decoded.cast<Map<String, dynamic>>()
+              : <Map<String, dynamic>>[];
+
+      final Map<int, String> byId = {};
+
+      for (final o in list) {
+        final pid = _asInt(o["patient"]);
+        if (pid == null || pid <= 0) continue;
+
+        final name = (o["patient_display_name"]?.toString() ?? "").trim();
+        if (name.isNotEmpty) {
+          byId[pid] = name;
+        } else {
+          byId.putIfAbsent(pid, () => "مريض #$pid");
+        }
+      }
+
+      final options =
+          byId.entries
+              .map((e) => _PatientOption(id: e.key, name: e.value))
+              .toList()
+            ..sort((a, b) => a.name.compareTo(b.name));
+
+      if (!mounted) return;
+      setState(() {
+        patientOptions = options;
+        loadingPatients = false;
+        inlinePatientsError = null;
+
+        if (selectedPatientId != null) {
+          final m = options.where((x) => x.id == selectedPatientId).toList();
+          if (m.isNotEmpty) selectedPatientName = m.first.name;
+        }
+      });
+    } catch (e) {
+      if (!mounted) return;
+
+      final mapped = mapFetchExceptionToInlineState(e);
       setState(() {
         loadingPatients = false;
-        patientsErrorMessage = msg;
+        inlinePatientsError = mapped;
+        patientOptions = const [];
       });
-
-      showAppSnackBar(context, msg, type: AppSnackBarType.error);
-      return;
     }
-
-    final decoded = jsonDecode(res.body);
-    final List<Map<String, dynamic>> list =
-        decoded is List
-            ? decoded.cast<Map<String, dynamic>>()
-            : <Map<String, dynamic>>[];
-
-    final Map<int, String> byId = {};
-
-    for (final o in list) {
-      final pid = _asInt(o["patient"]);
-      if (pid == null || pid <= 0) continue;
-
-      final name = (o["patient_display_name"]?.toString() ?? "").trim();
-      if (name.isNotEmpty) {
-        byId[pid] = name;
-      } else {
-        byId.putIfAbsent(pid, () => "مريض #$pid");
-      }
-    }
-
-    final options =
-        byId.entries
-            .map((e) => _PatientOption(id: e.key, name: e.value))
-            .toList()
-          ..sort((a, b) => a.name.compareTo(b.name));
-
-    if (!mounted) return;
-    setState(() {
-      patientOptions = options;
-      loadingPatients = false;
-      patientsErrorMessage = null;
-
-      if (selectedPatientId != null) {
-        final m = options.where((x) => x.id == selectedPatientId).toList();
-        if (m.isNotEmpty) selectedPatientName = m.first.name;
-      }
-    });
   }
 
   // ---------------------------------------------------------------------------
@@ -267,7 +288,6 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
 
     final newRole = _readRoleFromStateOrFallback();
 
-    // Determine paths based on NEW role
     final pathsForNewRole =
         (newRole == "doctor") ? _doctorRecordTabPaths : _patientRecordTabPaths;
 
@@ -276,7 +296,6 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
     final newApptId = _readAppointmentIdFromState();
     final newPid = _readPatientIdFromState();
 
-    // only apply patientId from URL for doctor
     final pidForDoctor = (newRole == "doctor") ? newPid : null;
 
     final bool needsSetState =
@@ -285,13 +304,11 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
         selectedAppointmentId != newApptId ||
         selectedPatientId != pidForDoctor;
 
-    // If doctor tries to open /app/record/files, redirect to /app/record (orders)
     final currentPath = _state().uri.path;
     final isFilesPath = currentPath == "/app/record/files";
     if (newRole == "doctor" && isFilesPath) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
-        // keep same query parameters but go to /app/record
         context.go(_buildRecordLocationForTab(tabOrders));
       });
     }
@@ -306,14 +323,13 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
       if (selectedPatientId != null) {
         selectedPatientName = null;
       }
+
       if (!loadingPatients && patientOptions.isEmpty) {
-        loadingPatients = true;
-        patientsErrorMessage = null;
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!mounted) return;
           setState(() {
             loadingPatients = true;
-            patientsErrorMessage = null;
+            inlinePatientsError = null;
           });
           _loadDoctorPatientsFromOrders();
         });
@@ -321,9 +337,10 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
     } else {
       selectedPatientId = null;
       selectedPatientName = null;
+      loadingPatients = false;
+      inlinePatientsError = null;
     }
 
-    // Ensure controller length matches role tabs
     _recreateTabControllerIfNeeded(pathsForNewRole.length, newTabIndex);
 
     if (!needsSetState) return;
@@ -343,87 +360,6 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
     );
   }
 
-  Widget _stateCard({
-    required IconData icon,
-    required String title,
-    required String message,
-    required AppSnackBarType tone,
-    Widget? action,
-  }) {
-    final scheme = Theme.of(context).colorScheme;
-
-    Color bg;
-    Color fg;
-
-    switch (tone) {
-      case AppSnackBarType.success:
-        bg = scheme.primaryContainer;
-        fg = scheme.onPrimaryContainer;
-        break;
-      case AppSnackBarType.warning:
-        bg = scheme.tertiaryContainer;
-        fg = scheme.onTertiaryContainer;
-        break;
-      case AppSnackBarType.error:
-        bg = scheme.errorContainer;
-        fg = scheme.onErrorContainer;
-        break;
-      case AppSnackBarType.info:
-        bg = scheme.surfaceContainerHighest;
-        fg = scheme.onSurface;
-        break;
-    }
-
-    return Center(
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Card(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                CircleAvatar(
-                  radius: 26,
-                  backgroundColor: bg,
-                  child: Icon(icon, color: fg),
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  title,
-                  textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  message,
-                  textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.bodyMedium,
-                ),
-                if (action != null) ...[const SizedBox(height: 12), action],
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _primaryButton({
-    required String label,
-    required VoidCallback? onPressed,
-    IconData? icon,
-  }) {
-    return SizedBox(
-      width: double.infinity,
-      child: ElevatedButton.icon(
-        onPressed: onPressed,
-        icon: Icon(icon ?? Icons.check_circle_outline),
-        label: Text(label),
-      ),
-    );
-  }
-
   // ---------------------------------------------------------------------------
   // Build
   // ---------------------------------------------------------------------------
@@ -439,117 +375,113 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
         children: [
           _headerTile(titleText: "الدور: $roleLabel | الطبيب: $doctorLabel"),
           Expanded(
-            child:
-                loadingPatients
-                    ? _stateCard(
-                      icon: Icons.hourglass_top,
-                      title: "جاري التحميل",
-                      message: "يتم تحميل قائمة المرضى المرتبطين بمواعيدك",
-                      tone: AppSnackBarType.info,
-                      action: const Padding(
-                        padding: EdgeInsets.only(top: 4),
-                        child: CircularProgressIndicator(),
-                      ),
-                    )
-                    : (patientsErrorMessage != null)
-                    ? _stateCard(
-                      icon: Icons.error_outline,
-                      title: "تعذر تحميل المرضى",
-                      message: patientsErrorMessage!,
-                      tone: AppSnackBarType.error,
-                      action: _primaryButton(
-                        label: "إعادة المحاولة",
-                        icon: Icons.refresh,
-                        onPressed: () {
-                          setState(() {
-                            loadingPatients = true;
-                            patientsErrorMessage = null;
-                          });
-                          _loadDoctorPatientsFromOrders();
-                        },
-                      ),
-                    )
-                    : (patientOptions.isEmpty)
-                    ? _stateCard(
-                      icon: Icons.people_outline,
-                      title: "لا يوجد مرضى في القائمة",
-                      message:
-                          "لا توجد طلبات حتى الآن (القائمة تُبنى من الطلبات).\n"
-                          "يمكنك فتح الإضبارة من الموعد (سيتم تمرير patientId).",
-                      tone: AppSnackBarType.warning,
-                    )
-                    : Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Column(
-                        children: [
-                          Card(
-                            child: Padding(
-                              padding: const EdgeInsets.all(12),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    "اختر مريضًا لعرض الإضبارة",
-                                    style:
-                                        Theme.of(context).textTheme.titleMedium,
-                                  ),
-                                  const SizedBox(height: 12),
-                                  DropdownButtonFormField<int>(
-                                    isExpanded: true,
-                                    decoration: const InputDecoration(
-                                      labelText: "المريض",
-                                      border: OutlineInputBorder(),
-                                    ),
-                                    items:
-                                        patientOptions
-                                            .map(
-                                              (p) => DropdownMenuItem<int>(
-                                                value: p.id,
-                                                child: Text(
-                                                  p.name,
-                                                  overflow:
-                                                      TextOverflow.ellipsis,
-                                                ),
-                                              ),
-                                            )
-                                            .toList(),
-                                    onChanged: (v) {
-                                      if (v == null) return;
+            child: Builder(
+              builder: (_) {
+                if (loadingPatients) {
+                  // ✅ Loading فقط أثناء محاولة فعلية
+                  return const Center(child: CircularProgressIndicator());
+                }
 
-                                      final match =
-                                          patientOptions
-                                              .where((x) => x.id == v)
-                                              .toList();
-                                      final name =
-                                          match.isNotEmpty
-                                              ? match.first.name
-                                              : "مريض #$v";
+                if (inlinePatientsError != null) {
+                  // ✅ Offline/any fetch error => موحّد (wifi_off)
+                  return AppInlineErrorState(
+                    title: inlinePatientsError!.title,
+                    message: inlinePatientsError!.message,
+                    icon: inlinePatientsError!.icon,
+                    onRetry: () {
+                      if (!mounted) return;
+                      setState(() {
+                        loadingPatients = true;
+                        inlinePatientsError = null;
+                      });
+                      _loadDoctorPatientsFromOrders();
+                    },
+                  );
+                }
 
-                                      setState(() {
-                                        selectedPatientId = v;
-                                        selectedPatientName = name;
-                                      });
+                if (patientOptions.isEmpty) {
+                  return const AppInlineErrorState(
+                    title: "لا يوجد مرضى في القائمة",
+                    message:
+                        "لا توجد طلبات حتى الآن (القائمة تُبنى من الطلبات).\n"
+                        "يمكنك فتح الإضبارة من الموعد (سيتم تمرير patientId).",
+                    icon: Icons.wifi_off_rounded,
+                  );
+                }
 
-                                      context.go(
-                                        _buildRecordLocationForTab(
-                                          tabController.index,
-                                        ),
-                                      );
-
-                                      showAppSnackBar(
-                                        context,
-                                        "تم اختيار المريض: $name",
-                                        type: AppSnackBarType.success,
-                                      );
-                                    },
-                                  ),
-                                ],
+                return Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    children: [
+                      Card(
+                        elevation: 0,
+                        child: Padding(
+                          padding: const EdgeInsets.all(12),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                "اختر مريضًا لعرض الإضبارة",
+                                style: Theme.of(context).textTheme.titleMedium,
                               ),
-                            ),
+                              const SizedBox(height: 12),
+                              DropdownButtonFormField<int>(
+                                isExpanded: true,
+                                decoration: const InputDecoration(
+                                  labelText: "المريض",
+                                  border: OutlineInputBorder(),
+                                ),
+                                items:
+                                    patientOptions
+                                        .map(
+                                          (p) => DropdownMenuItem<int>(
+                                            value: p.id,
+                                            child: Text(
+                                              p.name,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                          ),
+                                        )
+                                        .toList(),
+                                onChanged: (v) {
+                                  if (v == null) return;
+
+                                  final match =
+                                      patientOptions
+                                          .where((x) => x.id == v)
+                                          .toList();
+                                  final name =
+                                      match.isNotEmpty
+                                          ? match.first.name
+                                          : "مريض #$v";
+
+                                  setState(() {
+                                    selectedPatientId = v;
+                                    selectedPatientName = name;
+                                  });
+
+                                  context.go(
+                                    _buildRecordLocationForTab(
+                                      tabController.index,
+                                    ),
+                                  );
+
+                                  showAppSnackBar(
+                                    context,
+                                    "تم اختيار المريض: $name",
+                                    type: AppSnackBarType.success,
+                                  );
+                                },
+                              ),
+                            ],
                           ),
-                        ],
+                        ),
                       ),
-                    ),
+                    ],
+                  ),
+                );
+              },
+            ),
           ),
         ],
       );
@@ -568,18 +500,14 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
     final hasAppt = apptId != null && apptId > 0;
     final apptKey = (selectedAppointmentId ?? 0);
 
-    // قاعدة موحدة للخطوة القادمة:
-    // الطبيب لا يستطيع الإنشاء إلا ضمن سياق موعد
-    //final bool doctorCanCreate = !isDoctor || hasAppt;
-
     return Column(
       children: [
         _headerTile(titleText: subtitleText),
-
         if (hasAppt)
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
             child: Card(
+              elevation: 0,
               child: ListTile(
                 leading: const Icon(Icons.event_available),
                 subtitle: const Text(
@@ -597,7 +525,6 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
               ),
             ),
           ),
-
         TabBar(
           controller: tabController,
           isScrollable: true,
@@ -628,7 +555,6 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
                     Tab(text: "البيانات"),
                   ],
         ),
-
         Expanded(
           child: TabBarView(
             controller: tabController,
@@ -643,7 +569,6 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
                         userId: widget.userId,
                         selectedPatientId: patientContextId,
                         selectedAppointmentId: selectedAppointmentId,
-                        // ملاحظة: سنستخدم doctorCanCreate داخل OrdersTab لاحقًا لإخفاء زر الإنشاء
                       ),
                       PrescriptionsTab(
                         key: ValueKey<String>(

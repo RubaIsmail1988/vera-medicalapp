@@ -42,97 +42,35 @@ class _PrescriptionsTabState extends State<PrescriptionsTab> {
   void initState() {
     super.initState();
     clinicalService = ClinicalService(authService: AuthService());
-    prescriptionsFuture = fetchPrescriptions();
+    prescriptionsFuture = _fetchPrescriptions();
   }
 
   @override
   void didUpdateWidget(covariant PrescriptionsTab oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.selectedPatientId != widget.selectedPatientId ||
-        oldWidget.selectedAppointmentId != widget.selectedAppointmentId) {
-      reload();
+
+    final pidChanged = oldWidget.selectedPatientId != widget.selectedPatientId;
+    final apptChanged =
+        oldWidget.selectedAppointmentId != widget.selectedAppointmentId;
+
+    if (pidChanged || apptChanged) {
+      _reload();
     }
   }
 
-  int? asInt(dynamic v) {
+  int? _asInt(dynamic v) {
     if (v == null) return null;
     if (v is int) return v;
     return int.tryParse(v.toString());
   }
 
-  Future<List<Map<String, dynamic>>> fetchPrescriptions() async {
-    final response = await clinicalService.listPrescriptions();
-
-    if (response.statusCode == 200) {
-      final decoded = jsonDecode(response.body);
-      final List<Map<String, dynamic>> list =
-          decoded is List
-              ? decoded.cast<Map<String, dynamic>>()
-              : <Map<String, dynamic>>[];
-
-      final selectedPid = widget.selectedPatientId;
-      final selectedApptId = widget.selectedAppointmentId;
-
-      List<Map<String, dynamic>> filtered = list;
-
-      // Doctor context: filter by selected patient
-      if (isDoctor && selectedPid != null && selectedPid > 0) {
-        filtered =
-            filtered.where((p) {
-              final pid = asInt(p["patient"]);
-              return pid == selectedPid;
-            }).toList();
-      }
-
-      // Appointment context: filter by appointmentId (doctor & patient)
-      if (selectedApptId != null && selectedApptId > 0) {
-        filtered =
-            filtered.where((p) {
-              final appt = asInt(p["appointment"]);
-              return appt == selectedApptId;
-            }).toList();
-      }
-
-      // newest first
-      filtered.sort((a, b) {
-        final aRaw = a["created_at"]?.toString() ?? "";
-        final bRaw = b["created_at"]?.toString() ?? "";
-        final ad = parseCreatedAtOrMin(aRaw);
-        final bd = parseCreatedAtOrMin(bRaw);
-        return bd.compareTo(ad);
-      });
-
-      return filtered;
-    }
-
-    if (response.statusCode == 401) {
-      throw HttpException(401, "انتهت الجلسة، يرجى تسجيل الدخول مجددًا.");
-    }
-
-    if (response.statusCode == 403) {
-      throw HttpException(403, "لا تملك الصلاحية لعرض الوصفات.");
-    }
-
-    try {
-      final body = jsonDecode(response.body);
-      final detail =
-          body is Map && body["detail"] != null
-              ? body["detail"].toString()
-              : null;
-      throw HttpException(response.statusCode, detail ?? "حدث خطأ غير متوقع.");
-    } catch (_) {
-      throw HttpException(response.statusCode, "حدث خطأ غير متوقع.");
-    }
+  DateTime _parseCreatedAtOrMin(String raw) {
+    final s = raw.trim();
+    if (s.isEmpty) return DateTime.fromMillisecondsSinceEpoch(0);
+    return DateTime.tryParse(s) ?? DateTime.fromMillisecondsSinceEpoch(0);
   }
 
-  Future<void> reload() async {
-    if (!mounted) return;
-    setState(() {
-      prescriptionsFuture = fetchPrescriptions();
-    });
-  }
-
-  String formatDateTime(String raw) {
+  String _formatDateTime(String raw) {
     final s = raw.trim();
     if (s.isEmpty) return "";
 
@@ -151,217 +89,325 @@ class _PrescriptionsTabState extends State<PrescriptionsTab> {
     return "$dd/$mm/$yyyy – $hh:$mi";
   }
 
-  DateTime parseCreatedAtOrMin(String raw) {
-    try {
-      return DateTime.parse(raw).toLocal();
-    } catch (_) {
-      return DateTime.fromMillisecondsSinceEpoch(0);
+  // ---------------------------------------------------------------------------
+  // Fetch (NO SnackBar)
+  // ---------------------------------------------------------------------------
+
+  Future<List<Map<String, dynamic>>> _fetchPrescriptions() async {
+    final response = await clinicalService.listPrescriptions();
+
+    if (response.statusCode == 200) {
+      final decoded = jsonDecode(response.body);
+
+      final List<Map<String, dynamic>> list =
+          decoded is List
+              ? decoded.cast<Map<String, dynamic>>()
+              : <Map<String, dynamic>>[];
+
+      final selectedPid = widget.selectedPatientId;
+      final selectedApptId = widget.selectedAppointmentId;
+
+      var filtered = list;
+
+      // Doctor context: filter by selected patient
+      if (isDoctor && selectedPid != null && selectedPid > 0) {
+        filtered =
+            filtered.where((p) {
+              final pid = _asInt(p["patient"]);
+              return pid == selectedPid;
+            }).toList();
+      }
+
+      // Appointment context: filter by appointmentId (doctor & patient)
+      if (selectedApptId != null && selectedApptId > 0) {
+        filtered =
+            filtered.where((p) {
+              final appt = _asInt(p["appointment"]);
+              return appt == selectedApptId;
+            }).toList();
+      }
+
+      // newest first
+      filtered.sort((a, b) {
+        final aRaw = a["created_at"]?.toString() ?? "";
+        final bRaw = b["created_at"]?.toString() ?? "";
+        final ad = _parseCreatedAtOrMin(aRaw);
+        final bd = _parseCreatedAtOrMin(bRaw);
+        return bd.compareTo(ad);
+      });
+
+      return filtered;
     }
+
+    Object? body;
+    try {
+      body = jsonDecode(response.body);
+    } catch (_) {
+      body = response.body;
+    }
+
+    final message = mapHttpErrorToArabicMessage(
+      statusCode: response.statusCode,
+      data: body,
+    );
+
+    throw Exception(message);
   }
 
-  Future<void> openPrescriptionDetails(
-    int prescriptionId, {
-    required String doctorDisplayName,
-    String? createdAtRawFromList,
-  }) async {
+  Future<void> _reload() async {
+    final future = _fetchPrescriptions();
+    if (!mounted) return;
+    setState(() => prescriptionsFuture = future);
+    await future;
+  }
+
+  Future<Map<String, dynamic>> _fetchPrescriptionDetails(
+    int prescriptionId,
+  ) async {
     final response = await clinicalService.getPrescriptionDetails(
       prescriptionId,
     );
 
-    if (!mounted) return;
-
     if (response.statusCode == 200) {
-      final data = jsonDecode(response.body);
-
-      final items =
-          (data is Map && data["items"] is List)
-              ? (data["items"] as List).cast<Map<String, dynamic>>()
-              : <Map<String, dynamic>>[];
-
-      final createdAtRaw =
-          (createdAtRawFromList?.trim().isNotEmpty ?? false)
-              ? createdAtRawFromList!.trim()
-              : ((data is Map && data["created_at"] != null)
-                  ? data["created_at"].toString()
-                  : "");
-
-      final createdAtFormatted =
-          createdAtRaw.isNotEmpty ? formatDateTime(createdAtRaw) : "";
-
-      Widget labeledLine({required String label, required String value}) {
-        return Padding(
-          padding: const EdgeInsets.symmetric(vertical: 6),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                flex: 3,
-                child: Text(
-                  label,
-                  style: Theme.of(context).textTheme.bodySmall,
-                  textAlign: TextAlign.start,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                flex: 5,
-                child: Text(
-                  value,
-                  style: Theme.of(context).textTheme.bodyMedium,
-                  textAlign: TextAlign.start,
-                ),
-              ),
-            ],
-          ),
-        );
-      }
-
-      Widget itemCard(Map<String, dynamic> it) {
-        final name = it["medicine_name"]?.toString().trim() ?? "";
-        final dosage = it["dosage"]?.toString().trim() ?? "";
-        final frequency = it["frequency"]?.toString().trim() ?? "";
-        final startDateRaw = it["start_date"]?.toString().trim() ?? "";
-        final endDateRaw = it["end_date"]?.toString().trim() ?? "";
-        final instructions = it["instructions"]?.toString().trim() ?? "";
-
-        final startDateFormatted = startDateRaw.isNotEmpty ? startDateRaw : "";
-        final endDateFormatted = endDateRaw.isNotEmpty ? endDateRaw : "";
-
-        final lines = <Widget>[];
-
-        if (name.isNotEmpty) {
-          lines.add(
-            Padding(
-              padding: const EdgeInsets.only(bottom: 6),
-              child: Text(
-                name,
-                style: Theme.of(context).textTheme.titleSmall,
-                textAlign: TextAlign.start,
-              ),
-            ),
-          );
-        }
-
-        if (dosage.isNotEmpty) {
-          lines.add(labeledLine(label: "الجرعة", value: dosage));
-        }
-
-        if (frequency.isNotEmpty) {
-          lines.add(labeledLine(label: "عدد المرات", value: frequency));
-        }
-
-        if (startDateFormatted.isNotEmpty) {
-          lines.add(
-            labeledLine(label: "تاريخ بدء الدواء", value: startDateFormatted),
-          );
-        }
-
-        if (endDateFormatted.isNotEmpty) {
-          lines.add(
-            labeledLine(label: "تاريخ انتهاء الدواء", value: endDateFormatted),
-          );
-        }
-
-        if (instructions.isNotEmpty) {
-          lines.add(labeledLine(label: "التعليمات", value: instructions));
-        }
-
-        if (lines.isEmpty) return const SizedBox.shrink();
-
-        return Card(
-          margin: EdgeInsets.zero,
-          child: Padding(
-            padding: const EdgeInsets.all(12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: lines,
-            ),
-          ),
-        );
-      }
-
-      await showDialog<void>(
-        context: context,
-        builder: (ctx) {
-          return AlertDialog(
-            title: const Center(
-              child: Text("تفاصيل وصفتك", textAlign: TextAlign.center),
-            ),
-            content: SizedBox(
-              width: double.maxFinite,
-              height: 420,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Card(
-                    margin: EdgeInsets.zero,
-                    child: Padding(
-                      padding: const EdgeInsets.all(12),
-                      child: labeledLine(
-                        label: "تاريخ الوصفة",
-                        value:
-                            createdAtFormatted.isNotEmpty
-                                ? createdAtFormatted
-                                : "-",
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  Expanded(
-                    child:
-                        items.isEmpty
-                            ? const Center(child: Text("لا توجد تفاصيل متاحة."))
-                            : ListView.separated(
-                              itemCount: items.length,
-                              separatorBuilder:
-                                  (_, __) => const SizedBox(height: 10),
-                              itemBuilder: (_, i) => itemCard(items[i]),
-                            ),
-                  ),
-                  const SizedBox(height: 10),
-                  Card(
-                    margin: EdgeInsets.zero,
-                    child: Padding(
-                      padding: const EdgeInsets.all(12),
-                      child: Text(
-                        "صادرة من الطبيب د. $doctorDisplayName",
-                        style: Theme.of(context).textTheme.bodyMedium,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(ctx),
-                child: const Text("إغلاق"),
-              ),
-            ],
-          );
-        },
-      );
-
-      return;
+      final decoded = jsonDecode(response.body);
+      if (decoded is Map) return Map<String, dynamic>.from(decoded);
+      return <String, dynamic>{};
     }
 
-    if (response.statusCode == 401) {
-      showAppSnackBar(context, "انتهت الجلسة، يرجى تسجيل الدخول مجددًا.");
-      return;
+    Object? body;
+    try {
+      body = jsonDecode(response.body);
+    } catch (_) {
+      body = response.body;
     }
 
-    if (response.statusCode == 403) {
-      showAppSnackBar(context, "لا تملك الصلاحية لعرض تفاصيل الوصفة.");
-      return;
-    }
+    final message = mapHttpErrorToArabicMessage(
+      statusCode: response.statusCode,
+      data: body,
+    );
 
-    showAppSnackBar(context, "فشل تحميل التفاصيل (${response.statusCode}).");
+    throw Exception(message);
   }
 
-  Future<void> createPrescriptionFlow() async {
+  // ---------------------------------------------------------------------------
+  // Details dialog (Fetch inside dialog, NO SnackBar)
+  // ---------------------------------------------------------------------------
+
+  Future<void> _openPrescriptionDetailsDialog(
+    int prescriptionId, {
+    required String doctorDisplayName,
+    String? createdAtRawFromList,
+  }) async {
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) {
+        final future = _fetchPrescriptionDetails(prescriptionId);
+
+        Widget labeledLine({required String label, required String value}) {
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  flex: 3,
+                  child: Text(
+                    label,
+                    style: Theme.of(ctx).textTheme.bodySmall,
+                    textAlign: TextAlign.start,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  flex: 5,
+                  child: Text(
+                    value,
+                    style: Theme.of(ctx).textTheme.bodyMedium,
+                    textAlign: TextAlign.start,
+                  ),
+                ),
+              ],
+            ),
+          );
+        }
+
+        Widget itemCard(Map<String, dynamic> it) {
+          final name = it["medicine_name"]?.toString().trim() ?? "";
+          final dosage = it["dosage"]?.toString().trim() ?? "";
+          final frequency = it["frequency"]?.toString().trim() ?? "";
+          final startDateRaw = it["start_date"]?.toString().trim() ?? "";
+          final endDateRaw = it["end_date"]?.toString().trim() ?? "";
+          final instructions = it["instructions"]?.toString().trim() ?? "";
+
+          final lines = <Widget>[];
+
+          if (name.isNotEmpty) {
+            lines.add(
+              Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Text(
+                  name,
+                  style: Theme.of(ctx).textTheme.titleSmall,
+                  textAlign: TextAlign.start,
+                ),
+              ),
+            );
+          }
+
+          if (dosage.isNotEmpty) {
+            lines.add(labeledLine(label: "الجرعة", value: dosage));
+          }
+          if (frequency.isNotEmpty) {
+            lines.add(labeledLine(label: "عدد المرات", value: frequency));
+          }
+          if (startDateRaw.isNotEmpty) {
+            lines.add(
+              labeledLine(label: "تاريخ بدء الدواء", value: startDateRaw),
+            );
+          }
+          if (endDateRaw.isNotEmpty) {
+            lines.add(
+              labeledLine(label: "تاريخ انتهاء الدواء", value: endDateRaw),
+            );
+          }
+          if (instructions.isNotEmpty) {
+            lines.add(labeledLine(label: "التعليمات", value: instructions));
+          }
+
+          if (lines.isEmpty) return const SizedBox.shrink();
+
+          return Card(
+            margin: EdgeInsets.zero,
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: lines,
+              ),
+            ),
+          );
+        }
+
+        return AlertDialog(
+          title: const Center(
+            child: Text("تفاصيل وصفتك", textAlign: TextAlign.center),
+          ),
+          content: SizedBox(
+            width: double.maxFinite,
+            height: 420,
+            child: FutureBuilder<Map<String, dynamic>>(
+              future: future,
+              builder: (context, snap) {
+                if (snap.connectionState == ConnectionState.waiting) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+
+                if (snap.hasError) {
+                  final mapped = mapFetchExceptionToInlineState(snap.error!);
+
+                  return AppInlineErrorState(
+                    title: mapped.title,
+                    message: mapped.message,
+                    icon: mapped.icon,
+                    onRetry: () {
+                      // إعادة فتح نفس الـ dialog على نفس التفاصيل
+                      Navigator.pop(ctx);
+                      // ignore: discarded_futures
+                      _openPrescriptionDetailsDialog(
+                        prescriptionId,
+                        doctorDisplayName: doctorDisplayName,
+                        createdAtRawFromList: createdAtRawFromList,
+                      );
+                    },
+                  );
+                }
+
+                final data = snap.data ?? <String, dynamic>{};
+
+                final items =
+                    (data["items"] is List)
+                        ? (data["items"] as List).cast<Map<String, dynamic>>()
+                        : <Map<String, dynamic>>[];
+
+                final createdAtRaw =
+                    (createdAtRawFromList?.trim().isNotEmpty ?? false)
+                        ? createdAtRawFromList!.trim()
+                        : (data["created_at"]?.toString() ?? "");
+
+                final createdAtFormatted =
+                    createdAtRaw.isNotEmpty
+                        ? _formatDateTime(createdAtRaw)
+                        : "";
+
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Card(
+                      margin: EdgeInsets.zero,
+                      child: Padding(
+                        padding: const EdgeInsets.all(12),
+                        child: labeledLine(
+                          label: "تاريخ الوصفة",
+                          value:
+                              createdAtFormatted.isNotEmpty
+                                  ? createdAtFormatted
+                                  : "-",
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Expanded(
+                      child:
+                          items.isEmpty
+                              ? const Center(
+                                child: Text("لا توجد تفاصيل متاحة."),
+                              )
+                              : ListView.separated(
+                                itemCount: items.length,
+                                separatorBuilder:
+                                    (_, __) => const SizedBox(height: 10),
+                                itemBuilder: (_, i) => itemCard(items[i]),
+                              ),
+                    ),
+                    const SizedBox(height: 10),
+                    Card(
+                      margin: EdgeInsets.zero,
+                      child: Padding(
+                        padding: const EdgeInsets.all(12),
+                        child: Text(
+                          "صادرة من الطبيب د. $doctorDisplayName",
+                          style: Theme.of(ctx).textTheme.bodyMedium,
+                        ),
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text("إغلاق"),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Create (Action) -- SnackBar allowed
+  // ---------------------------------------------------------------------------
+
+  Future<void> _createPrescriptionFlow() async {
     // حماية إضافية حتى لو الزر مخفي
     if (!isDoctor) {
-      showAppSnackBar(context, "هذه العملية متاحة للطبيب فقط.");
+      showAppSnackBar(
+        context,
+        "هذه العملية متاحة للطبيب فقط.",
+        type: AppSnackBarType.warning,
+      );
       return;
     }
 
@@ -383,53 +429,50 @@ class _PrescriptionsTabState extends State<PrescriptionsTab> {
     if (!mounted) return;
     if (payload == null) return;
 
-    final response = await clinicalService.createPrescription(
-      appointmentId: apptId,
-      notes: payload.notes,
-      items: payload.items,
-    );
-
-    if (!mounted) return;
-
-    if (response.statusCode == 201) {
-      showAppSnackBar(
-        context,
-        "تم إنشاء الوصفة بنجاح.",
-        type: AppSnackBarType.success,
-      );
-      await reload();
-      return;
-    }
-
-    if (response.statusCode == 401) {
-      showAppSnackBar(context, "انتهت الجلسة، يرجى تسجيل الدخول مجددًا.");
-      return;
-    }
-
-    if (response.statusCode == 403) {
-      showAppSnackBar(context, "لا تملك الصلاحية لإنشاء وصفة.");
-      return;
-    }
-
     try {
-      final decoded = jsonDecode(response.body);
-      final detail =
-          decoded is Map && decoded["detail"] != null
-              ? decoded["detail"].toString()
-              : null;
-      showAppSnackBar(
-        context,
-        detail ?? "فشل إنشاء الوصفة (${response.statusCode}).",
-        type: AppSnackBarType.error,
+      final response = await clinicalService.createPrescription(
+        appointmentId: apptId,
+        notes: payload.notes,
+        items: payload.items,
       );
-    } catch (_) {
-      showAppSnackBar(
+
+      if (!mounted) return;
+
+      if (response.statusCode == 201) {
+        showAppSnackBar(
+          context,
+          "تم إنشاء الوصفة بنجاح.",
+          type: AppSnackBarType.success,
+        );
+        await _reload();
+        return;
+      }
+
+      Object? body;
+      try {
+        body = jsonDecode(response.body);
+      } catch (_) {
+        body = response.body;
+      }
+
+      showApiErrorSnackBar(
         context,
-        "فشل إنشاء الوصفة (${response.statusCode}).",
-        type: AppSnackBarType.error,
+        statusCode: response.statusCode,
+        data: body,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      showActionErrorSnackBar(
+        context,
+        exception: e,
+        fallback: 'فشل إنشاء الوصفة.',
       );
     }
   }
+
+  // ---------------------------------------------------------------------------
+  // Build
+  // ---------------------------------------------------------------------------
 
   @override
   Widget build(BuildContext context) {
@@ -442,12 +485,13 @@ class _PrescriptionsTabState extends State<PrescriptionsTab> {
             child: SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
-                onPressed: () async => createPrescriptionFlow(),
+                onPressed: _createPrescriptionFlow,
                 icon: const Icon(Icons.add),
                 label: const Text("إنشاء وصفة"),
               ),
             ),
           ),
+
         Expanded(
           child: FutureBuilder<List<Map<String, dynamic>>>(
             future: prescriptionsFuture,
@@ -457,32 +501,21 @@ class _PrescriptionsTabState extends State<PrescriptionsTab> {
               }
 
               if (snapshot.hasError) {
-                final err = snapshot.error;
-                String message = "حدث خطأ.";
-                if (err is HttpException) message = err.message;
+                final mapped = mapFetchExceptionToInlineState(snapshot.error!);
 
-                return Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(Icons.error_outline, size: 40),
-                        const SizedBox(height: 12),
-                        Text(message, textAlign: TextAlign.center),
-                        const SizedBox(height: 16),
-                        ElevatedButton.icon(
-                          onPressed: () async {
-                            await reload();
-                            if (!mounted) return;
-                            // ignore: use_build_context_synchronously
-                            showAppSnackBar(context, "تمت إعادة المحاولة.");
-                          },
-                          icon: const Icon(Icons.refresh),
-                          label: const Text("إعادة المحاولة"),
-                        ),
-                      ],
-                    ),
+                return RefreshIndicator(
+                  onRefresh: _reload,
+                  child: ListView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    children: [
+                      const SizedBox(height: 80),
+                      AppInlineErrorState(
+                        title: mapped.title,
+                        message: mapped.message,
+                        icon: mapped.icon,
+                        onRetry: _reload,
+                      ),
+                    ],
                   ),
                 );
               }
@@ -490,28 +523,29 @@ class _PrescriptionsTabState extends State<PrescriptionsTab> {
               final viewList = snapshot.data ?? [];
 
               if (viewList.isEmpty) {
-                return Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(Icons.inbox_outlined, size: 40),
-                        const SizedBox(height: 12),
-                        Text(
+                return RefreshIndicator(
+                  onRefresh: _reload,
+                  child: ListView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    children: [
+                      const SizedBox(height: 120),
+                      const Icon(Icons.inbox_outlined, size: 40),
+                      const SizedBox(height: 12),
+                      Center(
+                        child: Text(
                           hasApptFilter
                               ? "لا توجد وصفات مرتبطة بهذا الموعد."
                               : "لا توجد وصفات طبية مسجّلة حتى الآن",
                           textAlign: TextAlign.center,
                         ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
                 );
               }
 
               return RefreshIndicator(
-                onRefresh: () async => reload(),
+                onRefresh: _reload,
                 child: ListView.separated(
                   padding: const EdgeInsets.all(12),
                   itemCount: viewList.length,
@@ -523,11 +557,12 @@ class _PrescriptionsTabState extends State<PrescriptionsTab> {
                     final prescriptionId = int.tryParse(idStr);
 
                     final createdAtRaw = p["created_at"]?.toString() ?? "";
-                    final createdAt = formatDateTime(createdAtRaw);
+                    final createdAt = _formatDateTime(createdAtRaw);
 
                     final doctorDisplayNameRaw =
                         p["doctor_display_name"]?.toString().trim();
                     final doctorFallback = p["doctor"]?.toString().trim() ?? "";
+
                     final doctorDisplayName =
                         (doctorDisplayNameRaw != null &&
                                 doctorDisplayNameRaw.isNotEmpty)
@@ -556,10 +591,15 @@ class _PrescriptionsTabState extends State<PrescriptionsTab> {
                           icon: const Icon(Icons.visibility_outlined),
                           onPressed: () async {
                             if (prescriptionId == null) {
-                              showAppSnackBar(context, "تعذر فتح التفاصيل.");
+                              showAppSnackBar(
+                                context,
+                                "تعذر فتح التفاصيل.",
+                                type: AppSnackBarType.error,
+                              );
                               return;
                             }
-                            await openPrescriptionDetails(
+
+                            await _openPrescriptionDetailsDialog(
                               prescriptionId,
                               doctorDisplayName: doctorDisplayName,
                               createdAtRawFromList: createdAtRaw,
@@ -577,16 +617,6 @@ class _PrescriptionsTabState extends State<PrescriptionsTab> {
       ],
     );
   }
-}
-
-class HttpException implements Exception {
-  final int statusCode;
-  final String message;
-
-  HttpException(this.statusCode, this.message);
-
-  @override
-  String toString() => "HTTP $statusCode: $message";
 }
 
 class CreatePrescriptionPayload {
@@ -614,7 +644,7 @@ class CreatePrescriptionDialogState extends State<CreatePrescriptionDialog> {
     super.dispose();
   }
 
-  Future<void> addItemDialog() async {
+  Future<void> _addItemDialog() async {
     final item = await showDialog<Map<String, dynamic>>(
       context: context,
       builder: (_) => const PrescriptionItemDialog(),
@@ -650,7 +680,7 @@ class CreatePrescriptionDialogState extends State<CreatePrescriptionDialog> {
                 children: [
                   Expanded(child: Text("الأدوية: ${items.length}")),
                   TextButton.icon(
-                    onPressed: () async => addItemDialog(),
+                    onPressed: _addItemDialog,
                     icon: const Icon(Icons.add),
                     label: const Text("إضافة دواء"),
                   ),
@@ -709,7 +739,11 @@ class CreatePrescriptionDialogState extends State<CreatePrescriptionDialog> {
         ElevatedButton(
           onPressed: () {
             if (items.isEmpty) {
-              showAppSnackBar(context, "أضف دواء واحد على الأقل.");
+              showAppSnackBar(
+                context,
+                "أضف دواء واحد على الأقل.",
+                type: AppSnackBarType.warning,
+              );
               return;
             }
 
@@ -788,7 +822,7 @@ class PrescriptionItemDialogState extends State<PrescriptionItemDialog> {
     super.dispose();
   }
 
-  Future<void> pickDate(TextEditingController controller) async {
+  Future<void> _pickDate(TextEditingController controller) async {
     final now = DateTime.now();
     final picked = await showDatePicker(
       context: context,
@@ -821,9 +855,7 @@ class PrescriptionItemDialogState extends State<PrescriptionItemDialog> {
 
     final freq =
         isOtherFrequency ? frequencyController.text.trim() : frequencyPreset;
-    if (freq.trim().isEmpty || (isOtherFrequency && freq.trim().isEmpty)) {
-      return "عدد المرات (التردد) مطلوب.";
-    }
+    if (freq.trim().isEmpty) return "عدد المرات (التردد) مطلوب.";
 
     final start = startDateController.text.trim();
     if (start.isEmpty) return "تاريخ بدء الدواء مطلوب.";
@@ -906,6 +938,7 @@ class PrescriptionItemDialogState extends State<PrescriptionItemDialog> {
                   ),
                 ),
               ],
+
               const SizedBox(height: 10),
               DropdownButtonFormField<String>(
                 value: frequencyPreset,
@@ -930,6 +963,7 @@ class PrescriptionItemDialogState extends State<PrescriptionItemDialog> {
                   border: OutlineInputBorder(),
                 ),
               ),
+
               if (isOtherFrequency) ...[
                 const SizedBox(height: 10),
                 TextField(
@@ -940,6 +974,7 @@ class PrescriptionItemDialogState extends State<PrescriptionItemDialog> {
                   ),
                 ),
               ],
+
               const SizedBox(height: 10),
               TextField(
                 controller: startDateController,
@@ -948,9 +983,10 @@ class PrescriptionItemDialogState extends State<PrescriptionItemDialog> {
                   labelText: "تاريخ بدء الدواء *",
                   border: OutlineInputBorder(),
                 ),
-                onTap: () async => pickDate(startDateController),
+                onTap: () async => _pickDate(startDateController),
               ),
               const SizedBox(height: 10),
+
               CheckboxListTile(
                 value: isPermanent,
                 onChanged: (v) {
@@ -969,6 +1005,7 @@ class PrescriptionItemDialogState extends State<PrescriptionItemDialog> {
                 controlAffinity: ListTileControlAffinity.leading,
                 contentPadding: EdgeInsets.zero,
               ),
+
               const SizedBox(height: 6),
               TextField(
                 controller: endDateController,
@@ -980,10 +1017,11 @@ class PrescriptionItemDialogState extends State<PrescriptionItemDialog> {
                 ),
                 onTap: () async {
                   if (isPermanent) return;
-                  await pickDate(endDateController);
+                  await _pickDate(endDateController);
                 },
               ),
               const SizedBox(height: 10),
+
               TextField(
                 controller: instructionsController,
                 maxLines: 2,

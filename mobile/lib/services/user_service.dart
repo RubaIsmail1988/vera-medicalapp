@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../services/admin_user_service.dart';
+import '/utils/ui_helpers.dart';
 
 class UserListScreen extends StatefulWidget {
   const UserListScreen({super.key});
@@ -19,13 +20,6 @@ class _UserListScreenState extends State<UserListScreen> {
     futureUsers = adminService.fetchAllUsers();
   }
 
-  void showSnackBar(String message) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(message)));
-  }
-
   Future<void> refresh() async {
     setState(() {
       futureUsers = adminService.fetchAllUsers();
@@ -36,20 +30,36 @@ class _UserListScreenState extends State<UserListScreen> {
     final int userId = user['id'] as int;
     final bool isActive = user['is_active'] as bool? ?? false;
 
-    final bool success =
-        isActive
-            ? await adminService.deactivateUser(userId)
-            : await adminService.activateUser(userId);
+    try {
+      final bool success =
+          isActive
+              ? await adminService.deactivateUser(userId)
+              : await adminService.activateUser(userId);
 
-    if (!mounted) return;
+      if (!mounted) return;
 
-    if (success) {
-      showSnackBar(
-        isActive ? 'تم تعطيل المستخدم بنجاح.' : 'تم تفعيل المستخدم بنجاح.',
+      if (success) {
+        showAppSnackBar(
+          context,
+          isActive ? 'تم تعطيل المستخدم بنجاح.' : 'تم تفعيل المستخدم بنجاح.',
+          type: AppSnackBarType.success,
+        );
+        await refresh();
+      } else {
+        showAppSnackBar(
+          context,
+          isActive ? 'فشل تعطيل المستخدم.' : 'فشل تفعيل المستخدم.',
+          type: AppSnackBarType.error,
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+
+      showActionErrorSnackBar(
+        context,
+        exception: e,
+        fallback: 'حدث خطأ أثناء تحديث حالة المستخدم.',
       );
-      await refresh();
-    } else {
-      showSnackBar(isActive ? 'فشل تعطيل المستخدم.' : 'فشل تفعيل المستخدم.');
     }
   }
 

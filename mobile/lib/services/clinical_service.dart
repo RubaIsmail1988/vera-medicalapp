@@ -1,10 +1,11 @@
-// -----------------lib/services/clinical_service.dart----------------
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 
 import '/services/auth_service.dart';
+import '/utils/api_exception.dart';
 import '/utils/constants.dart';
 
 class ClinicalService {
@@ -37,31 +38,37 @@ class ClinicalService {
         "Authorization": "Bearer $token",
       };
 
-      switch (method.toUpperCase()) {
-        case "GET":
-          return http.get(url, headers: headers);
-        case "POST":
-          return http.post(
-            url,
-            headers: headers,
-            body: body != null ? jsonEncode(body) : null,
-          );
-        case "PUT":
-          return http.put(
-            url,
-            headers: headers,
-            body: body != null ? jsonEncode(body) : null,
-          );
-        case "PATCH":
-          return http.patch(
-            url,
-            headers: headers,
-            body: body != null ? jsonEncode(body) : null,
-          );
-        case "DELETE":
-          return http.delete(url, headers: headers);
-        default:
-          throw Exception("Invalid HTTP method");
+      try {
+        switch (method.toUpperCase()) {
+          case "GET":
+            return await http.get(url, headers: headers);
+          case "POST":
+            return await http.post(
+              url,
+              headers: headers,
+              body: body != null ? jsonEncode(body) : null,
+            );
+          case "PUT":
+            return await http.put(
+              url,
+              headers: headers,
+              body: body != null ? jsonEncode(body) : null,
+            );
+          case "PATCH":
+            return await http.patch(
+              url,
+              headers: headers,
+              body: body != null ? jsonEncode(body) : null,
+            );
+          case "DELETE":
+            return await http.delete(url, headers: headers);
+          default:
+            throw Exception("Invalid HTTP method");
+        }
+      } on SocketException catch (e) {
+        throw ApiExceptionUtils.network(e);
+      } on http.ClientException catch (e) {
+        throw ApiExceptionUtils.network(e);
       }
     }
 
@@ -73,7 +80,7 @@ class ClinicalService {
     }
 
     if (token == null) {
-      return http.Response('Unauthorized', 401);
+      throw const ApiException(401, 'Unauthorized');
     }
 
     final first = await send(token);
@@ -81,7 +88,9 @@ class ClinicalService {
     if (first.statusCode == 401) {
       await _authService.refreshToken();
       final newToken = await _authService.getAccessToken();
-      if (newToken == null) return first;
+      if (newToken == null) {
+        throw ApiExceptionUtils.fromResponse(first);
+      }
       return send(newToken);
     }
 

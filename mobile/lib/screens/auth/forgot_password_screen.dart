@@ -38,77 +38,78 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
     final email = normalizeEmail(emailController.text);
     final service = PasswordResetService();
 
-    PasswordResetRequestResult result;
     try {
-      result = await service.requestOtp(email: email);
-    } catch (_) {
+      final result = await service.requestOtp(email: email);
+
       if (!mounted) return;
       setState(() => loading = false);
 
-      showAppSnackBar(
-        context,
-        'تعذّر إرسال الرمز. تحقق من الاتصال ثم حاول مرة أخرى.',
-        type: AppSnackBarType.error,
-      );
-      return;
-    }
+      if (!result.success) {
+        showActionErrorSnackBar(
+          context,
+          fallback: 'تعذّر إرسال الرمز. تحقق من الاتصال ثم حاول مرة أخرى.',
+        );
+        return;
+      }
 
-    if (!mounted) return;
-    setState(() => loading = false);
+      // حالة PythonAnywhere المجاني: OTP يرجع في response
+      if (result.delivery == 'disabled' && (result.otp ?? '').isNotEmpty) {
+        final otp = result.otp!;
+        final expires = result.expiresInMinutes ?? 10;
 
-    if (!result.success) {
-      showAppSnackBar(
-        context,
-        'تعذّر إرسال الرمز. حاول مرة أخرى.',
-        type: AppSnackBarType.error,
-      );
-      return;
-    }
-
-    // حالة PythonAnywhere المجاني: OTP يرجع في response
-    if (result.delivery == 'disabled' && (result.otp ?? '').isNotEmpty) {
-      final otp = result.otp!;
-      final expires = result.expiresInMinutes ?? 10;
-
-      await showDialog<void>(
-        context: context,
-        builder: (context) {
-          return AlertDialog(
-            title: const Text('رمز التحقق (بيئة تجريبية)'),
-            content: Text('الرمز: $otp\nصالح لمدة $expires دقائق.'),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(),
-                child: const Text('متابعة'),
+        // لا تستخدم context بعد await إلا مع mounted
+        await showDialog<void>(
+          context: context,
+          barrierDismissible: false,
+          builder: (ctx) {
+            return Directionality(
+              textDirection: TextDirection.rtl,
+              child: AlertDialog(
+                title: const Text('رمز التحقق (بيئة تجريبية)'),
+                content: Text('الرمز: $otp\nصالح لمدة $expires دقائق.'),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.of(ctx).pop(),
+                    child: const Text('متابعة'),
+                  ),
+                ],
               ),
-            ],
-          );
-        },
-      );
+            );
+          },
+        );
 
-      if (!mounted) return;
+        if (!mounted) return;
 
+        showAppSnackBar(
+          context,
+          'تم إنشاء رمز التحقق. انتقل الآن لصفحة إدخال الرمز.',
+          type: AppSnackBarType.success,
+        );
+
+        final encodedEmail = Uri.encodeComponent(email);
+        context.go('/forgot-password/verify?email=$encodedEmail');
+        return;
+      }
+
+      // الوضع الطبيعي: email
       showAppSnackBar(
         context,
-        'تم إنشاء رمز التحقق. انتقل الآن لصفحة إدخال الرمز.',
+        'إذا كان البريد صحيحًا، سيصلك رمز التحقق خلال لحظات.',
         type: AppSnackBarType.success,
       );
 
       final encodedEmail = Uri.encodeComponent(email);
       context.go('/forgot-password/verify?email=$encodedEmail');
-      return;
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => loading = false);
+
+      showActionErrorSnackBar(
+        context,
+        exception: e,
+        fallback: 'تعذّر إرسال الرمز. تحقق من الاتصال ثم حاول مرة أخرى.',
+      );
     }
-
-    // الوضع الطبيعي: email
-    showAppSnackBar(
-      context,
-      'إذا كان البريد صحيحًا، سيصلك رمز التحقق خلال لحظات.',
-      type: AppSnackBarType.success,
-    );
-
-    final encodedEmail = Uri.encodeComponent(email);
-    if (!mounted) return;
-    context.go('/forgot-password/verify?email=$encodedEmail');
   }
 
   @override
@@ -149,7 +150,6 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                     ),
                   ),
                   const SizedBox(height: 16),
-
                   Card(
                     child: Padding(
                       padding: const EdgeInsets.all(16),
@@ -164,10 +164,11 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                             validator: emailValidator,
                             enabled: !loading,
                             textInputAction: TextInputAction.done,
-                            onFieldSubmitted: (_) => submit(),
+                            onFieldSubmitted: (_) {
+                              if (!loading) submit();
+                            },
                           ),
                           const SizedBox(height: 18),
-
                           SizedBox(
                             width: double.infinity,
                             child: ElevatedButton(
@@ -185,7 +186,6 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                             ),
                           ),
                           const SizedBox(height: 8),
-
                           TextButton(
                             onPressed:
                                 loading ? null : () => context.go('/login'),

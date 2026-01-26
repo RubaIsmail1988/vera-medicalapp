@@ -113,41 +113,54 @@ class _UserListScreenState extends State<UserListScreen>
     final String haystack = [
       email,
       username,
+      role,
+      '$isActive',
       '$deletionCount',
       lastStatus,
     ].join(' ');
 
-    return haystack.contains(normalized);
+    return haystack.contains(normalized) ||
+        email.contains(normalized) ||
+        username.contains(normalized);
   }
 
   Future<void> toggleActivation(Map<String, dynamic> user) async {
     final int userId = user['id'] as int;
     final bool isActive = user['is_active'] as bool? ?? false;
 
-    bool success;
-    if (isActive) {
-      success = await adminService.deactivateUser(userId);
-    } else {
-      success = await adminService.activateUser(userId);
-    }
+    try {
+      final bool success =
+          isActive
+              ? await adminService.deactivateUser(userId)
+              : await adminService.activateUser(userId);
 
-    if (!mounted) return;
+      if (!mounted) return;
 
-    if (success) {
+      if (success) {
+        showAppSnackBar(
+          context,
+          isActive ? 'تم تعطيل المستخدم بنجاح.' : 'تم تفعيل المستخدم بنجاح.',
+          type: AppSnackBarType.success,
+        );
+        await refresh();
+        return;
+      }
+
       showAppSnackBar(
         context,
-        isActive ? 'تم تعطيل المستخدم بنجاح.' : 'تم تفعيل المستخدم بنجاح.',
-        type: AppSnackBarType.success,
+        isActive ? 'فشل تعطيل المستخدم.' : 'فشل تفعيل المستخدم.',
+        type: AppSnackBarType.error,
       );
-      await refresh();
-      return;
-    }
+    } catch (e) {
+      if (!mounted) return;
 
-    showAppSnackBar(
-      context,
-      isActive ? 'فشل تعطيل المستخدم.' : 'فشل تفعيل المستخدم.',
-      type: AppSnackBarType.error,
-    );
+      // Action => SnackBar موحّد
+      showActionErrorSnackBar(
+        context,
+        exception: e,
+        fallback: isActive ? 'تعذّر تعطيل المستخدم.' : 'تعذّر تفعيل المستخدم.',
+      );
+    }
   }
 
   void openDeletionRequests() {
@@ -175,12 +188,10 @@ class _UserListScreenState extends State<UserListScreen>
         }
 
         if (snapshot.hasError) {
-          return _CenteredStatus(
-            icon: Icons.error_outline,
-            title: 'تعذّر تحميل البيانات.',
-            subtitle: 'تحقق من الاتصال ثم أعد المحاولة.',
-            actionText: 'إعادة المحاولة',
-            onAction: refresh,
+          // ✅ Fetch => Inline state موحّد (wifi_off_rounded + رسالة "مافي نت" عند الانقطاع)
+          return AppFetchStateView(
+            error: snapshot.error!,
+            onRetry: () => refresh(),
           );
         }
 
@@ -321,7 +332,6 @@ class _UserListScreenState extends State<UserListScreen>
             ),
           ),
         ),
-
         TabBar(
           controller: tabController,
           tabs: const [
@@ -330,7 +340,6 @@ class _UserListScreenState extends State<UserListScreen>
             Tab(text: 'الأطباء'),
           ],
         ),
-
         Expanded(
           child: TabBarView(
             controller: tabController,
@@ -514,16 +523,16 @@ class _CenteredStatus extends StatelessWidget {
     required this.icon,
     required this.title,
     this.subtitle,
-    this.actionText,
-    this.onAction,
+    // this.actionText,
+    // this.onAction,
     this.showProgress = false,
   });
 
   final IconData icon;
   final String title;
   final String? subtitle;
-  final String? actionText;
-  final Future<void> Function()? onAction;
+  //final String? actionText;
+  //final Future<void> Function()? onAction;
   final bool showProgress;
 
   @override
@@ -563,15 +572,6 @@ class _CenteredStatus extends StatelessWidget {
                   width: 28,
                   height: 28,
                   child: CircularProgressIndicator(strokeWidth: 3),
-                ),
-              ],
-              if (actionText != null && onAction != null) ...[
-                const SizedBox(height: 14),
-                OutlinedButton(
-                  onPressed: () async {
-                    await onAction!.call();
-                  },
-                  child: Text(actionText!),
                 ),
               ],
             ],

@@ -1,6 +1,10 @@
+// ----------------- mobile/lib/main.dart -----------------
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'theme/app_theme.dart';
 
@@ -32,24 +36,31 @@ import 'screens/doctor/doctor_scheduling_settings_screen.dart';
 import 'screens/doctor/doctor_availability_screen.dart';
 import 'screens/doctor/doctor_visit_types_screen.dart';
 import 'screens/doctor/doctor_absences_screen.dart';
-// DoctorUrgentSearchScrean
+
+// Doctor urgent requests
 import 'screens/doctor/doctor_urgent_requests_screen.dart';
 
 // Appointment
 import 'screens/user/appointments/book_appointment_screen.dart';
 import 'screens/user/appointments/doctor_search_screen.dart';
-import 'utils/ui_helpers.dart';
 
 // Notification
 import '/services/local_notifications_service.dart';
 import 'screens/user/inbox/inbox_screen.dart';
+
+// Services
+import '/services/auth_service.dart';
+import '/services/clinical_service.dart';
+import '/services/polling_notifications_service.dart';
 
 // navigation_keys
 import 'utils/navigation_keys.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
   await LocalNotificationsService.init();
+
   runApp(const MyApp());
 }
 
@@ -67,8 +78,110 @@ class MyApp extends StatefulWidget {
   State<MyApp> createState() => MyAppState();
 }
 
-class MyAppState extends State<MyApp> {
+class MyAppState extends State<MyApp> with WidgetsBindingObserver {
   ThemeMode themeMode = ThemeMode.dark;
+
+  late final AuthService _authService;
+  late final ClinicalService _clinicalService;
+  late final PollingNotificationsService _polling;
+
+  bool _bootstrapped = false;
+
+  // Guard against double-start
+  bool _pollingRunning = false;
+  int _pollingUserId = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+
+    _authService = AuthService();
+    _clinicalService = ClinicalService(authService: _authService);
+
+    _polling = PollingNotificationsService(
+      authService: _authService,
+      clinicalService: _clinicalService,
+      intervalSeconds: 10,
+      pageSize: 50,
+    );
+
+    // ignore: unawaited_futures
+    _bootstrap();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    // ignore: unawaited_futures
+    _polling.stop();
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // - بالخلفية: أوقف polling
+    // - عند العودة: ابدأ إذا كان المستخدم مسجّل دخول
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.detached) {
+      // ignore: unawaited_futures
+      stopPolling();
+      return;
+    }
+
+    if (state == AppLifecycleState.resumed) {
+      // ignore: unawaited_futures
+      maybeStartPolling();
+    }
+  }
+
+  Future<void> _bootstrap() async {
+    if (_bootstrapped) return;
+    _bootstrapped = true;
+
+    await maybeStartPolling();
+  }
+
+  // --------------------------------------------------------------------------
+  // Polling control (تستدعيها من Login/Logout)
+  // --------------------------------------------------------------------------
+
+  Future<void> maybeStartPolling() async {
+    final prefs = await SharedPreferences.getInstance();
+    final access = (prefs.getString("access_token") ?? "").trim();
+    final userId = prefs.getInt("user_id") ?? 0;
+
+    if (access.isEmpty || userId <= 0) {
+      await stopPolling();
+      return;
+    }
+
+    // إذا شغّال لنفس المستخدم لا تعيد start
+    if (_pollingRunning && _pollingUserId == userId) return;
+
+    // إذا كان شغّال لمستخدم مختلف (نادر) => أوقف ثم ابدأ من جديد
+    if (_pollingRunning && _pollingUserId != userId) {
+      await _polling.stop();
+      _pollingRunning = false;
+      _pollingUserId = 0;
+    }
+
+    await _polling.start();
+    _pollingRunning = true;
+    _pollingUserId = userId;
+  }
+
+  Future<void> stopPolling() async {
+    if (!_pollingRunning) return;
+    await _polling.stop();
+    _pollingRunning = false;
+    _pollingUserId = 0;
+  }
+
+  // --------------------------------------------------------------------------
+  // UI helpers
+  // --------------------------------------------------------------------------
 
   Widget _adminShell(GoRouterState state, int index) {
     return AdminShellScreen(
@@ -84,13 +197,16 @@ class MyAppState extends State<MyApp> {
     );
   }
 
-  // IMPORTANT: One builder for ALL /app/record routes (and its tabs)
   Widget _userRecordShell(GoRouterState state) {
     return UserShellScreen(
       key: ValueKey<String>(state.uri.toString()),
-      initialIndex: 1,
+      initialIndex: 2,
     );
   }
+
+  // --------------------------------------------------------------------------
+  // Router
+  // --------------------------------------------------------------------------
 
   late final GoRouter router = GoRouter(
     navigatorKey: rootNavigatorKey,
@@ -132,7 +248,7 @@ class MyAppState extends State<MyApp> {
         },
       ),
 
-      // ---------------- Admin (web-safe) ----------------
+      // ---------------- Admin ----------------
       GoRoute(
         path: '/admin',
         builder: (context, state) => _adminShell(state, 0),
@@ -158,12 +274,12 @@ class MyAppState extends State<MyApp> {
         builder: (context, state) => _adminShell(state, 5),
       ),
 
-      // ---------------- App (User web-safe) ----------------
+      // ---------------- App (User) ----------------
       GoRoute(
         path: '/app',
         builder: (context, state) => _userShell(state, 0),
         routes: [
-          // ---------------- Doctor Scheduling (Phase C) ----------------
+          // ---------------- Doctor Scheduling ----------------
           GoRoute(
             path: 'doctor/scheduling',
             builder: (context, state) => const DoctorSchedulingSettingsScreen(),
@@ -188,7 +304,6 @@ class MyAppState extends State<MyApp> {
             path: 'record',
             builder: (context, state) => _userRecordShell(state),
             routes: [
-              // تفاصيل الطلب (شاشة مستقلة)
               GoRoute(
                 path: 'orders/:orderId',
                 builder: (context, state) {
@@ -200,7 +315,6 @@ class MyAppState extends State<MyApp> {
                     );
                   }
 
-                  // WEB-SAFE: role from query (not extra)
                   final role =
                       (state.uri.queryParameters['role'] ?? 'patient').trim();
 
@@ -218,10 +332,6 @@ class MyAppState extends State<MyApp> {
                   );
                 },
               ),
-
-              // IMPORTANT:
-              // These are "tab routes" but they MUST build the same record shell,
-              // not a new shell each time.
               GoRoute(
                 path: 'files',
                 builder: (context, state) => _userRecordShell(state),
@@ -244,27 +354,23 @@ class MyAppState extends State<MyApp> {
           // ---------------- Hospitals ----------------
           GoRoute(
             path: 'hospitals',
-            builder: (context, state) => _userShell(state, 2),
+            builder: (context, state) => _userShell(state, 3),
             routes: [
               GoRoute(
                 path: 'detail',
                 builder: (context, state) {
                   final extra = state.extra;
-
-                  if (extra is! Map) {
-                    return _userShell(state, 2);
-                  }
+                  if (extra is! Map) return _userShell(state, 3);
 
                   final name = (extra['name'] ?? '').toString().trim();
                   final governorateRaw = extra['governorate'];
-
                   final int governorate =
                       governorateRaw is int
                           ? governorateRaw
                           : int.tryParse(governorateRaw?.toString() ?? '') ?? 0;
 
                   if (name.isEmpty || governorate == 0) {
-                    return _userShell(state, 2);
+                    return _userShell(state, 3);
                   }
 
                   return HospitalPublicDetailScreen(
@@ -295,27 +401,23 @@ class MyAppState extends State<MyApp> {
           // ---------------- Labs ----------------
           GoRoute(
             path: 'labs',
-            builder: (context, state) => _userShell(state, 3),
+            builder: (context, state) => _userShell(state, 4),
             routes: [
               GoRoute(
                 path: 'detail',
                 builder: (context, state) {
                   final extra = state.extra;
-
-                  if (extra is! Map) {
-                    return _userShell(state, 3);
-                  }
+                  if (extra is! Map) return _userShell(state, 4);
 
                   final name = (extra['name'] ?? '').toString().trim();
                   final governorateRaw = extra['governorate'];
-
                   final int governorate =
                       governorateRaw is int
                           ? governorateRaw
                           : int.tryParse(governorateRaw?.toString() ?? '') ?? 0;
 
                   if (name.isEmpty || governorate == 0) {
-                    return _userShell(state, 3);
+                    return _userShell(state, 4);
                   }
 
                   return LabPublicDetailScreen(
@@ -346,7 +448,7 @@ class MyAppState extends State<MyApp> {
           // ---------------- Account ----------------
           GoRoute(
             path: 'account',
-            builder: (context, state) => _userShell(state, 4),
+            builder: (context, state) => _userShell(state, 5),
             routes: [
               GoRoute(
                 path: 'patient-details',
@@ -364,7 +466,7 @@ class MyAppState extends State<MyApp> {
                       return PatientDetailsScreen(token: token, userId: userId);
                     }
                   }
-                  return const UserShellScreen(initialIndex: 4);
+                  return const UserShellScreen(initialIndex: 5);
                 },
               ),
               GoRoute(
@@ -383,7 +485,7 @@ class MyAppState extends State<MyApp> {
                       return DoctorDetailsScreen(token: token, userId: userId);
                     }
                   }
-                  return const UserShellScreen(initialIndex: 4);
+                  return const UserShellScreen(initialIndex: 5);
                 },
               ),
               GoRoute(
@@ -397,14 +499,12 @@ class MyAppState extends State<MyApp> {
           // ---------------- appointments ----------------
           GoRoute(
             path: 'appointments',
-            builder: (context, state) => _userShell(state, 5),
+            builder: (context, state) => _userShell(state, 1),
             routes: [
-              // /app/appointments/book
               GoRoute(
                 path: 'book',
                 builder: (context, state) => const DoctorSearchScreen(),
                 routes: [
-                  // /app/appointments/book/:doctorId
                   GoRoute(
                     path: ':doctorId',
                     builder: (context, state) {
@@ -436,13 +536,13 @@ class MyAppState extends State<MyApp> {
                   ),
                 ],
               ),
-              // NEW: Doctor urgent requests list
               GoRoute(
                 path: 'urgent-requests',
                 builder: (context, state) => const DoctorUrgentRequestsScreen(),
               ),
             ],
           ),
+
           // inbox
           GoRoute(
             path: 'inbox',
@@ -471,8 +571,6 @@ class MyAppState extends State<MyApp> {
       theme: AppTheme.light(),
       darkTheme: AppTheme.dark(),
       routerConfig: router,
-
-      // ---- RTL + Arabic ----
       locale: const Locale('ar'),
       supportedLocales: const [Locale('ar'), Locale('en')],
       localizationsDelegates: const [

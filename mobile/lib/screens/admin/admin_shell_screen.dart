@@ -56,9 +56,6 @@ class _AdminShellScreenState extends State<AdminShellScreen> {
   void goToTab(int index) {
     if (index < 0 || index >= tabPaths.length) return;
 
-    setState(() => currentIndex = index);
-
-    // مهم للويب: تحديث URL
     context.go(tabPaths[index]);
   }
 
@@ -100,14 +97,14 @@ class _AdminShellScreenState extends State<AdminShellScreen> {
             : 'مسؤول النظام';
 
     String activationText = 'الحالة: غير معروفة';
-    Color activationColor = Colors.grey;
+    Color activationColor = cs.onSurface.withValues(alpha: 0.60);
 
     if (isActive == true) {
       activationText = 'الحالة: مفعّل';
-      activationColor = Colors.green;
+      activationColor = cs.primary;
     } else if (isActive == false) {
       activationText = 'الحالة: غير مفعّل';
-      activationColor = Colors.orange;
+      activationColor = cs.error;
     }
 
     return Center(

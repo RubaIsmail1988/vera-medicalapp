@@ -1,13 +1,12 @@
-// ----------------- mobile/lib/services/polling_notifications_service.dart -----------------
 import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '/services/auth_service.dart';
 import '/services/clinical_service.dart';
 import '/services/local_notifications_service.dart';
+import '/services/auth_service.dart'; // kept because it's a constructor param type
 
 class PollingNotificationsService {
   PollingNotificationsService({
@@ -115,9 +114,11 @@ class PollingNotificationsService {
     required int recipientId,
     required Map<String, dynamic> payload,
   }) {
+    final et = eventType.trim().toUpperCase();
+
     // سياسة: حذف الملف من المريض لنفسه لا يحتاج إشعار نظام (SnackBar داخل الشاشة يكفي)
     // (ويبقى موجوداً في InboxScreen كسجل، لكن لا نعمل show notification.)
-    if (eventType == "MEDICAL_FILE_DELETED") {
+    if (et == "MEDICAL_FILE_DELETED") {
       final reason = (payload["reason"] ?? "").toString();
       final isSelf = actorId != 0 && recipientId != 0 && actorId == recipientId;
 
@@ -137,11 +138,9 @@ class PollingNotificationsService {
   }
 
   String _preferPayloadBody(String eventType, Map<String, dynamic> payload) {
-    // نستخدم message إن كان موجودًا (هذا ما وضعناه بالباك)
     final msg = payload["message"]?.toString();
     if (msg != null && msg.trim().isNotEmpty) return msg.trim();
 
-    // بعض الأكواد القديمة قد تستخدم body بدل message
     final body = payload["body"]?.toString();
     if (body != null && body.trim().isNotEmpty) return body.trim();
 
@@ -156,6 +155,15 @@ class PollingNotificationsService {
 
     try {
       final userId = await _currentUserId();
+
+      // إذا لا يوجد مستخدم حالياً، لا نعمل polling
+      if (userId <= 0) {
+        if (kDebugMode) {
+          // ignore: avoid_print
+          print("[Polling] skip tick (no user_id saved yet)");
+        }
+        return;
+      }
 
       // إذا تغيّر المستخدم (مريض/طبيب) على نفس الجهاز
       if (userId != _cachedUserId) {
@@ -220,7 +228,7 @@ class PollingNotificationsService {
             (item["event_type"] ?? payload["type"] ?? "notification")
                 .toString();
 
-        // actor / recipient (قد يأتيان int أو string)
+        // actor / recipient
         final rawActor = item["actor"];
         final actorId =
             rawActor is int
@@ -240,15 +248,14 @@ class PollingNotificationsService {
           recipientId: recipientId,
           payload: payload,
         )) {
-          deliveredIds.add(id); // اعتبره مُعالج لتجنب تكراره
+          deliveredIds.add(id);
           continue;
         }
 
-        // العنوان/النص: نعتمد على payload أولاً
         final title = _preferPayloadTitle(eventType, payload);
         var body = _preferPayloadBody(eventType, payload);
 
-        // ---- enrich notification text like Inbox (actor name + readable date) ----
+        // ---- enrich notification text ----
         final actorName =
             (item["actor_display_name"] ??
                     payload["actor_name"] ??
@@ -263,7 +270,6 @@ class PollingNotificationsService {
                 .trim();
         final createdAt = _formatReadableDate(createdAtRaw);
 
-        // مثال: "تم رفع ملف طبي — من: patient34 • 2026-01-16 15:17"
         final parts = <String>[];
         if (actorName.isNotEmpty) parts.add("من: $actorName");
         if (createdAt.isNotEmpty) parts.add(createdAt);
@@ -274,7 +280,6 @@ class PollingNotificationsService {
 
         deliveredIds.add(id);
 
-        // data payload الذي سيذهب لـ LocalNotificationsService (tap routing)
         final data = <String, dynamic>{
           "event_type": eventType,
           "outbox_id": id,
@@ -325,11 +330,8 @@ class PollingNotificationsService {
   ) {
     final status = (payload["status"] ?? "").toString().toLowerCase().trim();
 
-    // Adherence (taken/skipped) قد تأتي كـ status فقط
     if (status == "taken") return "تم تسجيل تناول الدواء";
     if (status == "skipped") return "تم تسجيل تخطي الجرعة";
-
-    // no_show قد تأتي كـ status
     if (status == "no_show") return "لم يتم الحضور للموعد";
 
     switch (eventType) {
@@ -371,7 +373,6 @@ class PollingNotificationsService {
     final reviewStatus = payload["review_status"]?.toString();
     final reason = payload["reason"]?.toString();
 
-    // Adherence
     if (status == "taken") return "تم تسجيل تناول الجرعة.";
     if (status == "skipped") return "تم تسجيل تخطي الجرعة.";
     if (status == "no_show") {

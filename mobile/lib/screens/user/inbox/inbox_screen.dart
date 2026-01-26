@@ -23,6 +23,9 @@ class _InboxScreenState extends State<InboxScreen> {
 
   List<Map<String, dynamic>> items = <Map<String, dynamic>>[];
 
+  // Fetch error state (inline فقط)
+  ({String title, String message, IconData icon})? inlineError;
+
   @override
   void initState() {
     super.initState();
@@ -73,35 +76,52 @@ class _InboxScreenState extends State<InboxScreen> {
   }
 
   Future<void> loadInbox() async {
-    setState(() => loading = true);
+    setState(() {
+      loading = true;
+      inlineError = null; // reset error on new attempt
+    });
 
     try {
       final resp = await clinicalService.fetchInbox(limit: 50);
 
       if (!mounted) return;
 
+      // Fetch errors: Inline only (no SnackBar)
       if (resp.statusCode != 200) {
-        showAppSnackBar(
-          context,
-          "فشل تحميل Inbox (status=${resp.statusCode})",
-          type: AppSnackBarType.error,
+        final message = mapHttpErrorToArabicMessage(
+          statusCode: resp.statusCode,
+          data:
+              (() {
+                try {
+                  return jsonDecode(resp.body);
+                } catch (_) {
+                  return resp.body;
+                }
+              })(),
         );
+
         setState(() {
           items = <Map<String, dynamic>>[];
+          inlineError = (
+            title: 'تعذّر تحميل الإشعارات',
+            message: message,
+            icon: Icons.error_outline,
+          );
           loading = false;
         });
         return;
       }
 
       final decoded = jsonDecode(resp.body);
+
       if (decoded is! List) {
-        showAppSnackBar(
-          context,
-          "استجابة Inbox غير صحيحة",
-          type: AppSnackBarType.error,
-        );
         setState(() {
           items = <Map<String, dynamic>>[];
+          inlineError = (
+            title: 'تعذّر تحميل الإشعارات',
+            message: 'استجابة غير متوقعة من الخادم. حاول مرة أخرى.',
+            icon: Icons.error_outline,
+          );
           loading = false;
         });
         return;
@@ -134,17 +154,21 @@ class _InboxScreenState extends State<InboxScreen> {
 
       setState(() {
         items = visible;
+        inlineError = null;
         loading = false;
       });
     } catch (e) {
       if (!mounted) return;
-      showAppSnackBar(
-        context,
-        "خطأ أثناء تحميل Inbox: $e",
-        type: AppSnackBarType.error,
-      );
+
+      final mapped = mapFetchExceptionToInlineState(e);
+
       setState(() {
         items = <Map<String, dynamic>>[];
+        inlineError = (
+          title: mapped.title,
+          message: mapped.message,
+          icon: mapped.icon,
+        );
         loading = false;
       });
     }
@@ -227,7 +251,6 @@ class _InboxScreenState extends State<InboxScreen> {
     }
 
     // 3) appointment_cancelled_due_to_emergency_absence -> appointments
-
     if (eventType == "appointment_cancelled_due_to_emergency_absence") {
       if (!mounted) return;
       context.go("/app/appointments");
@@ -235,8 +258,6 @@ class _InboxScreenState extends State<InboxScreen> {
     }
 
     // 4) urgent request without slots:
-    // you mentioned: "طلب عاجل بدون مواعيد متاحة"
-    // قد يصل بأكثر من اسم حسب الباك؛ نعالج أشهر احتمالات بأمان
     if (eventType == "urgent_request_no_slots" ||
         eventType == "urgent_request_no_availability" ||
         eventType == "urgent_request_created_no_slots" ||
@@ -248,7 +269,7 @@ class _InboxScreenState extends State<InboxScreen> {
         context.go("/app/appointments/urgent-requests");
         return;
       }
-      // المريض: المواعيد (مراجعة الطلب/النتيجة)
+      // المريض: المواعيد
       context.go("/app/appointments");
       return;
     }
@@ -334,6 +355,8 @@ class _InboxScreenState extends State<InboxScreen> {
     }
 
     if (!mounted) return;
+
+    // هذا ليس Fetch error، بل نتيجة تفاعل (Tap) → SnackBar info مقبول
     showAppSnackBar(
       context,
       "لا يوجد توجيه لهذا النوع: $eventType",
@@ -521,6 +544,7 @@ class _InboxScreenState extends State<InboxScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // Loading (أول تحميل)
     if (loading) {
       return Scaffold(
         appBar: AppBar(title: const Text("Inbox")),
@@ -528,6 +552,54 @@ class _InboxScreenState extends State<InboxScreen> {
       );
     }
 
+    // Fetch error state (Inline only)
+    if (inlineError != null) {
+      final err = inlineError!;
+      return Scaffold(
+        appBar: AppBar(
+          title: const Text("Inbox"),
+          actions: [
+            IconButton(
+              tooltip: "تحديث",
+              onPressed: refreshing ? null : onRefresh,
+              icon: const Icon(Icons.refresh),
+            ),
+          ],
+        ),
+
+        // ✅ تعديل 1: تمركز الخطأ بالمنتصف (بدون ارتفاع ثابت)
+        body: RefreshIndicator(
+          onRefresh: onRefresh,
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              return ListView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                children: [
+                  ConstrainedBox(
+                    constraints: BoxConstraints(
+                      minHeight: constraints.maxHeight,
+                    ),
+                    child: Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: AppInlineErrorState(
+                          title: err.title,
+                          message: err.message,
+                          icon: err.icon,
+                          onRetry: refreshing ? null : () => loadInbox(),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
+      );
+    }
+
+    // Success state (Empty or List)
     return Scaffold(
       appBar: AppBar(
         title: const Text("Inbox"),
@@ -543,11 +615,23 @@ class _InboxScreenState extends State<InboxScreen> {
         onRefresh: onRefresh,
         child:
             items.isEmpty
-                ? ListView(
-                  children: const [
-                    SizedBox(height: 120),
-                    Center(child: Text("لا يوجد إشعارات بعد")),
-                  ],
+                // ✅ تعديل 2: تمركز empty state بالمنتصف (بدون ارتفاع ثابت)
+                ? LayoutBuilder(
+                  builder: (context, constraints) {
+                    return ListView(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      children: [
+                        ConstrainedBox(
+                          constraints: BoxConstraints(
+                            minHeight: constraints.maxHeight,
+                          ),
+                          child: const Center(
+                            child: Text("لا يوجد إشعارات بعد"),
+                          ),
+                        ),
+                      ],
+                    );
+                  },
                 )
                 : ListView.separated(
                   padding: const EdgeInsets.all(12),

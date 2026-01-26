@@ -88,16 +88,21 @@ class _DeletionRequestsScreenState extends State<DeletionRequestsScreen> {
     }
   }
 
-  Map<String, dynamic> statusInfo(String? status) {
+  ({String label, Color color}) statusInfo(ColorScheme cs, String? status) {
     final s = (status ?? '').toLowerCase();
+
     if (s == 'pending') {
-      return {'label': 'قيد المراجعة', 'color': Colors.orangeAccent};
+      return (label: 'قيد المراجعة', color: cs.tertiary);
     } else if (s == 'approved') {
-      return {'label': 'مقبول', 'color': Colors.greenAccent};
+      return (label: 'مقبول', color: cs.primary);
     } else if (s == 'rejected') {
-      return {'label': 'مرفوض', 'color': Colors.redAccent};
+      return (label: 'مرفوض', color: cs.error);
     }
-    return {'label': status ?? 'غير معروف', 'color': Colors.grey};
+
+    return (
+      label: status ?? 'غير معروف',
+      color: cs.onSurface.withValues(alpha: 0.55),
+    );
   }
 
   bool requestMatchesQuery(Map<String, dynamic> req) {
@@ -132,7 +137,15 @@ class _DeletionRequestsScreenState extends State<DeletionRequestsScreen> {
   }
 
   Future<void> handleApprove(Map<String, dynamic> req) async {
-    final int id = req['id'] as int;
+    final int id = int.tryParse(req['id']?.toString() ?? '') ?? 0;
+    if (id == 0) {
+      showAppSnackBar(
+        context,
+        'معرّف الطلب غير صالح.',
+        type: AppSnackBarType.error,
+      );
+      return;
+    }
 
     final confirmed = await showConfirmDialog(
       context,
@@ -167,7 +180,15 @@ class _DeletionRequestsScreenState extends State<DeletionRequestsScreen> {
   }
 
   Future<void> handleReject(Map<String, dynamic> req) async {
-    final int id = req['id'] as int;
+    final int id = int.tryParse(req['id']?.toString() ?? '') ?? 0;
+    if (id == 0) {
+      showAppSnackBar(
+        context,
+        'معرّف الطلب غير صالح.',
+        type: AppSnackBarType.error,
+      );
+      return;
+    }
 
     final confirmed = await showConfirmDialog(
       context,
@@ -209,7 +230,7 @@ class _DeletionRequestsScreenState extends State<DeletionRequestsScreen> {
     final cs = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
 
-    // ملاحظة: بدون Scaffold لأننا داخل AdminShell
+    // بدون Scaffold لأننا داخل AdminShell
     return Column(
       children: [
         Padding(
@@ -234,6 +255,8 @@ class _DeletionRequestsScreenState extends State<DeletionRequestsScreen> {
                             icon: const Icon(Icons.close),
                             onPressed: () {
                               searchController.clear();
+                              if (!mounted) return;
+                              setState(() => searchQuery = '');
                               onSearchChanged('');
                             },
                           ),
@@ -251,29 +274,28 @@ class _DeletionRequestsScreenState extends State<DeletionRequestsScreen> {
             future: futureRequests,
             builder: (context, snapshot) {
               if (snapshot.connectionState == ConnectionState.waiting) {
-                return const _CenteredStatus(
-                  icon: Icons.hourglass_top_rounded,
-                  title: 'جاري تحميل طلبات الحذف...',
-                  showProgress: true,
-                );
+                return const Center(child: CircularProgressIndicator());
               }
 
               if (snapshot.hasError) {
-                return _CenteredStatus(
-                  icon: Icons.error_outline,
-                  title: 'تعذّر تحميل طلبات الحذف.',
-                  subtitle: 'تحقق من الاتصال ثم أعد المحاولة.',
-                  actionText: 'إعادة المحاولة',
-                  onAction: refresh,
+                // موحّد: يميّز Offline/Timeout/...
+                return AppFetchStateView(
+                  error: snapshot.error!,
+                  onRetry: refresh,
                 );
               }
 
               final requestsAll = snapshot.data ?? [];
 
               if (requestsAll.isEmpty) {
-                return const _CenteredStatus(
-                  icon: Icons.delete_forever_outlined,
-                  title: 'لا يوجد أي طلبات حذف حساب حاليًا.',
+                return const Center(
+                  child: Padding(
+                    padding: EdgeInsets.all(18),
+                    child: Text(
+                      'لا يوجد أي طلبات حذف حساب حاليًا.',
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
                 );
               }
 
@@ -352,10 +374,14 @@ class _DeletionRequestsScreenState extends State<DeletionRequestsScreen> {
                   Expanded(
                     child:
                         filtered.isEmpty
-                            ? const _CenteredStatus(
-                              icon: Icons.search_off,
-                              title: 'لا توجد نتائج مطابقة للبحث.',
-                              subtitle: 'جرّب تعديل كلمة البحث.',
+                            ? const Center(
+                              child: Padding(
+                                padding: EdgeInsets.all(18),
+                                child: Text(
+                                  'لا توجد نتائج مطابقة للبحث.\nجرّب تعديل كلمة البحث.',
+                                  textAlign: TextAlign.center,
+                                ),
+                              ),
                             )
                             : RefreshIndicator(
                               onRefresh: refresh,
@@ -417,11 +443,9 @@ class _DeletionRequestsScreenState extends State<DeletionRequestsScreen> {
                                       req['comment']?.toString() ??
                                       req['description']?.toString();
 
-                                  final info = statusInfo(status);
-                                  final String statusLabel =
-                                      info['label'] as String;
-                                  final Color statusColor =
-                                      info['color'] as Color;
+                                  final info = statusInfo(cs, status);
+                                  final String statusLabel = info.label;
+                                  final Color statusColor = info.color;
 
                                   String roleLabel;
                                   switch (role) {
@@ -481,12 +505,13 @@ class _DeletionRequestsScreenState extends State<DeletionRequestsScreen> {
                                                       ),
                                                 ),
                                               ),
-                                              if (perUserCount > 1)
-                                                const _Chip(
+                                              if (perUserCount > 1) ...[
+                                                const SizedBox(width: 6),
+                                                _Chip(
                                                   label: 'طلبات متعددة',
-                                                  color:
-                                                      Colors.deepOrangeAccent,
+                                                  color: cs.tertiary,
                                                 ),
+                                              ],
                                               if (roleLabel.isNotEmpty) ...[
                                                 const SizedBox(width: 6),
                                                 Container(
@@ -523,7 +548,7 @@ class _DeletionRequestsScreenState extends State<DeletionRequestsScreen> {
                                               reason.trim().isNotEmpty) ...[
                                             _InfoRow(
                                               icon: Icons.notes_outlined,
-                                              iconColor: Colors.amber,
+                                              iconColor: cs.tertiary,
                                               text: 'السبب: $reason',
                                             ),
                                             const SizedBox(height: 8),
@@ -578,9 +603,9 @@ class _DeletionRequestsScreenState extends State<DeletionRequestsScreen> {
                                                   label: const Text('موافقة'),
                                                   style: ButtonStyle(
                                                     foregroundColor:
-                                                        const WidgetStatePropertyAll<
+                                                        WidgetStatePropertyAll<
                                                           Color
-                                                        >(Colors.greenAccent),
+                                                        >(cs.primary),
                                                   ),
                                                 ),
                                               ],
@@ -668,79 +693,6 @@ class _InfoRow extends StatelessWidget {
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _CenteredStatus extends StatelessWidget {
-  const _CenteredStatus({
-    required this.icon,
-    required this.title,
-    this.subtitle,
-    this.actionText,
-    this.onAction,
-    this.showProgress = false,
-  });
-
-  final IconData icon;
-  final String title;
-  final String? subtitle;
-  final String? actionText;
-  final Future<void> Function()? onAction;
-  final bool showProgress;
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(18),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 520),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(icon, size: 36, color: cs.onSurface.withValues(alpha: 0.70)),
-              const SizedBox(height: 10),
-              Text(
-                title,
-                textAlign: TextAlign.center,
-                style: Theme.of(
-                  context,
-                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
-              ),
-              if (subtitle != null) ...[
-                const SizedBox(height: 6),
-                Text(
-                  subtitle!,
-                  textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: cs.onSurface.withValues(alpha: 0.70),
-                  ),
-                ),
-              ],
-              if (showProgress) ...[
-                const SizedBox(height: 14),
-                const SizedBox(
-                  width: 28,
-                  height: 28,
-                  child: CircularProgressIndicator(strokeWidth: 3),
-                ),
-              ],
-              if (actionText != null && onAction != null) ...[
-                const SizedBox(height: 14),
-                OutlinedButton(
-                  onPressed: () async {
-                    await onAction!.call();
-                  },
-                  child: Text(actionText!),
-                ),
-              ],
-            ],
-          ),
-        ),
       ),
     );
   }

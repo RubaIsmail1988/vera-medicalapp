@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import '../models/doctor_specific_visit_type.dart';
+import '/utils/api_exception.dart';
 import 'auth_service.dart';
 
 class DoctorSpecificVisitTypeService {
@@ -21,9 +22,7 @@ class DoctorSpecificVisitTypeService {
           .toList();
     }
 
-    throw Exception(
-      'Failed to load doctor specific visit types: ${response.statusCode}',
-    );
+    throw ApiException(response.statusCode, response.body);
   }
 
   Future<Map<String, dynamic>> create({
@@ -48,8 +47,7 @@ class DoctorSpecificVisitTypeService {
       return jsonDecode(response.body) as Map<String, dynamic>;
     }
 
-    final raw = response.body.isNotEmpty ? response.body : "{}";
-    throw Exception('Create failed: ${response.statusCode} - $raw');
+    throw ApiException(response.statusCode, response.body);
   }
 
   Future<void> update({
@@ -72,7 +70,8 @@ class DoctorSpecificVisitTypeService {
     );
 
     if (response.statusCode == 200) return;
-    throw Exception('Update failed: ${response.statusCode} - ${response.body}');
+
+    throw ApiException(response.statusCode, response.body);
   }
 
   Future<void> delete(int id) async {
@@ -82,6 +81,7 @@ class DoctorSpecificVisitTypeService {
     );
 
     if (response.statusCode == 204) return;
-    throw Exception('Delete failed: ${response.statusCode}');
+
+    throw ApiException(response.statusCode, response.body);
   }
 }

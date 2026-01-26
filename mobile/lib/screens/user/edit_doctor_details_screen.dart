@@ -5,8 +5,7 @@ import '/models/doctor_details.dart';
 import '/utils/ui_helpers.dart';
 
 class EditDoctorDetailsScreen extends StatefulWidget {
-  // لن نستخدمه مباشرة إذا DetailsService يستعمل التوكن المخزن
-  final String token;
+  final String token; // legacy
   final int userId;
 
   final String specialty;
@@ -55,8 +54,8 @@ class _EditDoctorDetailsScreenState extends State<EditDoctorDetailsScreen> {
   }
 
   Future<void> submitUpdate() async {
-    if (!formKey.currentState!.validate()) return;
     if (loading) return;
+    if (!formKey.currentState!.validate()) return;
 
     setState(() => loading = true);
 
@@ -72,26 +71,28 @@ class _EditDoctorDetailsScreenState extends State<EditDoctorDetailsScreen> {
               : notesController.text.trim(),
     );
 
-    final response = await DetailsService().updateDoctorDetails(request);
+    try {
+      await DetailsService().updateDoctorDetails(request);
 
-    if (!mounted) return;
-    setState(() => loading = false);
+      if (!mounted) return;
+      setState(() => loading = false);
 
-    if (response.statusCode == 200) {
       showAppSnackBar(
         context,
         'تم تحديث بيانات الطبيب بنجاح',
         type: AppSnackBarType.success,
       );
-      Navigator.pop(context, true); // نرجع إلى صفحة التفاصيل مع إشارة نجاح
-      return;
-    }
+      Navigator.pop(context, true);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => loading = false);
 
-    showAppSnackBar(
-      context,
-      'فشل التحديث: ${response.body}',
-      type: AppSnackBarType.error,
-    );
+      showActionErrorSnackBar(
+        context,
+        exception: e,
+        fallback: 'فشل تحديث بيانات الطبيب.',
+      );
+    }
   }
 
   @override
@@ -106,6 +107,7 @@ class _EditDoctorDetailsScreenState extends State<EditDoctorDetailsScreen> {
             children: [
               TextFormField(
                 controller: specialtyController,
+                enabled: !loading,
                 decoration: const InputDecoration(labelText: 'التخصص'),
                 validator:
                     (v) => v == null || v.trim().isEmpty ? 'الحقل مطلوب' : null,
@@ -113,6 +115,7 @@ class _EditDoctorDetailsScreenState extends State<EditDoctorDetailsScreen> {
               const SizedBox(height: 15),
               TextFormField(
                 controller: experienceController,
+                enabled: !loading,
                 decoration: const InputDecoration(labelText: 'سنوات الخبرة'),
                 keyboardType: TextInputType.number,
                 validator: (v) {
@@ -125,6 +128,7 @@ class _EditDoctorDetailsScreenState extends State<EditDoctorDetailsScreen> {
               const SizedBox(height: 15),
               TextFormField(
                 controller: notesController,
+                enabled: !loading,
                 decoration: const InputDecoration(labelText: 'ملاحظات'),
                 maxLines: 3,
               ),

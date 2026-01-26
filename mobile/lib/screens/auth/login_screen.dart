@@ -1,3 +1,4 @@
+// ----------------- mobile/lib/screens/auth/login_screen.dart -----------------
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
@@ -64,74 +65,84 @@ class _LoginScreenState extends State<LoginScreen> {
 
     setState(() => loading = true);
 
-    final result = await authService.login(
-      emailController.text.trim(),
-      passwordController.text.trim(),
-    );
-
-    if (!mounted) return;
-
-    setState(() => loading = false);
-
-    if (result == null) {
-      showAppSnackBar(
-        context,
-        'البريد الإلكتروني أو كلمة المرور غير صحيحة',
-        type: AppSnackBarType.error,
+    try {
+      final result = await authService.login(
+        emailController.text.trim(),
+        passwordController.text.trim(),
       );
-      return;
-    }
 
-    final data = result;
+      if (!mounted) return;
 
-    if (data['error'] == 'not_active') {
-      context.go('/waiting-activation');
-      return;
-    }
+      if (result == null) {
+        setState(() => loading = false);
+        showAppErrorSnackBar(
+          context,
+          'البريد الإلكتروني أو كلمة المرور غير صحيحة',
+        );
+        return;
+      }
 
-    final String role = (data['role'] ?? '').toString();
-    final bool isActive = data['is_active'] == true;
+      final data = result;
 
-    final dynamic rawUserId = data['user_id'];
-    final int userId =
-        rawUserId is int
-            ? rawUserId
-            : int.tryParse(rawUserId?.toString() ?? '') ?? 0;
+      if (data['error'] == 'not_active') {
+        setState(() => loading = false);
+        context.go('/waiting-activation');
+        return;
+      }
 
-    final String accessToken = (data['access_token'] ?? '').toString();
+      final String role = (data['role'] ?? '').toString();
+      final bool isActive = data['is_active'] == true;
 
-    if (!isActive) {
-      context.go('/waiting-activation');
-      return;
-    }
+      final dynamic rawUserId = data['user_id'];
+      final int userId =
+          rawUserId is int
+              ? rawUserId
+              : int.tryParse(rawUserId?.toString() ?? '') ?? 0;
 
-    if (accessToken.isEmpty || userId == 0 || role.isEmpty) {
-      showAppSnackBar(
-        context,
-        'الاستجابة من الخادم غير مكتملة، حاول مرة أخرى',
-        type: AppSnackBarType.warning,
-      );
-      return;
-    }
+      final String accessToken = (data['access_token'] ?? '').toString();
 
-    await authService.fetchAndStoreCurrentUser();
-    if (!mounted) return;
+      if (!isActive) {
+        setState(() => loading = false);
+        context.go('/waiting-activation');
+        return;
+      }
 
-    if (role == 'admin') {
-      context.go('/admin');
-      return;
-    }
+      if (accessToken.isEmpty || userId == 0 || role.isEmpty) {
+        setState(() => loading = false);
+        showAppSnackBar(
+          context,
+          'الاستجابة من الخادم غير مكتملة، حاول مرة أخرى',
+          type: AppSnackBarType.warning,
+        );
+        return;
+      }
 
-    if (role == 'patient' || role == 'doctor') {
+      // يحدّث prefs (currentUserName/currentUserEmail/currentUserRole/user_is_active...)
+      await authService.fetchAndStoreCurrentUser();
+      if (!mounted) return;
+
+      setState(() => loading = false);
+
+      // Admin -> Admin shell
+      if (role == 'admin') {
+        context.go('/admin');
+        return;
+      }
+
+      // Doctor/Patient -> User shell
       context.go('/app');
       return;
-    }
+    } catch (e) {
+      if (!mounted) return;
 
-    showAppSnackBar(
-      context,
-      'دور مستخدم غير معروف: $role',
-      type: AppSnackBarType.error,
-    );
+      setState(() => loading = false);
+
+      showActionErrorSnackBar(
+        context,
+        exception: e,
+        fallback: 'تعذّر تسجيل الدخول. حاول مرة أخرى.',
+      );
+    }
   }
 
   @override
@@ -159,7 +170,6 @@ class _LoginScreenState extends State<LoginScreen> {
                 children: [
                   const AppLogo(width: 220),
                   const SizedBox(height: 18),
-
                   Text(
                     'مرحباً بعودتك',
                     style: Theme.of(context).textTheme.titleLarge?.copyWith(
@@ -173,9 +183,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       color: cs.onSurface.withValues(alpha: 0.72),
                     ),
                   ),
-
                   const SizedBox(height: 16),
-
                   Card(
                     child: Padding(
                       padding: const EdgeInsets.all(16),
@@ -192,7 +200,6 @@ class _LoginScreenState extends State<LoginScreen> {
                             textInputAction: TextInputAction.next,
                           ),
                           const SizedBox(height: 16),
-
                           TextFormField(
                             controller: passwordController,
                             decoration: InputDecoration(
@@ -222,7 +229,6 @@ class _LoginScreenState extends State<LoginScreen> {
                             },
                           ),
                           const SizedBox(height: 18),
-
                           SizedBox(
                             width: double.infinity,
                             child: ElevatedButton(
@@ -239,9 +245,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                       : const Text('تسجيل الدخول'),
                             ),
                           ),
-
                           const SizedBox(height: 16),
-
                           Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [

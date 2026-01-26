@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 
 import '/services/details_service.dart';
 import '/models/doctor_details.dart';
 import '/utils/ui_helpers.dart';
-import 'doctor_details_screen.dart';
 
 class DoctorDetailsFormScreen extends StatefulWidget {
-  final String token;
+  final String token; // legacy: kept to avoid breaking callers
   final int userId;
 
   const DoctorDetailsFormScreen({
@@ -30,7 +30,14 @@ class _DoctorDetailsFormScreenState extends State<DoctorDetailsFormScreen> {
 
   bool loading = false;
 
+  int _parseYearsOrZero(String raw) {
+    final t = raw.trim();
+    final v = int.tryParse(t) ?? 0;
+    return v < 0 ? 0 : v;
+  }
+
   Future<void> submitDoctorDetails() async {
+    if (loading) return;
     if (!formKey.currentState!.validate()) return;
 
     setState(() => loading = true);
@@ -38,7 +45,7 @@ class _DoctorDetailsFormScreenState extends State<DoctorDetailsFormScreen> {
     final request = DoctorDetailsRequest(
       userId: widget.userId,
       specialty: specialtyController.text.trim(),
-      experienceYears: int.tryParse(experienceYearsController.text.trim()) ?? 0,
+      experienceYears: _parseYearsOrZero(experienceYearsController.text),
       notes:
           notesController.text.trim().isEmpty
               ? null
@@ -46,44 +53,21 @@ class _DoctorDetailsFormScreenState extends State<DoctorDetailsFormScreen> {
     );
 
     try {
-      final response = await DetailsService().createDoctorDetails(request);
+      await DetailsService().createDoctorDetails(request);
 
       if (!mounted) return;
       setState(() => loading = false);
 
-      if (response.statusCode == 201 || response.statusCode == 200) {
-        showAppSnackBar(
-          context,
-          'تم حفظ تفاصيل الطبيب بنجاح.',
-          type: AppSnackBarType.success,
-        );
-
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-            builder:
-                (_) => DoctorDetailsScreen(
-                  token: widget.token,
-                  userId: widget.userId,
-                ),
-          ),
-        );
-        return;
-      }
-
-      showAppSnackBar(
-        context,
-        'فشل الحفظ: ${response.body}',
-        type: AppSnackBarType.error,
-      );
+      showAppSuccessSnackBar(context, 'تم حفظ تفاصيل الطبيب بنجاح.');
+      context.go('/app/doctor-details');
     } catch (e) {
       if (!mounted) return;
       setState(() => loading = false);
 
-      showAppSnackBar(
+      showActionErrorSnackBar(
         context,
-        'حدث خطأ أثناء الحفظ: $e',
-        type: AppSnackBarType.error,
+        exception: e,
+        fallback: 'تعذّر حفظ تفاصيل الطبيب.',
       );
     }
   }
@@ -114,47 +98,59 @@ class _DoctorDetailsFormScreenState extends State<DoctorDetailsFormScreen> {
                   decoration: const InputDecoration(
                     labelText: "التخصص",
                     alignLabelWithHint: true,
+                    border: OutlineInputBorder(),
                   ),
+                  enabled: !loading,
                   validator:
                       (v) =>
-                          v == null || v.trim().isEmpty ? "الحقل مطلوب" : null,
+                          (v == null || v.trim().isEmpty)
+                              ? "الحقل مطلوب"
+                              : null,
                 ),
                 const SizedBox(height: 12),
-
                 TextFormField(
                   controller: experienceYearsController,
                   textAlign: TextAlign.right,
                   decoration: const InputDecoration(
                     labelText: "سنوات الخبرة",
                     alignLabelWithHint: true,
+                    border: OutlineInputBorder(),
                   ),
+                  enabled: !loading,
                   keyboardType: TextInputType.number,
                   validator:
                       (v) =>
-                          v == null || v.trim().isEmpty ? "الحقل مطلوب" : null,
+                          (v == null || v.trim().isEmpty)
+                              ? "الحقل مطلوب"
+                              : null,
                 ),
                 const SizedBox(height: 12),
-
                 TextFormField(
                   controller: notesController,
                   textAlign: TextAlign.right,
                   decoration: const InputDecoration(
                     labelText: "ملاحظات",
                     alignLabelWithHint: true,
+                    border: OutlineInputBorder(),
                   ),
+                  enabled: !loading,
                   maxLines: 3,
                 ),
                 const SizedBox(height: 20),
-
-                loading
-                    ? const Center(child: CircularProgressIndicator())
-                    : SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton(
-                        onPressed: submitDoctorDetails,
-                        child: const Text("حفظ"),
-                      ),
-                    ),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: loading ? null : submitDoctorDetails,
+                    child:
+                        loading
+                            ? const SizedBox(
+                              height: 20,
+                              width: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                            : const Text("حفظ"),
+                  ),
+                ),
               ],
             ),
           ),

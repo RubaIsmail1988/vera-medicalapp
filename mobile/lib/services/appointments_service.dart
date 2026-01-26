@@ -1,3 +1,4 @@
+// services/appointments_service.dart
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
@@ -8,16 +9,7 @@ import '../models/doctor_search_result.dart';
 import '../services/auth_service.dart';
 import '../utils/constants.dart';
 import '../services/local_notifications_service.dart';
-
-class ApiException implements Exception {
-  final int statusCode;
-  final String body;
-
-  ApiException(this.statusCode, this.body);
-
-  @override
-  String toString() => "ApiException($statusCode): $body";
-}
+import '/utils/api_exception.dart';
 
 class AppointmentsService {
   final AuthService authService = AuthService();
@@ -52,51 +44,77 @@ class AppointmentsService {
         if (extraHeaders != null) ...extraHeaders,
       };
 
-      switch (method.toUpperCase()) {
-        case "GET":
-          return http.get(url, headers: headers);
-        case "POST":
-          return http.post(
-            url,
-            headers: headers,
-            body: body != null ? jsonEncode(body) : null,
-          );
-        case "PUT":
-          return http.put(
-            url,
-            headers: headers,
-            body: body != null ? jsonEncode(body) : null,
-          );
-        case "PATCH":
-          return http.patch(
-            url,
-            headers: headers,
-            body: body != null ? jsonEncode(body) : null,
-          );
-        case "DELETE":
-          return http.delete(url, headers: headers);
-        default:
-          throw Exception("Invalid HTTP method: $method");
+      try {
+        switch (method.toUpperCase()) {
+          case "GET":
+            return await http.get(url, headers: headers);
+
+          case "POST":
+            return await http.post(
+              url,
+              headers: headers,
+              body: body != null ? jsonEncode(body) : null,
+            );
+
+          case "PUT":
+            return await http.put(
+              url,
+              headers: headers,
+              body: body != null ? jsonEncode(body) : null,
+            );
+
+          case "PATCH":
+            return await http.patch(
+              url,
+              headers: headers,
+              body: body != null ? jsonEncode(body) : null,
+            );
+
+          case "DELETE":
+            return await http.delete(url, headers: headers);
+
+          default:
+            throw ApiException(400, "Invalid HTTP method: $method");
+        }
+      } catch (e) {
+        if (ApiExceptionUtils.isNetworkException(e)) {
+          throw ApiExceptionUtils.network(e);
+        }
+        rethrow;
       }
     }
 
     String? token = await authService.getAccessToken();
 
+    // إذا لا يوجد توكن أصلًا → جرّب refresh
     if (token == null) {
-      await authService.refreshToken();
+      try {
+        await authService.refreshToken();
+      } catch (_) {
+        // تجاهل: ممكن يكون لا إنترنت أو refresh فشل
+      }
       token = await authService.getAccessToken();
     }
 
+    // IMPORTANT: لا نرجّع Response "مزيف" — نرمي ApiException ليبقى موحّد
     if (token == null) {
-      return http.Response('Unauthorized', 401);
+      throw const ApiException(401, 'Unauthorized');
     }
 
     final first = await send(token);
 
     if (first.statusCode == 401) {
-      await authService.refreshToken();
+      try {
+        await authService.refreshToken();
+      } catch (_) {
+        throw ApiException(first.statusCode, first.body);
+      }
+
       final newToken = await authService.getAccessToken();
-      if (newToken == null) return first;
+      if (newToken == null) {
+        throw ApiException(first.statusCode, first.body);
+      }
+
       return send(newToken);
     }
 
@@ -140,7 +158,7 @@ class AppointmentsService {
   Map<String, dynamic> _asMap(dynamic decoded) {
     if (decoded is Map<String, dynamic>) return decoded;
     if (decoded is Map) return Map<String, dynamic>.from(decoded);
-    throw Exception("Unexpected response format.");
+    throw const ApiException(500, "Unexpected response format.");
   }
 
   // ---------------- API methods ----------------
@@ -189,7 +207,7 @@ class AppointmentsService {
     final decoded = jsonDecode(resp.body);
     if (decoded is Map<String, dynamic>) return decoded;
 
-    throw Exception("Unexpected response format.");
+    throw const ApiException(500, "Unexpected response format.");
   }
 
   Future<Appointment> createAppointment({
@@ -236,7 +254,7 @@ class AppointmentsService {
     final decoded = jsonDecode(resp.body);
     if (decoded is Map<String, dynamic>) return decoded;
 
-    throw Exception("Unexpected response format.");
+    throw const ApiException(500, "Unexpected response format.");
   }
 
   Future<List<Appointment>> fetchMyAppointments({
@@ -336,10 +354,6 @@ class AppointmentsService {
     // NOTE: الجهاز الذي ينفّذ confirm قد لا يكون جهاز المريض،
     // لكن هذا يساعدنا بالاختبار عندما نؤكد على نفس الجهاز.
     // المريض سيحصل عليها أيضاً عبر fetchMyAppointments (sync).
-    try {
-      // الأفضل: إعادة fetch للموعد الواحد، لكن ما عنا endpoint لهذا الآن.
-      // لذلك نعتمد على شاشة "مواعيدي" لتعمل sync بعد التأكيد.
-    } catch (_) {}
   }
 
   // ---------------------------------------------------------------------------
@@ -471,8 +485,6 @@ class AppointmentsService {
     String? reason,
   }) async {
     final payload = <String, dynamic>{
-      // IMPORTANT:
-      // خليه متوافق مع UrgentRequestRejectSerializer المعتاد: "reason"
       if (reason != null && reason.trim().isNotEmpty) "reason": reason.trim(),
     };
 
@@ -509,8 +521,6 @@ class AppointmentsService {
       body: payload,
     );
 
-    // IMPORTANT:
-    // الباك عندك يرجع 201 في UrgentRequestScheduleView
     if (resp.statusCode == 200 || resp.statusCode == 201) {
       return UrgentRequestScheduleResultDto.fromJson(
         Map<String, dynamic>.from(jsonDecode(resp.body)),
@@ -566,7 +576,7 @@ class AppointmentsService {
           .toList();
     }
 
-    throw Exception("Unexpected response format.");
+    throw const ApiException(500, "Unexpected response format.");
   }
 
   Future<DoctorAbsenceDto> createDoctorAbsence({
@@ -914,7 +924,6 @@ class UrgentRequestActionResultDto {
   final DateTime? handledAt;
   final String? rejectedReason;
 
-  // NEW (may be present later if you return it from action endpoints)
   final String? handledType;
   final int? scheduledAppointmentId;
 
@@ -936,7 +945,6 @@ class UrgentRequestActionResultDto {
               ? DateTime.parse(json["handled_at"] as String)
               : null,
       rejectedReason: json["rejected_reason"] as String?,
-
       handledType: (json["handled_type"] as String?)?.trim(),
       scheduledAppointmentId:
           (json["scheduled_appointment_id"] is num)

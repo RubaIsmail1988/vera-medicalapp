@@ -11,7 +11,10 @@ class WaitingActivationScreen extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('الحساب غير مفعّل')),
+      appBar: AppBar(
+        title: const Text('الحساب غير مفعّل'),
+        automaticallyImplyLeading: false, // منع الرجوع لشاشات غير مرغوبة
+      ),
       body: Center(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(24),
@@ -22,7 +25,6 @@ class WaitingActivationScreen extends StatelessWidget {
               children: [
                 const AppLogo(width: 220),
                 const SizedBox(height: 18),
-
                 Card(
                   child: Padding(
                     padding: const EdgeInsets.all(16),
@@ -34,7 +36,6 @@ class WaitingActivationScreen extends StatelessWidget {
                           color: cs.onSurface.withValues(alpha: 0.55),
                         ),
                         const SizedBox(height: 12),
-
                         Text(
                           'حسابك غير مفعّل حالياً من قبل الإدارة.',
                           textAlign: TextAlign.center,
@@ -42,7 +43,6 @@ class WaitingActivationScreen extends StatelessWidget {
                               ?.copyWith(fontWeight: FontWeight.w800),
                         ),
                         const SizedBox(height: 12),
-
                         Text(
                           'إذا كنت مستخدمًا جديدًا فقد يكون حسابك بانتظار التفعيل.\n'
                           'وإذا كنت قد طلبت حذف حسابك، فقد يكون الحساب معطّلًا بناءً على طلبك.\n'
@@ -56,7 +56,6 @@ class WaitingActivationScreen extends StatelessWidget {
                           ),
                         ),
                         const SizedBox(height: 18),
-
                         SizedBox(
                           width: double.infinity,
                           child: ElevatedButton(

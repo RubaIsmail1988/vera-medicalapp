@@ -1,10 +1,12 @@
 import 'dart:convert';
 
 import '../models/doctor_availability.dart';
+import '/utils/api_exception.dart';
 import 'auth_service.dart';
 
 class DoctorAvailabilityService {
   final AuthService authService = AuthService();
+
   Future<List<DoctorAvailability>> fetchMine() async {
     final response = await authService.authorizedRequest(
       "/doctor-availabilities/",
@@ -13,13 +15,12 @@ class DoctorAvailabilityService {
 
     if (response.statusCode == 200) {
       final List<dynamic> data = jsonDecode(response.body);
-      return data.map((e) => DoctorAvailability.fromJson(e)).toList();
+      return data
+          .map((e) => DoctorAvailability.fromJson(e as Map<String, dynamic>))
+          .toList();
     }
 
-    throw Exception(
-      'Failed to load doctor availabilities: '
-      '${response.statusCode} - ${response.body}',
-    );
+    throw ApiException(response.statusCode, response.body);
   }
 
   Future<void> create({
@@ -38,7 +39,8 @@ class DoctorAvailabilityService {
     );
 
     if (response.statusCode == 201) return;
-    throw Exception('Create failed: ${response.statusCode} - ${response.body}');
+
+    throw ApiException(response.statusCode, response.body);
   }
 
   Future<void> updateTimes({
@@ -53,7 +55,8 @@ class DoctorAvailabilityService {
     );
 
     if (response.statusCode == 200) return;
-    throw Exception('Update failed: ${response.statusCode} - ${response.body}');
+
+    throw ApiException(response.statusCode, response.body);
   }
 
   Future<void> delete(int id) async {
@@ -63,6 +66,7 @@ class DoctorAvailabilityService {
     );
 
     if (response.statusCode == 204) return;
-    throw Exception('Delete failed: ${response.statusCode} - ${response.body}');
+
+    throw ApiException(response.statusCode, response.body);
   }
 }

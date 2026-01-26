@@ -13,54 +13,53 @@ class DoctorSchedulingSettingsScreen extends StatelessWidget {
   }) {
     final cs = Theme.of(context).colorScheme;
 
-    return Directionality(
-      textDirection: TextDirection.rtl,
-      child: Card(
-        elevation: 0,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(12),
-          onTap: () => context.go(routeLocation),
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Row(
-              children: [
-                // الأيقونة على اليمين
-                CircleAvatar(
-                  radius: 22,
-                  backgroundColor: cs.surfaceContainerHighest,
-                  child: Icon(icon, color: cs.primary),
-                ),
-                const SizedBox(width: 12),
+    return Card(
+      elevation: 0,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: () => context.go(routeLocation),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Row(
+            children: [
+              // الأيقونة على اليمين
+              CircleAvatar(
+                radius: 22,
+                backgroundColor: cs.surfaceContainerHighest,
+                child: Icon(icon, color: cs.primary),
+              ),
+              const SizedBox(width: 12),
 
-                // النصوص بالمنتصف (محاذاة يمين)
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        title,
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w700,
-                        ),
+              // النصوص (محاذاة يمين)
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text(
+                      title,
+                      textAlign: TextAlign.right,
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
                       ),
-                      const SizedBox(height: 6),
-                      Text(
-                        subtitle,
-                        style: Theme.of(context).textTheme.bodySmall,
-                      ),
-                    ],
-                  ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      subtitle,
+                      textAlign: TextAlign.right,
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ],
                 ),
-                const SizedBox(width: 12),
+              ),
+              const SizedBox(width: 12),
 
-                // السهم على اليسار
-                Icon(
-                  Icons.chevron_right_rounded,
-                  color: cs.onSurface.withValues(alpha: 0.55),
-                ),
-              ],
-            ),
+              // سهم للأمام ضمن RTL
+              Icon(
+                Icons.chevron_left_rounded,
+                color: cs.onSurface.withValues(alpha: 0.55),
+              ),
+            ],
           ),
         ),
       ),
@@ -80,9 +79,7 @@ class DoctorSchedulingSettingsScreen extends StatelessWidget {
           title: const Text("إعدادات الجدولة"),
           leading: IconButton(
             icon: const Icon(Icons.arrow_back),
-            onPressed: () {
-              context.go('/app/account');
-            },
+            onPressed: () => context.go('/app/account'),
           ),
         ),
         body: ListView(

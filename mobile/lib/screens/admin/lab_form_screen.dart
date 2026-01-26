@@ -4,6 +4,7 @@ import '/models/governorate.dart';
 import '/models/lab.dart';
 import '/services/governorate_service.dart';
 import '/services/lab_service.dart';
+import '/utils/api_exception.dart';
 import '/utils/ui_helpers.dart';
 
 class LabFormScreen extends StatefulWidget {
@@ -68,22 +69,19 @@ class _LabFormScreenState extends State<LabFormScreen> {
         governorates = items;
         loadingGovernorates = false;
 
-        // في وضع التعديل: إن لم تعد القيمة موجودة لأي سبب
         if (selectedGovernorateId != null) {
           final exists = governorates.any((g) => g.id == selectedGovernorateId);
-          if (!exists) {
-            selectedGovernorateId = null;
-          }
+          if (!exists) selectedGovernorateId = null;
         }
       });
-    } catch (_) {
+    } catch (e) {
       if (!mounted) return;
       setState(() => loadingGovernorates = false);
 
-      showAppSnackBar(
+      showActionErrorSnackBar(
         context,
-        'فشل تحميل المحافظات.',
-        type: AppSnackBarType.error,
+        exception: e,
+        fallback: 'فشل تحميل المحافظات.',
       );
     }
   }
@@ -101,6 +99,7 @@ class _LabFormScreenState extends State<LabFormScreen> {
 
   Future<void> submit() async {
     if (!formKey.currentState!.validate()) return;
+    if (loading) return;
 
     if (selectedGovernorateId == null) {
       showAppSnackBar(
@@ -140,7 +139,7 @@ class _LabFormScreenState extends State<LabFormScreen> {
                 : contactInfoController.text.trim(),
       );
 
-      final isEdit = widget.lab != null;
+      final bool isEdit = widget.lab != null;
 
       final response =
           isEdit
@@ -159,19 +158,28 @@ class _LabFormScreenState extends State<LabFormScreen> {
         return;
       }
 
-      final msg = labService.extractErrorMessage(response);
-      showAppSnackBar(context, 'فشل الحفظ: $msg', type: AppSnackBarType.error);
-    } catch (_) {
-      if (!mounted) return;
-      showAppSnackBar(
+      // ✅ بدل labService.extractErrorMessage()
+      final msg = ApiExceptionUtils.extractMessageFromBody(
+        response.body,
+        statusCode: response.statusCode,
+      );
+
+      showActionErrorSnackBar(
         context,
-        'حدث خطأ أثناء الحفظ.',
-        type: AppSnackBarType.error,
+        statusCode: response.statusCode,
+        data: msg, // String واضح
+        fallback: 'فشل حفظ بيانات المخبر.',
+      );
+    } catch (e) {
+      if (!mounted) return;
+
+      showActionErrorSnackBar(
+        context,
+        exception: e,
+        fallback: 'حدث خطأ أثناء الحفظ.',
       );
     } finally {
-      if (mounted) {
-        setState(() => loading = false);
-      }
+      if (mounted) setState(() => loading = false);
     }
   }
 

@@ -1,33 +1,37 @@
 import 'dart:convert';
-import 'package:http/http.dart' as http;
-import 'package:shared_preferences/shared_preferences.dart';
 
 import '/models/governorate.dart';
-import '../utils/constants.dart';
+import '/utils/api_exception.dart';
+import '/services/auth_service.dart';
 
 class GovernorateService {
+  final AuthService authService = AuthService();
+
   Future<List<Governorate>> fetchGovernorates() async {
-    final prefs = await SharedPreferences.getInstance();
-    final token = prefs.getString('access_token');
+    try {
+      final response = await authService.authorizedRequestOrThrow(
+        '/governorates/',
+        'GET',
+      );
 
-    final uri = Uri.parse('$accountsBaseUrl/governorates/');
+      final dynamic data = jsonDecode(response.body);
 
-    final res = await http.get(
-      uri,
-      headers: {
-        'Accept': 'application/json',
-        if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
-      },
-    );
+      if (data is List) {
+        return data
+            .map((e) => Governorate.fromJson(e as Map<String, dynamic>))
+            .toList();
+      }
 
-    if (res.statusCode != 200) {
-      // هذا سيساعدك تعرف هل هي 401/403 أم شيء آخر
-      throw Exception('Governorates HTTP ${res.statusCode}: ${res.body}');
+      // إذا رجع شكل غير متوقع
+      throw ApiException(
+        500,
+        'Unexpected response shape for governorates: ${response.body}',
+      );
+    } on ApiException {
+      rethrow;
+    } catch (e) {
+      // أي شيء غير متوقع (parsing وغيره)
+      throw ApiException(500, 'Governorate parse error: $e');
     }
-
-    final data = jsonDecode(res.body) as List<dynamic>;
-    return data
-        .map((e) => Governorate.fromJson(e as Map<String, dynamic>))
-        .toList();
   }
 }

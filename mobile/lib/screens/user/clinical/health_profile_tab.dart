@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 
 import '/services/auth_service.dart';
+import '/utils/api_exception.dart';
 import '/utils/ui_helpers.dart';
 
 class HealthProfileTab extends StatefulWidget {
@@ -25,7 +26,7 @@ class _HealthProfileTabState extends State<HealthProfileTab> {
   late final AuthService authService;
 
   bool loading = true;
-  String? errorMessage;
+  Object? fetchError; // unified fetch error
   Map<String, dynamic>? data;
 
   bool get isDoctor => widget.role == "doctor";
@@ -40,6 +41,7 @@ class _HealthProfileTabState extends State<HealthProfileTab> {
   void initState() {
     super.initState();
     authService = AuthService();
+    // ignore: unawaited_futures
     _load();
   }
 
@@ -57,9 +59,10 @@ class _HealthProfileTabState extends State<HealthProfileTab> {
     if (oldTarget != newTarget) {
       setState(() {
         loading = true;
-        errorMessage = null;
+        fetchError = null;
         data = null;
       });
+      // ignore: unawaited_futures
       _load();
     }
   }
@@ -71,55 +74,73 @@ class _HealthProfileTabState extends State<HealthProfileTab> {
       if (!mounted) return;
       setState(() {
         loading = false;
-        errorMessage = "لا يوجد مريض محدد لعرض الملف الصحي.";
+        // نعرضها كـ error "inline" لكن بشكل موحّد
+        fetchError = Exception("لا يوجد مريض محدد لعرض الملف الصحي.");
+        data = null;
       });
       return;
     }
 
-    final res = await authService.authorizedRequest(
-      "patient-details/$targetUserId",
-      "GET",
-    );
+    try {
+      final res = await authService.authorizedRequest(
+        "patient-details/$targetUserId",
+        "GET",
+      );
 
-    if (!mounted) return;
+      if (!mounted) return;
 
-    if (res.statusCode == 200) {
-      try {
+      if (res.statusCode == 200) {
         final decoded = jsonDecode(res.body);
-        if (decoded is Map<String, dynamic>) {
+        if (decoded is Map) {
           setState(() {
-            data = decoded;
+            data = Map<String, dynamic>.from(decoded);
             loading = false;
-            errorMessage = null;
+            fetchError = null;
           });
           return;
         }
-      } catch (_) {
-        // fall-through
+
+        setState(() {
+          loading = false;
+          fetchError = Exception("تعذّر قراءة البيانات.");
+          data = null;
+        });
+        return;
       }
 
+      // 404 هنا ليس "انترنت"، بل "لا يوجد ملف صحي" → نعرضه inline برسالة مفهومة.
+      if (res.statusCode == 404) {
+        setState(() {
+          loading = false;
+          fetchError = Exception("لا يوجد ملف صحي لهذا المستخدم بعد.");
+          data = null;
+        });
+        return;
+      }
+
+      // باقي أكواد HTTP نخزنها كـ ApiException ليتم mapping موحّد في ui_helpers
       setState(() {
         loading = false;
-        errorMessage = "تعذر قراءة البيانات.";
+        fetchError = ApiException(res.statusCode, res.body);
+        data = null;
       });
-      return;
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        loading = false;
+        fetchError = e;
+        data = null;
+      });
     }
+  }
 
-    final msg =
-        (res.statusCode == 401)
-            ? "انتهت الجلسة، يرجى تسجيل الدخول مجددًا."
-            : (res.statusCode == 403)
-            ? "لا تملك الصلاحية لعرض الملف الصحي."
-            : (res.statusCode == 404)
-            ? "لا يوجد ملف صحي لهذا المستخدم بعد."
-            : "فشل تحميل الملف الصحي (${res.statusCode}).";
-
+  Future<void> _retry() async {
+    if (!mounted) return;
     setState(() {
-      loading = false;
-      errorMessage = msg;
+      loading = true;
+      fetchError = null;
     });
-
-    showAppSnackBar(context, msg, type: AppSnackBarType.error);
+    await _load();
   }
 
   String _asText(dynamic v) {
@@ -134,34 +155,6 @@ class _HealthProfileTabState extends State<HealthProfileTab> {
     final parsed = double.tryParse(v.toString());
     if (parsed == null) return _asText(v);
     return parsed.toStringAsFixed(2);
-  }
-
-  Widget _stateView({
-    required IconData icon,
-    required String title,
-    required String message,
-    Widget? action,
-  }) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 40),
-            const SizedBox(height: 12),
-            Text(
-              title,
-              style: Theme.of(context).textTheme.titleMedium,
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 8),
-            Text(message, textAlign: TextAlign.center),
-            if (action != null) ...[const SizedBox(height: 16), action],
-          ],
-        ),
-      ),
-    );
   }
 
   Widget _infoTile({
@@ -184,29 +177,12 @@ class _HealthProfileTabState extends State<HealthProfileTab> {
       return const Center(child: CircularProgressIndicator());
     }
 
-    if (errorMessage != null) {
-      return _stateView(
-        icon: Icons.error_outline,
-        title: "تعذر عرض الملف الصحي",
-        message: errorMessage!,
-        action: SizedBox(
-          width: double.infinity,
-          child: OutlinedButton.icon(
-            onPressed: () {
-              setState(() {
-                loading = true;
-                errorMessage = null;
-              });
-              _load();
-            },
-            icon: const Icon(Icons.refresh),
-            label: const Text("إعادة المحاولة"),
-          ),
-        ),
-      );
+    if (fetchError != null) {
+      // موحّد + يمنع overflow داخل Tabs
+      return AppFetchStateView(error: fetchError!, onRetry: _retry);
     }
 
-    final d = data ?? {};
+    final d = data ?? <String, dynamic>{};
 
     final dob = _asText(d["date_of_birth"]);
     final height = _asText(d["height"]);
@@ -226,10 +202,11 @@ class _HealthProfileTabState extends State<HealthProfileTab> {
           const Card(
             child: ListTile(
               leading: Icon(Icons.health_and_safety_outlined),
-              title: Text("البيانات الشخصية"),
+              title: Text("الملف الصحي"),
             ),
           ),
           const SizedBox(height: 8),
+
           _infoTile(
             icon: Icons.cake_outlined,
             title: "تاريخ الميلاد",
@@ -242,7 +219,9 @@ class _HealthProfileTabState extends State<HealthProfileTab> {
             value: weight,
           ),
           _infoTile(icon: Icons.analytics_outlined, title: "BMI", value: bmi),
+
           const SizedBox(height: 8),
+
           _infoTile(icon: Icons.wc_outlined, title: "الجنس", value: gender),
           _infoTile(
             icon: Icons.bloodtype_outlined,

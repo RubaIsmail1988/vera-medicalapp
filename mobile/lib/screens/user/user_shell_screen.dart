@@ -1,3 +1,4 @@
+// ----------------- mobile/lib/screens/user/user_shell_screen.dart -----------------
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -6,8 +7,6 @@ import '../../main.dart';
 import '/services/auth_service.dart';
 import '/services/account_deletion_service.dart';
 import '../../utils/ui_helpers.dart';
-import '/services/clinical_service.dart';
-import '/services/polling_notifications_service.dart';
 
 import 'patient_home_screen.dart';
 import 'doctor_home_screen.dart';
@@ -27,7 +26,6 @@ class UserShellScreen extends StatefulWidget {
 
 class _UserShellScreenState extends State<UserShellScreen> {
   late int currentIndex;
-  PollingNotificationsService? pollingService;
 
   // Session from prefs
   String role = 'patient';
@@ -45,18 +43,19 @@ class _UserShellScreenState extends State<UserShellScreen> {
   final AccountDeletionService deletionService = AccountDeletionService();
 
   static const List<String> tabPaths = <String>[
-    '/app',
-    '/app/record',
-    '/app/hospitals',
-    '/app/labs',
-    '/app/account',
-    '/app/appointments',
+    '/app', // 0 الرئيسية
+    '/app/appointments', // 1 المواعيد
+    '/app/record', // 2 الإضبارة
+    '/app/hospitals', // 3 المشافي
+    '/app/labs', // 4 المخابر
+    '/app/account', // 5 الحساب
   ];
 
   @override
   void initState() {
     super.initState();
     currentIndex = widget.initialIndex;
+    // ignore: unawaited_futures
     loadSession();
   }
 
@@ -110,18 +109,15 @@ class _UserShellScreenState extends State<UserShellScreen> {
       context.go('/waiting-activation');
       return;
     }
-    // Start polling notifications (MVP)
-    pollingService ??= PollingNotificationsService(
-      authService: AuthService(),
-      clinicalService: ClinicalService(authService: AuthService()),
-    );
-    pollingService!.start();
+
+    // IMPORTANT:
+    // Polling is managed centrally in MyAppState only.
+    // Do NOT start polling here.
   }
 
   Future<void> logout() async {
-    try {
-      await pollingService?.stop();
-    } catch (_) {}
+    final app = MyApp.of(context);
+    await app.stopPolling();
 
     final authService = AuthService();
     await authService.logout();
@@ -134,7 +130,6 @@ class _UserShellScreenState extends State<UserShellScreen> {
     if (index < 0 || index >= tabPaths.length) return;
     if (!mounted) return;
 
-    // لا نعمل setState هنا — الـ route سيعيد بناء UserShellScreen بالـ initialIndex الصحيح
     context.go(tabPaths[index]);
   }
 
@@ -162,51 +157,20 @@ class _UserShellScreenState extends State<UserShellScreen> {
   }
 
   Future<void> requestAccountDeletion(BuildContext context) async {
-    final reasonController = TextEditingController();
+    // ✅ Dialog returns the reason string (or null if cancelled)
+    final String? reason = await showDialog<String?>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const _AccountDeletionDialog(),
+    );
 
+    if (!context.mounted) return;
+    if (reason == null) return; // cancelled
+
+    // ✅ Action network call must be caught to avoid Red Screen
     try {
-      final bool? confirmed = await showDialog<bool>(
-        context: context,
-        builder: (dialogContext) {
-          return AlertDialog(
-            title: const Text('طلب حذف الحساب'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Text(
-                  'هل أنت متأكد من رغبتك في طلب حذف حسابك؟\n'
-                  'سيتم مراجعة الطلب من قبل الإدارة.',
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: reasonController,
-                  decoration: const InputDecoration(
-                    labelText: 'سبب الطلب (اختياري)',
-                  ),
-                  maxLines: 3,
-                ),
-              ],
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(dialogContext, false),
-                child: const Text('إلغاء'),
-              ),
-              ElevatedButton(
-                onPressed: () => Navigator.pop(dialogContext, true),
-                child: const Text('تأكيد الطلب'),
-              ),
-            ],
-          );
-        },
-      );
-
-      if (!context.mounted) return;
-      if (confirmed != true) return;
-
-      final reason = reasonController.text.trim();
       final success = await deletionService.createDeletionRequest(
-        reason: reason,
+        reason: reason.trim(),
       );
 
       if (!context.mounted) return;
@@ -216,8 +180,9 @@ class _UserShellScreenState extends State<UserShellScreen> {
         success ? 'تم إرسال طلب حذف الحساب بنجاح.' : 'لديك طلب قيد المراجعة.',
         type: success ? AppSnackBarType.success : AppSnackBarType.error,
       );
-    } finally {
-      reasonController.dispose();
+    } catch (e) {
+      if (!context.mounted) return;
+      showActionErrorSnackBar(context, exception: e);
     }
   }
 
@@ -276,7 +241,6 @@ class _UserShellScreenState extends State<UserShellScreen> {
                   color: cs.onSurface.withValues(alpha: 0.85),
                 ),
                 const SizedBox(height: 16),
-
                 Text(
                   displayName,
                   textAlign: TextAlign.center,
@@ -285,14 +249,12 @@ class _UserShellScreenState extends State<UserShellScreen> {
                   ),
                 ),
                 const SizedBox(height: 6),
-
                 Text(
                   'الدور: $roleLabel',
                   style: textTheme.bodyMedium?.copyWith(
                     color: cs.onSurface.withValues(alpha: 0.80),
                   ),
                 ),
-
                 if (userEmail != null && userEmail!.trim().isNotEmpty) ...[
                   const SizedBox(height: 4),
                   Text(
@@ -302,7 +264,6 @@ class _UserShellScreenState extends State<UserShellScreen> {
                     ),
                   ),
                 ],
-
                 const SizedBox(height: 10),
                 Text(
                   activationText,
@@ -311,10 +272,8 @@ class _UserShellScreenState extends State<UserShellScreen> {
                     fontWeight: FontWeight.w600,
                   ),
                 ),
-
                 const SizedBox(height: 24),
 
-                // 1) إدارة الحساب (أساسي)
                 SizedBox(
                   width: double.infinity,
                   child: FilledButton(
@@ -341,7 +300,6 @@ class _UserShellScreenState extends State<UserShellScreen> {
                 Divider(color: cs.onSurface.withValues(alpha: 0.12)),
                 const SizedBox(height: 14),
 
-                // 2) حذف الحساب (حساس)
                 SizedBox(
                   width: double.infinity,
                   child: OutlinedButton(
@@ -354,7 +312,6 @@ class _UserShellScreenState extends State<UserShellScreen> {
                     child: const Text('طلب حذف الحساب'),
                   ),
                 ),
-
                 const SizedBox(height: 6),
                 TextButton(
                   onPressed: () => context.go('/app/account/deletion-status'),
@@ -365,7 +322,6 @@ class _UserShellScreenState extends State<UserShellScreen> {
                 Divider(color: cs.onSurface.withValues(alpha: 0.12)),
                 const SizedBox(height: 14),
 
-                // 3) تسجيل الخروج (منفصل)
                 SizedBox(
                   width: double.infinity,
                   child: FilledButton.icon(
@@ -387,15 +343,15 @@ class _UserShellScreenState extends State<UserShellScreen> {
       case 0:
         return buildHomeTab();
       case 1:
-        return UnifiedRecordScreen(role: role, userId: userId);
-      case 2:
-        return const HospitalPublicListScreen();
-      case 3:
-        return const LabPublicListScreen();
-      case 4:
-        return buildAccountTab(context);
-      case 5:
         return const MyAppointmentsScreen();
+      case 2:
+        return UnifiedRecordScreen(role: role, userId: userId);
+      case 3:
+        return const HospitalPublicListScreen();
+      case 4:
+        return const LabPublicListScreen();
+      case 5:
+        return buildAccountTab(context);
       default:
         return buildHomeTab();
     }
@@ -408,22 +364,22 @@ class _UserShellScreenState extends State<UserShellScreen> {
             ? 'الصفحة الرئيسية - الطبيب'
             : 'الصفحة الرئيسية - المريض';
       case 1:
-        return 'الإضبارة الطبية';
-      case 2:
-        return 'المشافي';
-      case 3:
-        return 'المخابر';
-      case 4:
-        return 'الحساب';
-      case 5:
         return 'المواعيد';
+      case 2:
+        return 'الإضبارة الطبية';
+      case 3:
+        return 'المشافي';
+      case 4:
+        return 'المخابر';
+      case 5:
+        return 'الحساب';
       default:
         return 'Vera Smart Health';
     }
   }
 
   Widget? _buildFloatingActionButton() {
-    final bool isAppointmentsTab = currentIndex == 5;
+    final bool isAppointmentsTab = currentIndex == 1;
     final bool canBook = role == 'patient';
 
     if (!isAppointmentsTab || !canBook) return null;
@@ -436,14 +392,6 @@ class _UserShellScreenState extends State<UserShellScreen> {
   }
 
   @override
-  void dispose() {
-    try {
-      pollingService?.stop();
-    } catch (_) {}
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
     final themeMode = MyApp.of(context).themeMode;
 
@@ -453,7 +401,7 @@ class _UserShellScreenState extends State<UserShellScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        automaticallyImplyLeading: false, // يمنع سهم الرجوع في التابات الأساسية
+        automaticallyImplyLeading: false,
         title: Text(appBarTitle()),
         actions:
             currentIndex == 0
@@ -474,7 +422,6 @@ class _UserShellScreenState extends State<UserShellScreen> {
                 ]
                 : null,
       ),
-
       floatingActionButton: _buildFloatingActionButton(),
       body: buildBody(context),
       bottomNavigationBar: BottomNavigationBar(
@@ -483,6 +430,10 @@ class _UserShellScreenState extends State<UserShellScreen> {
         type: BottomNavigationBarType.fixed,
         items: const [
           BottomNavigationBarItem(icon: Icon(Icons.home), label: 'الرئيسية'),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.event_available),
+            label: 'المواعيد',
+          ),
           BottomNavigationBarItem(
             icon: Icon(Icons.folder_shared),
             label: 'الإضبارة',
@@ -493,9 +444,72 @@ class _UserShellScreenState extends State<UserShellScreen> {
           ),
           BottomNavigationBarItem(icon: Icon(Icons.science), label: 'المخابر'),
           BottomNavigationBarItem(icon: Icon(Icons.person), label: 'الحساب'),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.event_available),
-            label: 'المواعيد',
+        ],
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Dialog (Stateful): isolates TextEditingController lifecycle
+// ---------------------------------------------------------------------------
+
+class _AccountDeletionDialog extends StatefulWidget {
+  const _AccountDeletionDialog();
+
+  @override
+  State<_AccountDeletionDialog> createState() => _AccountDeletionDialogState();
+}
+
+class _AccountDeletionDialogState extends State<_AccountDeletionDialog> {
+  final TextEditingController reasonController = TextEditingController();
+
+  @override
+  void dispose() {
+    reasonController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: AlertDialog(
+        title: const Text('طلب حذف الحساب', textAlign: TextAlign.right),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              const Text(
+                'هل أنت متأكد من رغبتك في طلب حذف حسابك؟\n'
+                'سيتم مراجعة الطلب من قبل الإدارة.',
+                textAlign: TextAlign.right,
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: reasonController,
+                decoration: const InputDecoration(
+                  labelText: 'سبب الطلب (اختياري)',
+                  border: OutlineInputBorder(),
+                ),
+                maxLines: 3,
+                textDirection: TextDirection.rtl,
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, null),
+            child: const Text('إلغاء'),
+          ),
+          FilledButton(
+            onPressed: () {
+              final reason = reasonController.text.trim();
+              Navigator.pop(context, reason);
+            },
+            child: const Text('تأكيد الطلب'),
           ),
         ],
       ),

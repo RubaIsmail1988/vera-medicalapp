@@ -60,14 +60,16 @@ class _HospitalListScreenState extends State<HospitalListScreen> {
         governorateNamesById = {for (final g in items) g.id: g.name};
         loadingGovernorates = false;
       });
-    } catch (_) {
+    } catch (e) {
       if (!mounted) return;
       setState(() => loadingGovernorates = false);
 
-      showAppSnackBar(
+      // Fetch error => Inline أفضل، لكن هذا جزء مساعد للشاشة.
+      // بما أن الشاشة نفسها لديها FutureBuilder لعرض الحالة، Snackbar هنا مقبول كتنبيه سريع.
+      showActionErrorSnackBar(
         context,
-        'فشل تحميل المحافظات.',
-        type: AppSnackBarType.error,
+        exception: e,
+        fallback: 'فشل تحميل المحافظات.',
       );
     }
   }
@@ -90,18 +92,28 @@ class _HospitalListScreenState extends State<HospitalListScreen> {
 
     if (!confirmed) return;
 
-    final success = await hospitalService.deleteHospital(hospital.id!);
+    try {
+      await hospitalService.deleteHospital(hospital.id!);
+    } catch (e) {
+      if (!mounted) return;
+
+      showActionErrorSnackBar(
+        context,
+        exception: e,
+        fallback: 'تعذّر حذف المشفى. حاول مرة أخرى.',
+      );
+      return;
+    }
+
     if (!mounted) return;
 
     showAppSnackBar(
       context,
-      success ? 'تم حذف المشفى بنجاح.' : 'فشل حذف المشفى.',
-      type: success ? AppSnackBarType.success : AppSnackBarType.error,
+      'تم حذف المشفى بنجاح.',
+      type: AppSnackBarType.success,
     );
 
-    if (success) {
-      await refresh();
-    }
+    await refresh();
   }
 
   Future<void> openForm({Hospital? hospital}) async {
@@ -183,20 +195,13 @@ class _HospitalListScreenState extends State<HospitalListScreen> {
                 future: futureHospitals,
                 builder: (context, snapshot) {
                   if (snapshot.connectionState == ConnectionState.waiting) {
-                    return const _CenteredStatus(
-                      icon: Icons.hourglass_top_rounded,
-                      title: 'جاري تحميل المشافي...',
-                      showProgress: true,
-                    );
+                    return const Center(child: CircularProgressIndicator());
                   }
 
                   if (snapshot.hasError) {
-                    return _CenteredStatus(
-                      icon: Icons.error_outline,
-                      title: 'تعذّر تحميل المشافي.',
-                      subtitle: 'تحقق من الاتصال ثم أعد المحاولة.',
-                      actionText: 'إعادة المحاولة',
-                      onAction: refresh,
+                    return AppFetchStateView(
+                      error: snapshot.error!,
+                      onRetry: refresh,
                     );
                   }
 
@@ -204,18 +209,26 @@ class _HospitalListScreenState extends State<HospitalListScreen> {
                   final visible = hospitals.where(matchesSearch).toList();
 
                   if (hospitals.isEmpty) {
-                    return const _CenteredStatus(
-                      icon: Icons.local_hospital_outlined,
-                      title: 'لا يوجد مشافي مسجّلة.',
-                      subtitle: 'اضغط زر الإضافة لإدخال مشفى جديد.',
+                    return const Center(
+                      child: Padding(
+                        padding: EdgeInsets.all(18),
+                        child: Text(
+                          'لا يوجد مشافي مسجّلة.\nاضغط زر الإضافة لإدخال مشفى جديد.',
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
                     );
                   }
 
                   if (visible.isEmpty) {
-                    return const _CenteredStatus(
-                      icon: Icons.search_off,
-                      title: 'لا توجد نتائج مطابقة.',
-                      subtitle: 'جرّب تعديل كلمة البحث.',
+                    return const Center(
+                      child: Padding(
+                        padding: EdgeInsets.all(18),
+                        child: Text(
+                          'لا توجد نتائج مطابقة.\nجرّب تعديل كلمة البحث.',
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
                     );
                   }
 
@@ -328,79 +341,6 @@ class _InfoRow extends StatelessWidget {
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _CenteredStatus extends StatelessWidget {
-  const _CenteredStatus({
-    required this.icon,
-    required this.title,
-    this.subtitle,
-    this.actionText,
-    this.onAction,
-    this.showProgress = false,
-  });
-
-  final IconData icon;
-  final String title;
-  final String? subtitle;
-  final String? actionText;
-  final Future<void> Function()? onAction;
-  final bool showProgress;
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(18),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 520),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(icon, size: 36, color: cs.onSurface.withValues(alpha: 0.70)),
-              const SizedBox(height: 10),
-              Text(
-                title,
-                textAlign: TextAlign.center,
-                style: Theme.of(
-                  context,
-                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
-              ),
-              if (subtitle != null) ...[
-                const SizedBox(height: 6),
-                Text(
-                  subtitle!,
-                  textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: cs.onSurface.withValues(alpha: 0.70),
-                  ),
-                ),
-              ],
-              if (showProgress) ...[
-                const SizedBox(height: 14),
-                const SizedBox(
-                  width: 28,
-                  height: 28,
-                  child: CircularProgressIndicator(strokeWidth: 3),
-                ),
-              ],
-              if (actionText != null && onAction != null) ...[
-                const SizedBox(height: 14),
-                OutlinedButton(
-                  onPressed: () async {
-                    await onAction!.call();
-                  },
-                  child: Text(actionText!),
-                ),
-              ],
-            ],
-          ),
-        ),
       ),
     );
   }

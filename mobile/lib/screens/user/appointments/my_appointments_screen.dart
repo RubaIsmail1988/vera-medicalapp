@@ -4,9 +4,10 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../../models/appointment.dart';
-import '../../../services/appointments_service.dart';
-import '../../../utils/ui_helpers.dart';
+import '/models/appointment.dart';
+import '/services/appointments_service.dart';
+import '/utils/ui_helpers.dart';
+import '/utils/api_exception.dart';
 
 class MyAppointmentsScreen extends StatefulWidget {
   const MyAppointmentsScreen({super.key});
@@ -19,7 +20,9 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
   final AppointmentsService appointmentsService = AppointmentsService();
 
   bool loading = true;
-  String? errorMessage;
+
+  // Fetch error (INLINE ONLY)
+  Object? fetchError;
 
   // Role from prefs: patient | doctor
   String role = 'patient';
@@ -187,12 +190,16 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
     data.sort((a, b) => b.dateTime.compareTo(a.dateTime));
   }
 
+  // ---------------------------------------------------------------------------
+  // Fetch (INLINE only on error)
+  // ---------------------------------------------------------------------------
+
   Future<void> fetch() async {
     if (!mounted) return;
 
     setState(() {
       loading = true;
-      errorMessage = null;
+      fetchError = null;
     });
 
     try {
@@ -211,6 +218,7 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
       setState(() {
         appointments = data;
         loading = false;
+        fetchError = null;
       });
     } on ApiException catch (e) {
       if (!mounted) return;
@@ -222,27 +230,25 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
         body = e.body;
       }
 
-      showApiErrorSnackBar(context, statusCode: e.statusCode, data: body);
-
+      // Fetch -> INLINE ONLY (no SnackBar)
       setState(() {
         loading = false;
-        errorMessage = mapHttpErrorToArabicMessage(
-          statusCode: e.statusCode,
-          data: body,
-        );
+        fetchError = _FetchHttpException(e.statusCode, body);
       });
-    } catch (_) {
+    } catch (e) {
       if (!mounted) return;
 
-      const msg = 'حدث خطأ غير متوقع. حاول مرة أخرى لاحقًا.';
-      showAppErrorSnackBar(context, msg);
-
+      // Fetch -> INLINE ONLY (no SnackBar)
       setState(() {
         loading = false;
-        errorMessage = msg;
+        fetchError = e;
       });
     }
   }
+
+  // ---------------------------------------------------------------------------
+  // Actions (SnackBar allowed)
+  // ---------------------------------------------------------------------------
 
   Future<void> _cancel(Appointment a) async {
     final confirm = await showConfirmDialog(
@@ -589,7 +595,7 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
   String _doctorModelVersion(Appointment a) {
     final t = a.triage;
     if (t == null) return '';
-    return (t.scoreVersion).trim(); // triage_v1 كما هو
+    return (t.scoreVersion).trim();
   }
 
   Widget _rtlSectionTitle(BuildContext context, String text) {
@@ -609,7 +615,7 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
     return Wrap(
       spacing: 8,
       runSpacing: 8,
-      alignment: WrapAlignment.end, // مهم: محاذاة يمين
+      alignment: WrapAlignment.end,
       children: chips.map((t) => Chip(label: Text(t))).toList(),
     );
   }
@@ -647,7 +653,7 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
               textAlign: TextAlign.right,
               softWrap: true,
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: cs.onSurface, // مهم: ليس رمادي
+                color: cs.onSurface,
                 height: 1.4,
               ),
             ),
@@ -742,15 +748,24 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // Inline fetch error state
+    if (!loading && fetchError != null) {
+      final st = mapFetchExceptionToInlineState(fetchError!);
+      return SafeArea(
+        child: AppInlineErrorState(
+          title: st.title,
+          message: st.message,
+          icon: st.icon,
+          onRetry: fetch,
+        ),
+      );
+    }
+
     return SafeArea(
       child: Builder(
         builder: (_) {
           if (loading) {
             return const Center(child: CircularProgressIndicator());
-          }
-
-          if (errorMessage != null) {
-            return Center(child: Text(errorMessage!));
           }
 
           return RefreshIndicator(
@@ -1027,7 +1042,6 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
                                   _priorityBadgeChip(context, a),
                                 ],
 
-                                // ---------------- Symptoms (full block) ----------------
                                 if (symptoms.isNotEmpty &&
                                     role == 'patient') ...[
                                   const SizedBox(height: 10),
@@ -1044,7 +1058,6 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
                                   _symptomsBlock(context, 'الأعراض:', symptoms),
                                 ],
 
-                                // ---------------- Patient view: vitals chips ----------------
                                 if (role == 'patient' &&
                                     patientVitals.isNotEmpty) ...[
                                   const SizedBox(height: 10),
@@ -1053,7 +1066,6 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
                                   _chipsWrap(patientVitals),
                                 ],
 
-                                // ---------------- Doctor view: vitals then assessment ----------------
                                 if (role == 'doctor') ...[
                                   if (doctorVitals.isNotEmpty) ...[
                                     const SizedBox(height: 10),
@@ -1105,4 +1117,16 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
       ),
     );
   }
+}
+
+// Local wrapper so mapFetchExceptionToInlineState can interpret HTTP-ish errors.
+// NOTE: This is for fetch only. Actions still use SnackBars.
+class _FetchHttpException implements Exception {
+  final int statusCode;
+  final Object? data;
+
+  _FetchHttpException(this.statusCode, this.data);
+
+  @override
+  String toString() => 'HTTP $statusCode';
 }
