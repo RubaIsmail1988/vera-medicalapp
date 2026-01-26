@@ -147,8 +147,11 @@ class _AccountDeletionStatusScreenState
   Future<void> openDeletionRequestDialog() async {
     final reasonController = TextEditingController();
 
+    String reason = '';
+    bool confirmed = false;
+
     try {
-      final confirmed = await showDialog<bool>(
+      final result = await showDialog<bool>(
         context: context,
         builder: (dialogContext) {
           return Directionality(
@@ -192,37 +195,42 @@ class _AccountDeletionStatusScreenState
       );
 
       if (!mounted) return;
-      if (confirmed != true) return;
 
-      // Action: مسموح SnackBar
-      try {
-        final success = await deletionService.createDeletionRequest(
-          reason: reasonController.text.trim(),
-        );
+      confirmed = result == true;
+      if (!confirmed) return;
 
-        if (!mounted) return;
-
-        if (success) {
-          showAppSnackBar(
-            context,
-            'تم إرسال طلب حذف الحساب بنجاح.',
-            type: AppSnackBarType.success,
-          );
-          await loadStatus();
-        } else {
-          showAppSnackBar(
-            context,
-            'فشل إرسال طلب حذف الحساب، حاول مرة أخرى.',
-            type: AppSnackBarType.error,
-          );
-        }
-      } catch (e) {
-        if (!mounted) return;
-        // Action error => SnackBar
-        showActionErrorSnackBar(context, exception: e);
-      }
+      // خذ السبب الآن (قبل dispose) ثم حرره مباشرة
+      reason = reasonController.text.trim();
     } finally {
+      // مهم: تخلص من الـ controller مباشرة بعد إغلاق الـ dialog
       reasonController.dispose();
+    }
+
+    // بعد ما صار عندنا String فقط، نفّذ Action بأمان
+    try {
+      final success = await deletionService.createDeletionRequest(
+        reason: reason,
+      );
+
+      if (!mounted) return;
+
+      if (success) {
+        showAppSnackBar(
+          context,
+          'تم إرسال طلب حذف الحساب بنجاح.',
+          type: AppSnackBarType.success,
+        );
+        await loadStatus();
+      } else {
+        showAppSnackBar(
+          context,
+          'فشل إرسال طلب حذف الحساب، حاول مرة أخرى.',
+          type: AppSnackBarType.error,
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      showActionErrorSnackBar(context, exception: e);
     }
   }
 

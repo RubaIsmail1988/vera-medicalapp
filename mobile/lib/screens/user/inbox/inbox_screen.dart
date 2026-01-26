@@ -251,7 +251,6 @@ class _InboxScreenState extends State<InboxScreen> {
     }
 
     // 3) appointment_cancelled_due_to_emergency_absence -> appointments
-
     if (eventType == "appointment_cancelled_due_to_emergency_absence") {
       if (!mounted) return;
       context.go("/app/appointments");
@@ -259,8 +258,6 @@ class _InboxScreenState extends State<InboxScreen> {
     }
 
     // 4) urgent request without slots:
-    // you mentioned: "طلب عاجل بدون مواعيد متاحة"
-    // قد يصل بأكثر من اسم حسب الباك؛ نعالج أشهر احتمالات بأمان
     if (eventType == "urgent_request_no_slots" ||
         eventType == "urgent_request_no_availability" ||
         eventType == "urgent_request_created_no_slots" ||
@@ -272,7 +269,7 @@ class _InboxScreenState extends State<InboxScreen> {
         context.go("/app/appointments/urgent-requests");
         return;
       }
-      // المريض: المواعيد (مراجعة الطلب/النتيجة)
+      // المريض: المواعيد
       context.go("/app/appointments");
       return;
     }
@@ -569,19 +566,34 @@ class _InboxScreenState extends State<InboxScreen> {
             ),
           ],
         ),
+
+        // ✅ تعديل 1: تمركز الخطأ بالمنتصف (بدون ارتفاع ثابت)
         body: RefreshIndicator(
           onRefresh: onRefresh,
-          child: ListView(
-            children: [
-              const SizedBox(height: 80),
-              AppInlineErrorState(
-                title: err.title,
-                message: err.message,
-                icon: err.icon,
-                onRetry: refreshing ? null : () => loadInbox(),
-              ),
-              const SizedBox(height: 40),
-            ],
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              return ListView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                children: [
+                  ConstrainedBox(
+                    constraints: BoxConstraints(
+                      minHeight: constraints.maxHeight,
+                    ),
+                    child: Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: AppInlineErrorState(
+                          title: err.title,
+                          message: err.message,
+                          icon: err.icon,
+                          onRetry: refreshing ? null : () => loadInbox(),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              );
+            },
           ),
         ),
       );
@@ -603,11 +615,23 @@ class _InboxScreenState extends State<InboxScreen> {
         onRefresh: onRefresh,
         child:
             items.isEmpty
-                ? ListView(
-                  children: const [
-                    SizedBox(height: 120),
-                    Center(child: Text("لا يوجد إشعارات بعد")),
-                  ],
+                // ✅ تعديل 2: تمركز empty state بالمنتصف (بدون ارتفاع ثابت)
+                ? LayoutBuilder(
+                  builder: (context, constraints) {
+                    return ListView(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      children: [
+                        ConstrainedBox(
+                          constraints: BoxConstraints(
+                            minHeight: constraints.maxHeight,
+                          ),
+                          child: const Center(
+                            child: Text("لا يوجد إشعارات بعد"),
+                          ),
+                        ),
+                      ],
+                    );
+                  },
                 )
                 : ListView.separated(
                   padding: const EdgeInsets.all(12),
@@ -659,7 +683,6 @@ class _InboxScreenState extends State<InboxScreen> {
                               ),
                           ],
                         ),
-
                         onTap: () async {
                           await _routeFromInboxEvent(
                             eventType: eventType,

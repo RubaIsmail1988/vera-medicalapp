@@ -2,22 +2,16 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+
 import '/utils/api_exception.dart';
+import '/utils/navigation_keys.dart';
 
 enum AppSnackBarType { info, success, warning, error }
-
-/// Root messenger key لتفادي مشاكل context + go_router
-final GlobalKey<ScaffoldMessengerState> rootScaffoldMessengerKey =
-    GlobalKey<ScaffoldMessengerState>();
 
 // ---------------------------------------------------------------------------
 // SnackBar (موحّد)
 // ---------------------------------------------------------------------------
 
-/// إظهار SnackBar موحّد في كل التطبيق.
-/// ملاحظة سلوكية:
-/// - لا تستخدم SnackBar لأخطاء تحميل البيانات (Fetch) داخل الشاشات.
-/// - استخدمها فقط لأخطاء "العمليات" (Action) مثل حفظ/حذف/حجز.
 void showAppSnackBar(
   BuildContext? context,
   String message, {
@@ -42,7 +36,6 @@ void showAppSnackBar(
   Color foreground;
   IconData icon;
 
-  // نعتمد ColorScheme قدر الإمكان بدل Colors مباشرة
   switch (type) {
     case AppSnackBarType.success:
       background = (cs?.primaryContainer ?? const Color(0xFF0E3B2C)).withValues(
@@ -117,7 +110,6 @@ void showAppSuccessSnackBar(BuildContext? context, String message) {
 // Dialog (موحّد)
 // ---------------------------------------------------------------------------
 
-/// Dialog موحّد للتأكيد (حذف/رفض/تعطيل...)
 Future<bool> showConfirmDialog(
   BuildContext context, {
   required String title,
@@ -166,7 +158,6 @@ Future<bool> showConfirmDialog(
 // API / Networking helpers
 // ---------------------------------------------------------------------------
 
-/// يحاول استخراج رسالة خطأ مفيدة من payload قادم من الـ API.
 String extractApiErrorMessage(
   Object? data, {
   String fallback = 'تعذّر تنفيذ العملية. يرجى التحقق من البيانات.',
@@ -247,37 +238,39 @@ String mapHttpErrorToArabicMessage({required int? statusCode, Object? data}) {
   return extractApiErrorMessage(data, fallback: 'تعذّر تنفيذ العملية.');
 }
 
-/// تحويل Exceptions الشائعة (خصوصًا عند انقطاع الإنترنت) إلى رسالة مفهومة.
-/// هذه تمنع تسريب: ClientException / uri / stacktrace للمستخدم.
 String mapExceptionToArabicMessage(
   Object error, {
   String fallback = 'حدث خطأ غير متوقع. حاول مرة أخرى.',
 }) {
-  // Timeout
   if (error is TimeoutException) {
     return 'انتهت مهلة الاتصال. حاول مرة أخرى.';
   }
 
-  // Socket (offline / DNS / refused)
   if (error is SocketException) {
     return 'لا يوجد اتصال بالإنترنت. تحقق من الاتصال وحاول مرة أخرى.';
   }
 
-  // TLS/SSL/Handshake
   if (error is HandshakeException) {
     return 'تعذّر إنشاء اتصال آمن. حاول مرة أخرى لاحقًا.';
   }
 
-  // HttpException (من dart:io)
   if (error is HttpException) {
     return 'تعذّر الاتصال بالخادم. تحقق من الإنترنت.';
   }
 
-  // بعض الأخطاء تأتي كنص
   final text = error.toString();
-
-  // ClientException / connection closed / failed host lookup ... الخ
   final lower = text.toLowerCase();
+
+  final arabicLooksOffline =
+      text.contains('تعذّر الاتصال بالخادم') ||
+      text.contains('تحقق من الإنترنت') ||
+      text.contains('تحقق من الاتصال') ||
+      text.contains('لا يوجد اتصال');
+
+  if (arabicLooksOffline) {
+    return 'لا يوجد اتصال بالإنترنت. تحقق من الاتصال وحاول مرة أخرى.';
+  }
+
   final looksOffline =
       lower.contains('clientexception') ||
       lower.contains('connection closed') ||
@@ -299,8 +292,6 @@ String mapExceptionToArabicMessage(
 // Public "contracts" for UI behavior
 // ---------------------------------------------------------------------------
 
-/// أخطاء العمليات (Action): حفظ/حذف/حجز/إرسال.
-/// هنا فقط نستخدم SnackBar.
 void showActionErrorSnackBar(
   BuildContext? context, {
   int? statusCode,
@@ -309,7 +300,6 @@ void showActionErrorSnackBar(
   String fallback = 'تعذّر تنفيذ العملية.',
 }) {
   final message = () {
-    // NEW: handle ApiException directly
     if (exception is ApiException) {
       return mapHttpErrorToArabicMessage(
         statusCode: exception.statusCode,
@@ -332,8 +322,6 @@ void showActionErrorSnackBar(
   showAppErrorSnackBar(context, message);
 }
 
-/// Widget موحّد لأخطاء تحميل البيانات (Fetch).
-/// ملاحظة: هنا لا يوجد SnackBar نهائيًا.
 class AppInlineErrorState extends StatelessWidget {
   final String title;
   final String message;
@@ -396,8 +384,38 @@ class AppInlineErrorState extends StatelessWidget {
   }
 }
 
-/// Helper سريع لاستخدامه في الشاشات عند Catch exception في Fetch:
-/// يرجع (title/message) جاهزين للعرض داخل الصفحة.
+class AppFetchStateView extends StatelessWidget {
+  final Object error;
+  final VoidCallback? onRetry;
+
+  const AppFetchStateView({super.key, required this.error, this.onRetry});
+
+  @override
+  Widget build(BuildContext context) {
+    final state = mapFetchExceptionToInlineState(error);
+
+    return LayoutBuilder(
+      builder: (ctx, constraints) {
+        // يمنع overflow على الشاشات القصيرة أو داخل Tabs
+        return SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: constraints.maxHeight),
+            child: IntrinsicHeight(
+              child: AppInlineErrorState(
+                title: state.title,
+                message: state.message,
+                icon: state.icon,
+                onRetry: onRetry,
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
 ({String title, String message, IconData icon}) mapFetchExceptionToInlineState(
   Object error,
 ) {
@@ -406,27 +424,12 @@ class AppInlineErrorState extends StatelessWidget {
     fallback: 'تعذّر تحميل البيانات. حاول مرة أخرى.',
   );
 
-  // لو الرسالة هي Offline نستخدم أيقونة wifi_off
-  if (msg.contains('لا يوجد اتصال')) {
-    return (
-      title: 'لا يوجد اتصال بالإنترنت',
-      message: 'تحقق من الاتصال وحاول مرة أخرى.',
-      icon: Icons.wifi_off_rounded,
-    );
-  }
-
-  if (msg.contains('انتهت مهلة')) {
-    return (
-      title: 'انتهت مهلة الاتصال',
-      message: 'حاول مرة أخرى.',
-      icon: Icons.timer_off_outlined,
-    );
-  }
-
+  // قرار UI: كل أخطاء الـ Fetch -> نفس أيقونة الوايفاي
+  // (حتى لو كانت 400/500/Parsing/Unknown)
   return (
     title: 'تعذّر تحميل البيانات',
     message: msg,
-    icon: Icons.error_outline,
+    icon: Icons.wifi_off_rounded,
   );
 }
 

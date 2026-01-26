@@ -1,11 +1,9 @@
-import 'dart:convert';
-
+// ----------------- mobile/lib/screens/doctor/doctor_absences_screen.dart -----------------
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '/services/appointments_service.dart';
 import '/utils/ui_helpers.dart';
-import '/utils/api_exception.dart';
 
 class DoctorAbsencesScreen extends StatefulWidget {
   const DoctorAbsencesScreen({super.key});
@@ -18,7 +16,9 @@ class _DoctorAbsencesScreenState extends State<DoctorAbsencesScreen> {
   final AppointmentsService appointmentsService = AppointmentsService();
 
   bool loading = true;
-  String? errorMessage;
+
+  // Fetch errors => inline state (no SnackBar)
+  ({String title, String message, IconData icon})? inlineError;
 
   List<DoctorAbsenceDto> absences = const [];
 
@@ -33,7 +33,7 @@ class _DoctorAbsencesScreenState extends State<DoctorAbsencesScreen> {
 
     setState(() {
       loading = true;
-      errorMessage = null;
+      inlineError = null;
     });
 
     try {
@@ -44,35 +44,22 @@ class _DoctorAbsencesScreenState extends State<DoctorAbsencesScreen> {
       setState(() {
         absences = data;
         loading = false;
+        inlineError = null;
       });
-    } on ApiException catch (e) {
+    } catch (e) {
       if (!mounted) return;
 
-      Object? body;
-      try {
-        body = jsonDecode(e.body);
-      } catch (_) {
-        body = e.body;
-      }
-
-      showApiErrorSnackBar(context, statusCode: e.statusCode, data: body);
+      // ✅ Fetch error => Inline فقط (بدون SnackBar)
+      final mapped = mapFetchExceptionToInlineState(e);
 
       setState(() {
         loading = false;
-        errorMessage = mapHttpErrorToArabicMessage(
-          statusCode: e.statusCode,
-          data: body,
+        absences = const [];
+        inlineError = (
+          title: mapped.title,
+          message: mapped.message,
+          icon: mapped.icon,
         );
-      });
-    } catch (_) {
-      if (!mounted) return;
-
-      const msg = 'حدث خطأ غير متوقع. حاول مرة أخرى لاحقًا.';
-      showAppErrorSnackBar(context, msg);
-
-      setState(() {
-        loading = false;
-        errorMessage = msg;
       });
     }
   }
@@ -92,20 +79,6 @@ class _DoctorAbsencesScreenState extends State<DoctorAbsencesScreen> {
     if (v == 'planned') return 'مخطط';
     if (v == 'emergency') return 'طارئ';
     return raw;
-  }
-
-  String? extractAbsenceConflictMessage(Object? body) {
-    try {
-      if (body is Map<String, dynamic>) {
-        final detail = body['detail'];
-        if (detail is List && detail.isNotEmpty) {
-          final first = detail.first;
-          if (first is String && first.trim().isNotEmpty) return first.trim();
-        }
-        if (detail is String && detail.trim().isNotEmpty) return detail.trim();
-      }
-    } catch (_) {}
-    return null;
   }
 
   String _fmtShortLocal(DateTime dt) {
@@ -165,9 +138,6 @@ class _DoctorAbsencesScreenState extends State<DoctorAbsencesScreen> {
   }
 
   Future<void> _openEditDialog(DoctorAbsenceDto existing) async {
-    // سياسة بسيطة وواضحة:
-    // - الغياب الطارئ لا نعدّله (إنشاؤه عبر endpoint خاص + آثار جانبية)
-    // - يمكن حذفه ثم إنشاء غياب طارئ جديد إذا لزم.
     if (existing.type.trim().toLowerCase() == 'emergency') {
       showAppSnackBar(
         context,
@@ -192,7 +162,6 @@ class _DoctorAbsencesScreenState extends State<DoctorAbsencesScreen> {
   Future<void> createAbsence(DoctorAbsenceDialogResult input) async {
     final isEmergency = input.type.trim().toLowerCase() == 'emergency';
 
-    // تحذير/تأكيد إضافي للطارئ لأن له آثار جانبية
     if (isEmergency) {
       final confirm = await showConfirmDialog(
         context,
@@ -211,7 +180,6 @@ class _DoctorAbsencesScreenState extends State<DoctorAbsencesScreen> {
 
     try {
       if (isEmergency) {
-        // نرسل UTC ISO لتفادي أي التباس بالمناطق الزمنية
         final startIso = input.start.toUtc().toIso8601String();
         final endIso = input.end.toUtc().toIso8601String();
         final notes = input.notes.trim().isEmpty ? null : input.notes.trim();
@@ -224,15 +192,11 @@ class _DoctorAbsencesScreenState extends State<DoctorAbsencesScreen> {
 
         if (!mounted) return;
 
-        // بدل SnackBar: Dialog مع OK
         await _showEmergencyResultDialog(res);
-
-        // تحديث القائمة بعد الإغلاق
         await fetchAbsences();
         return;
       }
 
-      // planned (المنطق الحالي يبقى كما هو)
       await appointmentsService.createDoctorAbsence(
         payload: {
           "start_time": input.start.toIso8601String(),
@@ -245,28 +209,20 @@ class _DoctorAbsencesScreenState extends State<DoctorAbsencesScreen> {
       if (!mounted) return;
       showAppSuccessSnackBar(context, 'تمت إضافة الغياب.');
       await fetchAbsences();
-    } on ApiException catch (e) {
+    } catch (e) {
       if (!mounted) return;
 
-      Object? body;
-      try {
-        body = jsonDecode(e.body);
-      } catch (_) {
-        body = e.body;
-      }
-
-      showApiErrorSnackBar(context, statusCode: e.statusCode, data: body);
-
-      final msg = extractAbsenceConflictMessage(body);
-      if (msg != null) showAppErrorSnackBar(context, msg);
-    } catch (_) {
-      if (!mounted) return;
-      showAppErrorSnackBar(context, 'حدث خطأ غير متوقع أثناء الإضافة.');
+      // ✅ Action error => SnackBar
+      showActionErrorSnackBar(
+        context,
+        exception: e,
+        fallback:
+            isEmergency ? 'تعذّر إنشاء الغياب الطارئ.' : 'تعذّر إضافة الغياب.',
+      );
     }
   }
 
   Future<void> updateAbsence(int id, DoctorAbsenceDialogResult input) async {
-    // سياسة: التعديل فقط للـ planned
     final isEmergency = input.type.trim().toLowerCase() == 'emergency';
     if (isEmergency) {
       showAppSnackBar(
@@ -291,23 +247,15 @@ class _DoctorAbsencesScreenState extends State<DoctorAbsencesScreen> {
       if (!mounted) return;
       showAppSuccessSnackBar(context, 'تم تحديث الغياب.');
       await fetchAbsences();
-    } on ApiException catch (e) {
+    } catch (e) {
       if (!mounted) return;
 
-      Object? body;
-      try {
-        body = jsonDecode(e.body);
-      } catch (_) {
-        body = e.body;
-      }
-
-      showApiErrorSnackBar(context, statusCode: e.statusCode, data: body);
-
-      final msg = extractAbsenceConflictMessage(body);
-      if (msg != null) showAppErrorSnackBar(context, msg);
-    } catch (_) {
-      if (!mounted) return;
-      showAppErrorSnackBar(context, 'حدث خطأ غير متوقع أثناء التحديث.');
+      // ✅ Action error => SnackBar
+      showActionErrorSnackBar(
+        context,
+        exception: e,
+        fallback: 'تعذّر تحديث الغياب.',
+      );
     }
   }
 
@@ -334,23 +282,15 @@ class _DoctorAbsencesScreenState extends State<DoctorAbsencesScreen> {
       if (!mounted) return;
       showAppSuccessSnackBar(context, 'تم حذف الغياب.');
       await fetchAbsences();
-    } on ApiException catch (e) {
+    } catch (e) {
       if (!mounted) return;
 
-      Object? body;
-      try {
-        body = jsonDecode(e.body);
-      } catch (_) {
-        body = e.body;
-      }
-
-      showApiErrorSnackBar(context, statusCode: e.statusCode, data: body);
-
-      final msg = extractAbsenceConflictMessage(body);
-      if (msg != null) showAppErrorSnackBar(context, msg);
-    } catch (_) {
-      if (!mounted) return;
-      showAppErrorSnackBar(context, 'حدث خطأ غير متوقع أثناء الحذف.');
+      // ✅ Action error => SnackBar
+      showActionErrorSnackBar(
+        context,
+        exception: e,
+        fallback: 'تعذّر حذف الغياب.',
+      );
     }
   }
 
@@ -400,13 +340,21 @@ class _DoctorAbsencesScreenState extends State<DoctorAbsencesScreen> {
                 return const Center(child: CircularProgressIndicator());
               }
 
-              if (errorMessage != null) {
-                return Center(child: Text(errorMessage!));
+              // ✅ Fetch error => Inline موحّد
+              if (inlineError != null) {
+                final err = inlineError!;
+                return AppInlineErrorState(
+                  title: err.title,
+                  message: err.message,
+                  icon: err.icon,
+                  onRetry: fetchAbsences,
+                );
               }
 
               return RefreshIndicator(
                 onRefresh: fetchAbsences,
                 child: ListView(
+                  physics: const AlwaysScrollableScrollPhysics(),
                   padding: const EdgeInsets.fromLTRB(12, 12, 12, 90),
                   children: [
                     Text(
@@ -415,11 +363,9 @@ class _DoctorAbsencesScreenState extends State<DoctorAbsencesScreen> {
                     ),
                     const SizedBox(height: 12),
                     if (absences.isEmpty)
-                      const Center(
-                        child: Padding(
-                          padding: EdgeInsets.only(top: 32),
-                          child: Text('لا توجد غيابات حالياً.'),
-                        ),
+                      const Padding(
+                        padding: EdgeInsets.only(top: 40),
+                        child: Center(child: Text('لا توجد غيابات حالياً.')),
                       )
                     else
                       ...absences.map((a) {
@@ -630,7 +576,6 @@ class _DoctorAbsenceDialogState extends State<DoctorAbsenceDialog> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // Start
               ListTile(
                 contentPadding: EdgeInsets.zero,
                 title: const Text('وقت البداية'),
@@ -649,10 +594,7 @@ class _DoctorAbsenceDialogState extends State<DoctorAbsenceDialog> {
                   });
                 },
               ),
-
               const SizedBox(height: 8),
-
-              // End
               ListTile(
                 contentPadding: EdgeInsets.zero,
                 title: const Text('وقت النهاية'),
@@ -668,9 +610,7 @@ class _DoctorAbsenceDialogState extends State<DoctorAbsenceDialog> {
                   });
                 },
               ),
-
               const SizedBox(height: 12),
-
               DropdownButtonFormField<String>(
                 value: _type,
                 decoration: const InputDecoration(
@@ -686,7 +626,6 @@ class _DoctorAbsenceDialogState extends State<DoctorAbsenceDialog> {
                         ? null
                         : (v) => setState(() => _type = v ?? 'planned'),
               ),
-
               if (!isEdit && isEmergency) ...[
                 const SizedBox(height: 10),
                 Container(
@@ -714,9 +653,7 @@ class _DoctorAbsenceDialogState extends State<DoctorAbsenceDialog> {
                   ),
                 ),
               ],
-
               const SizedBox(height: 12),
-
               TextFormField(
                 controller: _notesController,
                 maxLines: 2,

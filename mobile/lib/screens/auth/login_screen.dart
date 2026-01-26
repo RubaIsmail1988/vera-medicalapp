@@ -1,10 +1,10 @@
+// ----------------- mobile/lib/screens/auth/login_screen.dart -----------------
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../services/auth_service.dart';
 import '../../utils/ui_helpers.dart';
 import '../../widgets/app_logo.dart';
-import '../../main.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -117,23 +117,26 @@ class _LoginScreenState extends State<LoginScreen> {
         return;
       }
 
+      // يحدّث prefs (currentUserName/currentUserEmail/currentUserRole/user_is_active...)
       await authService.fetchAndStoreCurrentUser();
       if (!mounted) return;
 
-      await MyApp.of(context).maybeStartPolling();
-      if (!mounted) return;
       setState(() => loading = false);
 
+      // Admin -> Admin shell
       if (role == 'admin') {
         context.go('/admin');
         return;
       }
+
+      // Doctor/Patient -> User shell
+      context.go('/app');
+      return;
     } catch (e) {
       if (!mounted) return;
 
       setState(() => loading = false);
 
-      // Action => SnackBar موحّد (بدون تسريب تفاصيل Exception)
       showActionErrorSnackBar(
         context,
         exception: e,

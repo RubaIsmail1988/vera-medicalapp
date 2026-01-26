@@ -15,7 +15,6 @@ class AdherenceTab extends StatefulWidget {
   final int userId;
   final int? selectedPatientId;
 
-  // NEW
   final int? selectedAppointmentId;
 
   const AdherenceTab({
@@ -35,6 +34,9 @@ class _AdherenceTabState extends State<AdherenceTab> {
 
   Future<List<Map<String, dynamic>>>? adherenceFuture;
   Future<List<Map<String, dynamic>>>? prescriptionsFuture;
+
+  Object? lastAdherenceError;
+  Object? lastPrescriptionsError;
 
   int? selectedPrescriptionItemId;
   String selectedStatus = "taken"; // taken | skipped
@@ -58,11 +60,7 @@ class _AdherenceTabState extends State<AdherenceTab> {
   void initState() {
     super.initState();
     clinicalService = ClinicalService(authService: AuthService());
-    adherenceFuture = _fetchAdherence();
-
-    if (isPatient) {
-      prescriptionsFuture = _fetchPrescriptions();
-    }
+    _reloadAll();
   }
 
   @override
@@ -76,12 +74,7 @@ class _AdherenceTabState extends State<AdherenceTab> {
 
     if (patientChanged || apptChanged) {
       setState(() {
-        adherenceFuture = _fetchAdherence();
-
-        if (isPatient) {
-          prescriptionsFuture = _fetchPrescriptions();
-        }
-
+        // Reset selection only when appointment changes (as before)
         if (apptChanged) {
           selectedPrescriptionItemId = null;
           selectedItem = null;
@@ -90,6 +83,8 @@ class _AdherenceTabState extends State<AdherenceTab> {
           selectedStatus = "taken";
         }
       });
+
+      _reloadAll();
     }
   }
 
@@ -100,7 +95,7 @@ class _AdherenceTabState extends State<AdherenceTab> {
   }
 
   // ---------------------------------------------------------------------------
-  // Data fetchers (Fetch -> Inline errors only)
+  // Fetch (Inline errors only)
   // ---------------------------------------------------------------------------
 
   Future<List<Map<String, dynamic>>> _fetchAdherence() async {
@@ -119,7 +114,11 @@ class _AdherenceTabState extends State<AdherenceTab> {
       decoded = res.body;
     }
 
-    throw _HttpException(res.statusCode, decoded);
+    final message = mapHttpErrorToArabicMessage(
+      statusCode: res.statusCode,
+      data: decoded,
+    );
+    throw Exception(message);
   }
 
   Future<List<Map<String, dynamic>>> _fetchPrescriptions() async {
@@ -138,7 +137,43 @@ class _AdherenceTabState extends State<AdherenceTab> {
       decoded = res.body;
     }
 
-    throw _HttpException(res.statusCode, decoded);
+    final message = mapHttpErrorToArabicMessage(
+      statusCode: res.statusCode,
+      data: decoded,
+    );
+    throw Exception(message);
+  }
+
+  void _reloadAll() {
+    lastAdherenceError = null;
+    lastPrescriptionsError = null;
+
+    final newAdherenceFuture = _fetchAdherence().catchError((e) {
+      lastAdherenceError = e;
+      throw e;
+    });
+
+    Future<List<Map<String, dynamic>>>? newPrescriptionsFuture;
+    if (isPatient) {
+      newPrescriptionsFuture = _fetchPrescriptions().catchError((e) {
+        lastPrescriptionsError = e;
+        throw e;
+      });
+    } else {
+      newPrescriptionsFuture = null;
+    }
+
+    if (!mounted) return;
+    setState(() {
+      adherenceFuture = newAdherenceFuture;
+      prescriptionsFuture = newPrescriptionsFuture;
+    });
+  }
+
+  bool _looksOffline(Object? e) {
+    if (e == null) return false;
+    final s = mapFetchExceptionToInlineState(e);
+    return s.title.contains('لا يوجد اتصال');
   }
 
   // ---------------------------------------------------------------------------
@@ -421,7 +456,7 @@ class _AdherenceTabState extends State<AdherenceTab> {
                   Row(
                     children: [
                       Expanded(
-                        child: ElevatedButton(
+                        child: FilledButton(
                           onPressed: () {
                             setState(() {
                               noteController.text = localController.text.trim();
@@ -487,8 +522,9 @@ class _AdherenceTabState extends State<AdherenceTab> {
       setState(() {
         noteController.clear();
         selectedStatus = "taken";
-        adherenceFuture = _fetchAdherence();
       });
+
+      _reloadAll(); // يعيد تحميل السجل + الوصفات (للاتساق)
       return;
     }
 
@@ -508,7 +544,7 @@ class _AdherenceTabState extends State<AdherenceTab> {
   }
 
   // ---------------------------------------------------------------------------
-  // Build: Doctor view mode switch
+  // Doctor view mode switch
   // ---------------------------------------------------------------------------
 
   Widget _buildDoctorModeSwitch() {
@@ -539,7 +575,7 @@ class _AdherenceTabState extends State<AdherenceTab> {
   }
 
   // ---------------------------------------------------------------------------
-  // Build: Adherence list (time view)
+  // Filtering / sorting
   // ---------------------------------------------------------------------------
 
   List<Map<String, dynamic>> _filterAndSortForView(
@@ -705,7 +741,7 @@ class _AdherenceTabState extends State<AdherenceTab> {
   }
 
   // ---------------------------------------------------------------------------
-  // Build: Grouped by medicine (doctor only)
+  // Grouped by medicine (doctor only)
   // ---------------------------------------------------------------------------
 
   Map<int, List<Map<String, dynamic>>> _groupByPrescriptionItem(
@@ -812,7 +848,7 @@ class _AdherenceTabState extends State<AdherenceTab> {
   }
 
   // ---------------------------------------------------------------------------
-  // Patient: Medicine dropdown (two lines) + Rx date on right
+  // Patient: Medicine dropdown + etc (كما هو)
   // ---------------------------------------------------------------------------
 
   Widget _medicineDropdownTwoLines(List<Map<String, dynamic>> prescriptions) {
@@ -999,7 +1035,7 @@ class _AdherenceTabState extends State<AdherenceTab> {
   }
 
   // ---------------------------------------------------------------------------
-  // Main build
+  // Build
   // ---------------------------------------------------------------------------
 
   @override
@@ -1008,6 +1044,17 @@ class _AdherenceTabState extends State<AdherenceTab> {
     // PATIENT VIEW
     // -------------------------------
     if (isPatient) {
+      // إذا انقطع الإنترنت: نعرض حالة واحدة فقط بدل نصفين خطأ
+      final offline =
+          _looksOffline(lastPrescriptionsError) ||
+          _looksOffline(lastAdherenceError);
+
+      if (offline &&
+          (lastPrescriptionsError != null || lastAdherenceError != null)) {
+        final err = lastPrescriptionsError ?? lastAdherenceError!;
+        return AppFetchStateView(error: err, onRetry: _reloadAll);
+      }
+
       final scheme = Theme.of(context).colorScheme;
 
       final hasSelection = selectedPrescriptionItemId != null;
@@ -1039,19 +1086,12 @@ class _AdherenceTabState extends State<AdherenceTab> {
                 }
 
                 if (snapshot.hasError) {
-                  final inline = mapFetchExceptionToInlineState(
-                    snapshot.error!,
-                  );
                   return Padding(
                     padding: const EdgeInsets.all(12),
-                    child: AppInlineErrorState(
-                      title: inline.title,
-                      message: inline.message,
-                      icon: inline.icon,
+                    child: AppFetchStateView(
+                      error: snapshot.error!,
                       onRetry: () {
-                        setState(() {
-                          prescriptionsFuture = _fetchPrescriptions();
-                        });
+                        _reloadAll();
                       },
                     ),
                   );
@@ -1108,7 +1148,7 @@ class _AdherenceTabState extends State<AdherenceTab> {
 
                           SizedBox(
                             width: double.infinity,
-                            child: ElevatedButton(
+                            child: FilledButton(
                               onPressed: canSubmit ? submitAdherence : null,
                               child: Text(submitLabel),
                             ),
@@ -1150,18 +1190,9 @@ class _AdherenceTabState extends State<AdherenceTab> {
                       }
 
                       if (snapshot.hasError) {
-                        final inline = mapFetchExceptionToInlineState(
-                          snapshot.error!,
-                        );
-                        return AppInlineErrorState(
-                          title: inline.title,
-                          message: inline.message,
-                          icon: inline.icon,
-                          onRetry: () {
-                            setState(() {
-                              adherenceFuture = _fetchAdherence();
-                            });
-                          },
+                        return AppFetchStateView(
+                          error: snapshot.error!,
+                          onRetry: _reloadAll,
                         );
                       }
 
@@ -1179,7 +1210,7 @@ class _AdherenceTabState extends State<AdherenceTab> {
     }
 
     // -------------------------------
-    // DOCTOR VIEW (READ ONLY + toggle)
+    // DOCTOR VIEW
     // -------------------------------
     return Column(
       children: [
@@ -1193,16 +1224,9 @@ class _AdherenceTabState extends State<AdherenceTab> {
               }
 
               if (snapshot.hasError) {
-                final inline = mapFetchExceptionToInlineState(snapshot.error!);
-                return AppInlineErrorState(
-                  title: inline.title,
-                  message: inline.message,
-                  icon: inline.icon,
-                  onRetry: () {
-                    setState(() {
-                      adherenceFuture = _fetchAdherence();
-                    });
-                  },
+                return AppFetchStateView(
+                  error: snapshot.error!,
+                  onRetry: _reloadAll,
                 );
               }
 
@@ -1220,18 +1244,4 @@ class _AdherenceTabState extends State<AdherenceTab> {
       ],
     );
   }
-}
-
-// ---------------------------------------------------------------------------
-// Local HttpException wrapper for fetch (inline errors)
-// ---------------------------------------------------------------------------
-
-class _HttpException implements Exception {
-  final int statusCode;
-  final Object? data;
-
-  _HttpException(this.statusCode, this.data);
-
-  @override
-  String toString() => "HTTP $statusCode";
 }

@@ -36,7 +36,8 @@ import 'screens/doctor/doctor_scheduling_settings_screen.dart';
 import 'screens/doctor/doctor_availability_screen.dart';
 import 'screens/doctor/doctor_visit_types_screen.dart';
 import 'screens/doctor/doctor_absences_screen.dart';
-// DoctorUrgentSearchScrean
+
+// Doctor urgent requests
 import 'screens/doctor/doctor_urgent_requests_screen.dart';
 
 // Appointment
@@ -58,7 +59,6 @@ import 'utils/navigation_keys.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Local notifications (safe to init once here)
   await LocalNotificationsService.init();
 
   runApp(const MyApp());
@@ -86,6 +86,10 @@ class MyAppState extends State<MyApp> with WidgetsBindingObserver {
   late final PollingNotificationsService _polling;
 
   bool _bootstrapped = false;
+
+  // Guard against double-start
+  bool _pollingRunning = false;
+  int _pollingUserId = 0;
 
   @override
   void initState() {
@@ -116,14 +120,13 @@ class MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    // سياسة بسيطة:
     // - بالخلفية: أوقف polling
     // - عند العودة: ابدأ إذا كان المستخدم مسجّل دخول
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.inactive ||
         state == AppLifecycleState.detached) {
       // ignore: unawaited_futures
-      _polling.stop();
+      stopPolling();
       return;
     }
 
@@ -137,7 +140,6 @@ class MyAppState extends State<MyApp> with WidgetsBindingObserver {
     if (_bootstrapped) return;
     _bootstrapped = true;
 
-    // إذا كان المستخدم مسجّل دخول من قبل، ابدأ polling مباشرة.
     await maybeStartPolling();
   }
 
@@ -151,14 +153,31 @@ class MyAppState extends State<MyApp> with WidgetsBindingObserver {
     final userId = prefs.getInt("user_id") ?? 0;
 
     if (access.isEmpty || userId <= 0) {
-      await _polling.stop();
+      await stopPolling();
       return;
     }
 
+    // إذا شغّال لنفس المستخدم لا تعيد start
+    if (_pollingRunning && _pollingUserId == userId) return;
+
+    // إذا كان شغّال لمستخدم مختلف (نادر) => أوقف ثم ابدأ من جديد
+    if (_pollingRunning && _pollingUserId != userId) {
+      await _polling.stop();
+      _pollingRunning = false;
+      _pollingUserId = 0;
+    }
+
     await _polling.start();
+    _pollingRunning = true;
+    _pollingUserId = userId;
   }
 
-  Future<void> stopPolling() => _polling.stop();
+  Future<void> stopPolling() async {
+    if (!_pollingRunning) return;
+    await _polling.stop();
+    _pollingRunning = false;
+    _pollingUserId = 0;
+  }
 
   // --------------------------------------------------------------------------
   // UI helpers
@@ -178,7 +197,6 @@ class MyAppState extends State<MyApp> with WidgetsBindingObserver {
     );
   }
 
-  // IMPORTANT: One builder for ALL /app/record routes (and its tabs)
   Widget _userRecordShell(GoRouterState state) {
     return UserShellScreen(
       key: ValueKey<String>(state.uri.toString()),
@@ -191,7 +209,7 @@ class MyAppState extends State<MyApp> with WidgetsBindingObserver {
   // --------------------------------------------------------------------------
 
   late final GoRouter router = GoRouter(
-    navigatorKey: rootNavigatorKey, // <-- هنا الصحيح
+    navigatorKey: rootNavigatorKey,
     initialLocation: '/',
     routes: [
       GoRoute(path: '/', builder: (context, state) => const SplashScreen()),
@@ -230,7 +248,7 @@ class MyAppState extends State<MyApp> with WidgetsBindingObserver {
         },
       ),
 
-      // ---------------- Admin (web-safe) ----------------
+      // ---------------- Admin ----------------
       GoRoute(
         path: '/admin',
         builder: (context, state) => _adminShell(state, 0),
@@ -256,7 +274,7 @@ class MyAppState extends State<MyApp> with WidgetsBindingObserver {
         builder: (context, state) => _adminShell(state, 5),
       ),
 
-      // ---------------- App (User web-safe) ----------------
+      // ---------------- App (User) ----------------
       GoRoute(
         path: '/app',
         builder: (context, state) => _userShell(state, 0),
@@ -314,7 +332,6 @@ class MyAppState extends State<MyApp> with WidgetsBindingObserver {
                   );
                 },
               ),
-
               GoRoute(
                 path: 'files',
                 builder: (context, state) => _userRecordShell(state),
@@ -519,7 +536,6 @@ class MyAppState extends State<MyApp> with WidgetsBindingObserver {
                   ),
                 ],
               ),
-              // NEW: Doctor urgent requests list
               GoRoute(
                 path: 'urgent-requests',
                 builder: (context, state) => const DoctorUrgentRequestsScreen(),
@@ -548,15 +564,13 @@ class MyAppState extends State<MyApp> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     return MaterialApp.router(
       debugShowCheckedModeBanner: false,
-      scaffoldMessengerKey: rootScaffoldMessengerKey, // <-- موجود عندك
+      scaffoldMessengerKey: rootScaffoldMessengerKey,
       themeMode: themeMode,
       themeAnimationDuration: const Duration(milliseconds: 350),
       themeAnimationCurve: Curves.easeInOut,
       theme: AppTheme.light(),
       darkTheme: AppTheme.dark(),
       routerConfig: router,
-
-      // ---- RTL + Arabic ----
       locale: const Locale('ar'),
       supportedLocales: const [Locale('ar'), Locale('en')],
       localizationsDelegates: const [

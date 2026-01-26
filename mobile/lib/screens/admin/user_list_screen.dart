@@ -188,13 +188,10 @@ class _UserListScreenState extends State<UserListScreen>
         }
 
         if (snapshot.hasError) {
-          // Fetch => Inline (بدون SnackBar)
-          return _CenteredStatus(
-            icon: Icons.error_outline,
-            title: 'تعذّر تحميل البيانات.',
-            subtitle: 'تحقق من الاتصال ثم أعد المحاولة.',
-            actionText: 'إعادة المحاولة',
-            onAction: refresh,
+          // ✅ Fetch => Inline state موحّد (wifi_off_rounded + رسالة "مافي نت" عند الانقطاع)
+          return AppFetchStateView(
+            error: snapshot.error!,
+            onRetry: () => refresh(),
           );
         }
 
@@ -526,16 +523,16 @@ class _CenteredStatus extends StatelessWidget {
     required this.icon,
     required this.title,
     this.subtitle,
-    this.actionText,
-    this.onAction,
+    // this.actionText,
+    // this.onAction,
     this.showProgress = false,
   });
 
   final IconData icon;
   final String title;
   final String? subtitle;
-  final String? actionText;
-  final Future<void> Function()? onAction;
+  //final String? actionText;
+  //final Future<void> Function()? onAction;
   final bool showProgress;
 
   @override
@@ -575,15 +572,6 @@ class _CenteredStatus extends StatelessWidget {
                   width: 28,
                   height: 28,
                   child: CircularProgressIndicator(strokeWidth: 3),
-                ),
-              ],
-              if (actionText != null && onAction != null) ...[
-                const SizedBox(height: 14),
-                OutlinedButton(
-                  onPressed: () async {
-                    await onAction!.call();
-                  },
-                  child: Text(actionText!),
                 ),
               ],
             ],

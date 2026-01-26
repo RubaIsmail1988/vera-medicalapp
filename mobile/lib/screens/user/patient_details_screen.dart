@@ -8,6 +8,7 @@ import '/utils/constants.dart';
 import '/utils/ui_helpers.dart';
 import 'edit_patient_details_screen.dart';
 import 'patient_details_form_screen.dart';
+import '/utils/api_exception.dart';
 
 class PatientDetailsScreen extends StatefulWidget {
   final int userId;
@@ -28,7 +29,7 @@ class _PatientDetailsScreenState extends State<PatientDetailsScreen> {
 
   bool loading = true;
   bool notFound = false; // 404: لا يوجد تفاصيل
-  String? errorMessage;
+  Object? fetchError; // نخزن الخطأ الخام (بدون عرضه كنص للمستخدم)
 
   @override
   void initState() {
@@ -41,7 +42,7 @@ class _PatientDetailsScreenState extends State<PatientDetailsScreen> {
     setState(() {
       loading = true;
       notFound = false;
-      errorMessage = null;
+      fetchError = null;
       details = null;
     });
 
@@ -74,28 +75,30 @@ class _PatientDetailsScreenState extends State<PatientDetailsScreen> {
         return;
       }
 
+      // أي status غير 200/404: نعتبره خطأ تحميل
       setState(() {
         loading = false;
-        errorMessage = "فشل تحميل التفاصيل (Code: ${response.statusCode})";
+        fetchError = ApiException(response.statusCode, response.body);
       });
 
-      showAppSnackBar(
+      showActionErrorSnackBar(
         context,
-        'تعذّر تحميل تفاصيل المريض.',
-        type: AppSnackBarType.error,
+        statusCode: response.statusCode,
+        data: response.body,
+        fallback: 'تعذّر تحميل تفاصيل المريض.',
       );
     } catch (e) {
       if (!mounted) return;
 
       setState(() {
         loading = false;
-        errorMessage = "خطأ اتصال: $e";
+        fetchError = e;
       });
 
-      showAppSnackBar(
+      showActionErrorSnackBar(
         context,
-        'تعذّر الاتصال بالخادم. حاول لاحقاً.',
-        type: AppSnackBarType.error,
+        exception: e,
+        fallback: 'تعذّر تحميل تفاصيل المريض.',
       );
     }
   }
@@ -156,23 +159,14 @@ class _PatientDetailsScreenState extends State<PatientDetailsScreen> {
                     const SizedBox(height: 24),
                     SizedBox(
                       width: double.infinity,
-                      child: ElevatedButton.icon(
+                      child: FilledButton.icon(
                         onPressed: openCreateForm,
                         icon: const Icon(Icons.add),
                         label: const Text('إضافة البيانات'),
                       ),
                     ),
                     const SizedBox(height: 12),
-                    TextButton(
-                      onPressed: () {
-                        if (context.canPop()) {
-                          context.pop();
-                          return;
-                        }
-                        context.go('/app/account');
-                      },
-                      child: const Text('رجوع'),
-                    ),
+                    TextButton(onPressed: _goBack, child: const Text('رجوع')),
                   ],
                 ),
               ),
@@ -182,50 +176,19 @@ class _PatientDetailsScreenState extends State<PatientDetailsScreen> {
       );
     }
 
-    // خطأ آخر
+    // خطأ تحميل (بدون عرض نص exception الخام)
     if (details == null) {
+      final state = mapFetchExceptionToInlineState(fetchError ?? 'unknown');
+
       return Directionality(
         textDirection: TextDirection.rtl,
         child: Scaffold(
           appBar: AppBar(title: const Text("تفاصيل المريض")),
-          body: Center(
-            child: Padding(
-              padding: const EdgeInsets.all(24),
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 520),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.error_outline, size: 72, color: cs.error),
-                    const SizedBox(height: 12),
-                    Text(
-                      errorMessage ?? 'حدث خطأ غير معروف.',
-                      textAlign: TextAlign.center,
-                      style: Theme.of(context).textTheme.bodyLarge,
-                    ),
-                    const SizedBox(height: 16),
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton(
-                        onPressed: fetchDetails,
-                        child: const Text('إعادة المحاولة'),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    TextButton(
-                      onPressed: () {
-                        if (context.canPop()) {
-                          context.pop();
-                          return;
-                        }
-                        context.go('/app/account');
-                      },
-                      child: const Text('رجوع'),
-                    ),
-                  ],
-                ),
-              ),
-            ),
+          body: AppInlineErrorState(
+            title: state.title,
+            message: state.message,
+            icon: state.icon,
+            onRetry: fetchDetails,
           ),
         ),
       );
@@ -279,10 +242,9 @@ class _PatientDetailsScreenState extends State<PatientDetailsScreen> {
                         : "لا يوجد",
               ),
               const SizedBox(height: 20),
-
               SizedBox(
                 width: double.infinity,
-                child: ElevatedButton.icon(
+                child: FilledButton.icon(
                   icon: const Icon(Icons.edit),
                   label: const Text("تعديل البيانات"),
                   onPressed: () async {
@@ -312,17 +274,10 @@ class _PatientDetailsScreenState extends State<PatientDetailsScreen> {
                 ),
               ),
               const SizedBox(height: 12),
-
               SizedBox(
                 width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: () {
-                    if (context.canPop()) {
-                      context.pop();
-                      return;
-                    }
-                    context.go('/app/account');
-                  },
+                child: FilledButton(
+                  onPressed: _goBack,
                   child: const Text('رجوع'),
                 ),
               ),
@@ -331,6 +286,16 @@ class _PatientDetailsScreenState extends State<PatientDetailsScreen> {
         ),
       ),
     );
+  }
+
+  void _goBack() {
+    if (!mounted) return;
+
+    if (context.canPop()) {
+      context.pop();
+      return;
+    }
+    context.go('/app/account');
   }
 
   double? _parseDouble(dynamic v) {

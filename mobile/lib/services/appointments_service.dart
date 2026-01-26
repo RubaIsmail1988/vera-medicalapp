@@ -1,3 +1,4 @@
+// services/appointments_service.dart
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
@@ -46,27 +47,32 @@ class AppointmentsService {
       try {
         switch (method.toUpperCase()) {
           case "GET":
-            return http.get(url, headers: headers);
+            return await http.get(url, headers: headers);
+
           case "POST":
-            return http.post(
+            return await http.post(
               url,
               headers: headers,
               body: body != null ? jsonEncode(body) : null,
             );
+
           case "PUT":
-            return http.put(
+            return await http.put(
               url,
               headers: headers,
               body: body != null ? jsonEncode(body) : null,
             );
+
           case "PATCH":
-            return http.patch(
+            return await http.patch(
               url,
               headers: headers,
               body: body != null ? jsonEncode(body) : null,
             );
+
           case "DELETE":
-            return http.delete(url, headers: headers);
+            return await http.delete(url, headers: headers);
+
           default:
             throw ApiException(400, "Invalid HTTP method: $method");
         }
@@ -90,8 +96,9 @@ class AppointmentsService {
       token = await authService.getAccessToken();
     }
 
+    // IMPORTANT: لا نرجّع Response "مزيف" — نرمي ApiException ليبقى موحّد
     if (token == null) {
-      return http.Response('Unauthorized', 401);
+      throw const ApiException(401, 'Unauthorized');
     }
 
     final first = await send(token);
@@ -100,12 +107,14 @@ class AppointmentsService {
       try {
         await authService.refreshToken();
       } catch (_) {
-        // إذا refresh فشل نرجع نفس النتيجة
-        return first;
+        throw ApiException(first.statusCode, first.body);
       }
 
       final newToken = await authService.getAccessToken();
-      if (newToken == null) return first;
+      if (newToken == null) {
+        throw ApiException(first.statusCode, first.body);
+      }
+
       return send(newToken);
     }
 
@@ -345,10 +354,6 @@ class AppointmentsService {
     // NOTE: الجهاز الذي ينفّذ confirm قد لا يكون جهاز المريض،
     // لكن هذا يساعدنا بالاختبار عندما نؤكد على نفس الجهاز.
     // المريض سيحصل عليها أيضاً عبر fetchMyAppointments (sync).
-    try {
-      // الأفضل: إعادة fetch للموعد الواحد، لكن ما عنا endpoint لهذا الآن.
-      // لذلك نعتمد على شاشة "مواعيدي" لتعمل sync بعد التأكيد.
-    } catch (_) {}
   }
 
   // ---------------------------------------------------------------------------
@@ -480,8 +485,6 @@ class AppointmentsService {
     String? reason,
   }) async {
     final payload = <String, dynamic>{
-      // IMPORTANT:
-      // خليه متوافق مع UrgentRequestRejectSerializer المعتاد: "reason"
       if (reason != null && reason.trim().isNotEmpty) "reason": reason.trim(),
     };
 
@@ -518,8 +521,6 @@ class AppointmentsService {
       body: payload,
     );
 
-    // IMPORTANT:
-    // الباك عندك يرجع 201 في UrgentRequestScheduleView
     if (resp.statusCode == 200 || resp.statusCode == 201) {
       return UrgentRequestScheduleResultDto.fromJson(
         Map<String, dynamic>.from(jsonDecode(resp.body)),
@@ -923,7 +924,6 @@ class UrgentRequestActionResultDto {
   final DateTime? handledAt;
   final String? rejectedReason;
 
-  // NEW (may be present later if you return it from action endpoints)
   final String? handledType;
   final int? scheduledAppointmentId;
 
@@ -945,7 +945,6 @@ class UrgentRequestActionResultDto {
               ? DateTime.parse(json["handled_at"] as String)
               : null,
       rejectedReason: json["rejected_reason"] as String?,
-
       handledType: (json["handled_type"] as String?)?.trim(),
       scheduledAppointmentId:
           (json["scheduled_appointment_id"] is num)

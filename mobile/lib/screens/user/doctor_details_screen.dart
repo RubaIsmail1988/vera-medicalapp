@@ -29,7 +29,9 @@ class _DoctorDetailsScreenState extends State<DoctorDetailsScreen> {
 
   bool loading = true;
   bool notFound = false; // 404: لا يوجد تفاصيل
-  String? errorMessage;
+
+  // Fetch errors => inline state (no SnackBar)
+  ({String title, String message, IconData icon})? inlineError;
 
   @override
   void initState() {
@@ -50,14 +52,14 @@ class _DoctorDetailsScreenState extends State<DoctorDetailsScreen> {
   }
 
   Future<void> fetchDetails() async {
-    if (mounted) {
-      setState(() {
-        loading = true;
-        notFound = false;
-        errorMessage = null;
-        details = null;
-      });
-    }
+    if (!mounted) return;
+
+    setState(() {
+      loading = true;
+      notFound = false;
+      inlineError = null;
+      details = null;
+    });
 
     final url = Uri.parse("$accountsBaseUrl/doctor-details/${widget.userId}/");
 
@@ -95,22 +97,28 @@ class _DoctorDetailsScreenState extends State<DoctorDetailsScreen> {
         body = response.body;
       }
 
+      final msg = mapHttpErrorToArabicMessage(
+        statusCode: response.statusCode,
+        data: body,
+      );
+
       setState(() {
         loading = false;
-        errorMessage = mapHttpErrorToArabicMessage(
-          statusCode: response.statusCode,
-          data: body,
+        inlineError = (
+          title: 'تعذّر تحميل البيانات',
+          message: msg,
+          icon: Icons.wifi_off_rounded,
         );
       });
     } catch (e) {
       if (!mounted) return;
 
+      // ✅ Network/Timeout/Unknown => Inline wifi_off عبر نفس الماب
+      final mapped = mapFetchExceptionToInlineState(e);
+
       setState(() {
         loading = false;
-        errorMessage = mapExceptionToArabicMessage(
-          e,
-          fallback: 'تعذّر تحميل تفاصيل الطبيب. حاول مرة أخرى.',
-        );
+        inlineError = mapped;
       });
     }
   }
@@ -161,7 +169,6 @@ class _DoctorDetailsScreenState extends State<DoctorDetailsScreen> {
         ),
         child: Row(
           children: [
-            // العنوان على اليمين
             Expanded(
               flex: 4,
               child: Align(
@@ -178,8 +185,6 @@ class _DoctorDetailsScreenState extends State<DoctorDetailsScreen> {
               ),
             ),
             const SizedBox(width: 12),
-
-            // القيمة على اليسار
             Expanded(
               flex: 6,
               child: Align(
@@ -209,7 +214,7 @@ class _DoctorDetailsScreenState extends State<DoctorDetailsScreen> {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
-    // 404: لا يوجد بيانات
+    // 404: لا يوجد بيانات (حالة طبيعية)
     if (notFound) {
       return Directionality(
         textDirection: TextDirection.rtl,
@@ -267,8 +272,8 @@ class _DoctorDetailsScreenState extends State<DoctorDetailsScreen> {
       );
     }
 
-    // خطأ آخر
-    if (details == null) {
+    // Fetch error (Inline wifi_off)
+    if (inlineError != null) {
       return Directionality(
         textDirection: TextDirection.rtl,
         child: Scaffold(
@@ -279,44 +284,39 @@ class _DoctorDetailsScreenState extends State<DoctorDetailsScreen> {
               onPressed: _goBackSafe,
             ),
           ),
-          body: Center(
-            child: Padding(
-              padding: const EdgeInsets.all(24),
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 520),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.error_outline, size: 72, color: cs.error),
-                    const SizedBox(height: 12),
-                    Text(
-                      errorMessage ?? 'حدث خطأ غير معروف.',
-                      textAlign: TextAlign.center,
-                      style: Theme.of(context).textTheme.bodyLarge,
-                    ),
-                    const SizedBox(height: 16),
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton(
-                        onPressed: fetchDetails,
-                        child: const Text('إعادة المحاولة'),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    TextButton(
-                      onPressed: _goBackSafe,
-                      child: const Text('رجوع'),
-                    ),
-                  ],
-                ),
-              ),
-            ),
+          body: AppInlineErrorState(
+            title: inlineError!.title,
+            message: inlineError!.message,
+            icon: inlineError!.icon,
+            onRetry: fetchDetails,
           ),
         ),
       );
     }
 
     // يوجد بيانات
+    if (details == null) {
+      // حماية احتياطية (يفترض ما نوصل لها إذا inlineError/404/200 تعاملنا معهم)
+      return Directionality(
+        textDirection: TextDirection.rtl,
+        child: Scaffold(
+          appBar: AppBar(
+            title: const Text('تفاصيل الطبيب'),
+            leading: IconButton(
+              icon: const Icon(Icons.arrow_back),
+              onPressed: _goBackSafe,
+            ),
+          ),
+          body: AppInlineErrorState(
+            title: 'تعذّر تحميل البيانات',
+            message: 'حاول مرة أخرى.',
+            icon: Icons.wifi_off_rounded,
+            onRetry: fetchDetails,
+          ),
+        ),
+      );
+    }
+
     return Directionality(
       textDirection: TextDirection.rtl,
       child: Scaffold(
@@ -350,7 +350,6 @@ class _DoctorDetailsScreenState extends State<DoctorDetailsScreen> {
                         : 'لا يوجد',
               ),
               const SizedBox(height: 20),
-
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton.icon(
@@ -383,7 +382,6 @@ class _DoctorDetailsScreenState extends State<DoctorDetailsScreen> {
                 ),
               ),
               const SizedBox(height: 12),
-
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton(

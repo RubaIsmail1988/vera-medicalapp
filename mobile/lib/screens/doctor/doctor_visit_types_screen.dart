@@ -30,7 +30,9 @@ class DoctorVisitTypesScreenState extends State<DoctorVisitTypesScreen> {
   //     DoctorSpecificVisitTypeService();
 
   bool loading = false;
-  String? errorMessage;
+
+  // Fetch errors => inline state (no SnackBar)
+  ({String title, String message, IconData icon})? inlineError;
 
   List<AppointmentType> types = [];
   List<DoctorAppointmentType> items = [];
@@ -49,7 +51,7 @@ class DoctorVisitTypesScreenState extends State<DoctorVisitTypesScreen> {
 
     setState(() {
       loading = true;
-      errorMessage = null;
+      inlineError = null;
     });
 
     try {
@@ -67,14 +69,23 @@ class DoctorVisitTypesScreenState extends State<DoctorVisitTypesScreen> {
         types = resultTypes;
         items = resultMine;
         // specificItems = resultSpecific;
-        errorMessage = null;
+        inlineError = null;
       });
-    } catch (_) {
+    } catch (e) {
       if (!mounted) return;
 
-      const msg = "تعذر تحميل إعدادات أنواع الزيارة. حاول مرة أخرى.";
-      setState(() => errorMessage = msg);
-      showAppSnackBar(context, msg, type: AppSnackBarType.error);
+      // ✅ Fetch error => Inline only (wifi_off) — no SnackBar
+      final mapped = mapFetchExceptionToInlineState(e);
+
+      setState(() {
+        types = [];
+        items = [];
+        inlineError = (
+          title: mapped.title,
+          message: mapped.message,
+          icon: mapped.icon,
+        );
+      });
     } finally {
       if (mounted) {
         setState(() => loading = false);
@@ -94,92 +105,6 @@ class DoctorVisitTypesScreenState extends State<DoctorVisitTypesScreen> {
       if (x.appointmentType == appointmentTypeId) return true;
     }
     return false;
-  }
-
-  // ---------------------------------------------------------------------------
-  // UI helpers
-  // ---------------------------------------------------------------------------
-
-  Widget stateCard({
-    required IconData icon,
-    required String title,
-    required String message,
-    required AppSnackBarType tone,
-    Widget? action,
-  }) {
-    final scheme = Theme.of(context).colorScheme;
-
-    Color bg;
-    Color fg;
-
-    switch (tone) {
-      case AppSnackBarType.success:
-        bg = scheme.primaryContainer;
-        fg = scheme.onPrimaryContainer;
-        break;
-      case AppSnackBarType.warning:
-        bg = scheme.tertiaryContainer;
-        fg = scheme.onTertiaryContainer;
-        break;
-      case AppSnackBarType.error:
-        bg = scheme.errorContainer;
-        fg = scheme.onErrorContainer;
-        break;
-      case AppSnackBarType.info:
-        bg = scheme.surfaceContainerHighest;
-        fg = scheme.onSurface;
-        break;
-    }
-
-    return Center(
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Card(
-          elevation: 0,
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                CircleAvatar(
-                  radius: 26,
-                  backgroundColor: bg,
-                  child: Icon(icon, color: fg),
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  title,
-                  textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  message,
-                  textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.bodyMedium,
-                ),
-                if (action != null) ...[const SizedBox(height: 12), action],
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget primaryButton({
-    required String label,
-    required VoidCallback? onPressed,
-    IconData icon = Icons.refresh,
-  }) {
-    return SizedBox(
-      width: double.infinity,
-      child: ElevatedButton.icon(
-        onPressed: onPressed,
-        icon: Icon(icon),
-        label: Text(label),
-      ),
-    );
   }
 
   Widget sectionHeader(
@@ -297,115 +222,116 @@ class DoctorVisitTypesScreenState extends State<DoctorVisitTypesScreen> {
     int selectedTypeId = pickDefaultTypeId();
     final durationController = TextEditingController(text: "15");
 
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) {
-        return Directionality(
-          textDirection: TextDirection.rtl,
-          child: AlertDialog(
-            title: const Text("إضافة نوع زيارة (مركزي)"),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                DropdownButtonFormField<int>(
-                  value: selectedTypeId == 0 ? null : selectedTypeId,
-                  items:
-                      types
-                          .map(
-                            (t) => DropdownMenuItem<int>(
-                              value: t.id,
-                              child: Text(t.typeName),
-                            ),
-                          )
-                          .toList(),
-                  onChanged: (v) {
-                    if (v == null) return;
-                    selectedTypeId = v;
-                  },
-                  decoration: const InputDecoration(
-                    labelText: "نوع الزيارة",
-                    border: OutlineInputBorder(),
+    try {
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) {
+          return Directionality(
+            textDirection: TextDirection.rtl,
+            child: AlertDialog(
+              title: const Text("إضافة نوع زيارة (مركزي)"),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  DropdownButtonFormField<int>(
+                    value: selectedTypeId == 0 ? null : selectedTypeId,
+                    items:
+                        types
+                            .map(
+                              (t) => DropdownMenuItem<int>(
+                                value: t.id,
+                                child: Text(t.typeName),
+                              ),
+                            )
+                            .toList(),
+                    onChanged: (v) {
+                      if (v == null) return;
+                      selectedTypeId = v;
+                    },
+                    decoration: const InputDecoration(
+                      labelText: "نوع الزيارة",
+                      border: OutlineInputBorder(),
+                    ),
                   ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: durationController,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: "المدة بالدقائق",
+                      hintText: "مثال: 15",
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext, false),
+                  child: const Text("إلغاء"),
                 ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: durationController,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
-                    labelText: "المدة بالدقائق",
-                    hintText: "مثال: 15",
-                    border: OutlineInputBorder(),
-                  ),
+                ElevatedButton(
+                  onPressed: () => Navigator.pop(dialogContext, true),
+                  child: const Text("حفظ"),
                 ),
               ],
             ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(dialogContext, false),
-                child: const Text("إلغاء"),
-              ),
-              ElevatedButton(
-                onPressed: () => Navigator.pop(dialogContext, true),
-                child: const Text("حفظ"),
-              ),
-            ],
-          ),
+          );
+        },
+      );
+
+      if (!mounted) return;
+      if (ok != true) return;
+
+      if (selectedTypeId == 0) {
+        showAppSnackBar(
+          context,
+          "يرجى اختيار نوع الزيارة.",
+          type: AppSnackBarType.warning,
         );
-      },
-    );
+        return;
+      }
 
-    final durationRaw = durationController.text.trim();
-    durationController.dispose();
+      final durationRaw = durationController.text.trim();
+      final duration = int.tryParse(durationRaw) ?? 0;
+      if (duration <= 0) {
+        showAppSnackBar(
+          context,
+          "أدخل مدة صحيحة أكبر من 0.",
+          type: AppSnackBarType.warning,
+        );
+        return;
+      }
 
-    if (!mounted) return;
-    if (ok != true) return;
+      setState(() => loading = true);
 
-    if (selectedTypeId == 0) {
-      showAppSnackBar(
-        context,
-        "يرجى اختيار نوع الزيارة.",
-        type: AppSnackBarType.warning,
-      );
-      return;
-    }
+      try {
+        await doctorTypeService.create(
+          appointmentTypeId: selectedTypeId,
+          durationMinutes: duration,
+        );
 
-    final duration = int.tryParse(durationRaw) ?? 0;
-    if (duration <= 0) {
-      showAppSnackBar(
-        context,
-        "أدخل مدة صحيحة أكبر من 0.",
-        type: AppSnackBarType.warning,
-      );
-      return;
-    }
+        if (!mounted) return;
 
-    setState(() => loading = true);
+        showAppSnackBar(
+          context,
+          "تمت الإضافة بنجاح.",
+          type: AppSnackBarType.success,
+        );
 
-    try {
-      await doctorTypeService.create(
-        appointmentTypeId: selectedTypeId,
-        durationMinutes: duration,
-      );
-
-      if (!mounted) return;
-
-      showAppSnackBar(
-        context,
-        "تمت الإضافة بنجاح.",
-        type: AppSnackBarType.success,
-      );
-
-      await loadData();
-    } catch (_) {
-      if (!mounted) return;
-
-      showAppSnackBar(
-        context,
-        "فشل الحفظ. حاول مرة أخرى.",
-        type: AppSnackBarType.error,
-      );
-
-      setState(() => loading = false);
+        await loadData();
+      } catch (e) {
+        if (!mounted) return;
+        showActionErrorSnackBar(
+          context,
+          exception: e,
+          fallback: "فشل الحفظ. حاول مرة أخرى.",
+        );
+      } finally {
+        if (mounted) setState(() => loading = false);
+      }
+    } finally {
+      durationController.dispose();
     }
   }
 
@@ -414,79 +340,81 @@ class DoctorVisitTypesScreenState extends State<DoctorVisitTypesScreen> {
       text: item.durationMinutes.toString(),
     );
 
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) {
-        return Directionality(
-          textDirection: TextDirection.rtl,
-          child: AlertDialog(
-            title: Text("تعديل: ${typeNameById(item.appointmentType)}"),
-            content: TextField(
-              controller: durationController,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(
-                labelText: "المدة بالدقائق",
-                hintText: "مثال: 15",
-                border: OutlineInputBorder(),
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(dialogContext, false),
-                child: const Text("إلغاء"),
-              ),
-              ElevatedButton(
-                onPressed: () => Navigator.pop(dialogContext, true),
-                child: const Text("حفظ"),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-
-    final durationRaw = durationController.text.trim();
-    durationController.dispose();
-
-    if (!mounted) return;
-    if (ok != true) return;
-
-    final duration = int.tryParse(durationRaw) ?? 0;
-    if (duration <= 0) {
-      showAppSnackBar(
-        context,
-        "أدخل مدة صحيحة أكبر من 0.",
-        type: AppSnackBarType.warning,
-      );
-      return;
-    }
-
-    setState(() => loading = true);
-
     try {
-      await doctorTypeService.updateDuration(
-        id: item.id,
-        durationMinutes: duration,
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) {
+          return Directionality(
+            textDirection: TextDirection.rtl,
+            child: AlertDialog(
+              title: Text("تعديل: ${typeNameById(item.appointmentType)}"),
+              content: TextField(
+                controller: durationController,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: "المدة بالدقائق",
+                  hintText: "مثال: 15",
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext, false),
+                  child: const Text("إلغاء"),
+                ),
+                ElevatedButton(
+                  onPressed: () => Navigator.pop(dialogContext, true),
+                  child: const Text("حفظ"),
+                ),
+              ],
+            ),
+          );
+        },
       );
 
       if (!mounted) return;
+      if (ok != true) return;
 
-      showAppSnackBar(
-        context,
-        "تم التعديل بنجاح.",
-        type: AppSnackBarType.success,
-      );
+      final durationRaw = durationController.text.trim();
+      final duration = int.tryParse(durationRaw) ?? 0;
+      if (duration <= 0) {
+        showAppSnackBar(
+          context,
+          "أدخل مدة صحيحة أكبر من 0.",
+          type: AppSnackBarType.warning,
+        );
+        return;
+      }
 
-      await loadData();
-    } catch (_) {
-      if (!mounted) return;
+      setState(() => loading = true);
 
-      showAppSnackBar(
-        context,
-        "فشل تعديل الإعدادات. حاول مرة أخرى.",
-        type: AppSnackBarType.error,
-      );
-      setState(() => loading = false);
+      try {
+        await doctorTypeService.updateDuration(
+          id: item.id,
+          durationMinutes: duration,
+        );
+
+        if (!mounted) return;
+
+        showAppSnackBar(
+          context,
+          "تم التعديل بنجاح.",
+          type: AppSnackBarType.success,
+        );
+
+        await loadData();
+      } catch (e) {
+        if (!mounted) return;
+        showActionErrorSnackBar(
+          context,
+          exception: e,
+          fallback: "فشل تعديل الإعدادات. حاول مرة أخرى.",
+        );
+      } finally {
+        if (mounted) setState(() => loading = false);
+      }
+    } finally {
+      durationController.dispose();
     }
   }
 
@@ -517,15 +445,16 @@ class DoctorVisitTypesScreenState extends State<DoctorVisitTypesScreen> {
       );
 
       await loadData();
-    } catch (_) {
+    } catch (e) {
       if (!mounted) return;
-
-      showAppSnackBar(
+      showActionErrorSnackBar(
         context,
-        "فشل حذف الإعداد. حاول مرة أخرى.",
-        type: AppSnackBarType.error,
+        exception: e,
+        fallback: "فشل حذف الإعداد. حاول مرة أخرى.",
       );
-      setState(() => loading = false);
+      if (mounted) setState(() => loading = false);
+    } finally {
+      if (mounted) setState(() => loading = false);
     }
   }
 
@@ -541,30 +470,31 @@ class DoctorVisitTypesScreenState extends State<DoctorVisitTypesScreen> {
 
     if (loading) {
       body = const Center(child: CircularProgressIndicator());
-    } else if (errorMessage != null) {
-      body = stateCard(
-        icon: Icons.error_outline,
-        title: "حدث خطأ",
-        message: errorMessage!,
-        tone: AppSnackBarType.error,
-        action: primaryButton(label: "إعادة المحاولة", onPressed: loadData),
+    } else if (inlineError != null) {
+      final e = inlineError!;
+      body = AppInlineErrorState(
+        title: e.title,
+        message: e.message,
+        icon: e.icon,
+        onRetry: loadData,
       );
     } else {
       body = RefreshIndicator(
         onRefresh: loadData,
         child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
           padding: const EdgeInsets.only(bottom: 90),
           children: [
-            sectionHeader(
-              "الأنواع المركزية (Admin)",
-              subtitle: "تحدد النوع من قائمة الأدمن ثم تضبط مدته لديك.",
-              icon: Icons.list_alt_outlined,
-              trailing: TextButton.icon(
-                onPressed: canAddCentral ? openAddCentralDialog : null,
-                icon: const Icon(Icons.add, size: 18),
-                label: const Text("إضافة"),
-              ),
-            ),
+            //      sectionHeader(
+            //        "الأنواع المركزية (Admin)",
+            //        subtitle: "تحدد النوع من قائمة الأدمن ثم تضبط مدته لديك.",
+            //       icon: Icons.list_alt_outlined,
+            //       trailing: TextButton.icon(
+            //         onPressed: canAddCentral ? openAddCentralDialog : null,
+            //         icon: const Icon(Icons.add, size: 18),
+            //         label: const Text("إضافة"),
+            //       ),
+            //     ),
             if (items.isEmpty)
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -647,15 +577,14 @@ class DoctorVisitTypesScreenState extends State<DoctorVisitTypesScreen> {
 
             sectionHeader(
               "أنواع خاصة بالطبيب",
-              subtitle:
-                  "ميزة مستقبلية (غير مفعّلة الآن). سيتم تفعيلها لاحقًا عند اعتماد آلية حجز واضحة لها.",
+              //  subtitle: "ميزة مستقبلية سيتم تفعيلها لاحقًا.",
               icon: Icons.person_pin_outlined,
             ),
             disabledFeatureCard(
               title: "أنواع خاصة بالطبيب (قيد التطوير)",
               message:
-                  "حاليًا الحجز يعتمد فقط على الأنواع المركزية (Admin) مع إمكانية تخصيص المدة للطبيب. "
-                  "الأنواع الخاصة ستُفعّل لاحقًا عند تثبيت منطق الحجز والربط بشكل رسمي.",
+                  "حاليًا الحجز يعتمد فقط على الأنواع المركزية مع إمكانية تخصيص المدة للطبيب. "
+                  "الأنواع الخاصة ستُفعّل لاحقا.",
             ),
           ],
         ),

@@ -16,7 +16,10 @@ class DoctorAvailabilityScreenState extends State<DoctorAvailabilityScreen> {
   final DoctorAvailabilityService service = DoctorAvailabilityService();
 
   bool loading = false;
-  String? errorMessage;
+
+  // Fetch errors => inline state (no SnackBar)
+  ({String title, String message, IconData icon})? inlineError;
+
   List<DoctorAvailability> items = [];
 
   static const List<String> daysEn = [
@@ -79,23 +82,21 @@ class DoctorAvailabilityScreenState extends State<DoctorAvailabilityScreen> {
     setState(() => loading = v);
   }
 
-  void setError(String? msg) {
-    if (!mounted) return;
-    setState(() => errorMessage = msg);
-  }
-
   int _dayIndex(String dayEn) {
     final idx = daysEn.indexOf(dayEn);
     return idx == -1 ? 999 : idx;
   }
 
   // -------------------------------
-  // Data
+  // Data (Fetch)
   // -------------------------------
 
   Future<void> loadData() async {
     setLoading(true);
-    setError(null);
+
+    if (mounted) {
+      setState(() => inlineError = null);
+    }
 
     try {
       final result = await service.fetchMine();
@@ -108,20 +109,22 @@ class DoctorAvailabilityScreenState extends State<DoctorAvailabilityScreen> {
 
       setState(() {
         items = sorted;
-        errorMessage = null;
+        inlineError = null;
       });
-    } catch (_) {
+    } catch (e) {
       if (!mounted) return;
 
-      setState(() {
-        errorMessage = "تعذر تحميل أوقات الدوام. حاول مرة أخرى.";
-      });
+      // ✅ Fetch error => Inline only (wifi_off) — no SnackBar
+      final mapped = mapFetchExceptionToInlineState(e);
 
-      showAppSnackBar(
-        context,
-        "تعذر تحميل أوقات الدوام.",
-        type: AppSnackBarType.error,
-      );
+      setState(() {
+        items = [];
+        inlineError = (
+          title: mapped.title,
+          message: mapped.message,
+          icon: mapped.icon,
+        );
+      });
     } finally {
       setLoading(false);
     }
@@ -297,14 +300,13 @@ class DoctorAvailabilityScreenState extends State<DoctorAvailabilityScreen> {
   }
 
   // -------------------------------
-  // Actions
+  // Actions (SnackBar allowed)
   // -------------------------------
 
   Future<void> addAvailability() async {
     final result = await openAvailabilityDialog(isEdit: false);
     if (result == null) return;
 
-    // حماية إضافية: لا تضيف يوم موجود (حتى لو صار bug بالـ UI/API)
     if (isDayConfigured(result.dayOfWeek)) {
       showAppSnackBar(
         // ignore: use_build_context_synchronously
@@ -332,12 +334,12 @@ class DoctorAvailabilityScreenState extends State<DoctorAvailabilityScreen> {
       );
 
       await loadData();
-    } catch (_) {
+    } catch (e) {
       if (!mounted) return;
-      showAppSnackBar(
+      showActionErrorSnackBar(
         context,
-        "فشل حفظ الدوام. حاول مرة أخرى.",
-        type: AppSnackBarType.error,
+        exception: e,
+        fallback: "فشل حفظ الدوام. حاول مرة أخرى.",
       );
     } finally {
       setLoading(false);
@@ -365,12 +367,12 @@ class DoctorAvailabilityScreenState extends State<DoctorAvailabilityScreen> {
       );
 
       await loadData();
-    } catch (_) {
+    } catch (e) {
       if (!mounted) return;
-      showAppSnackBar(
+      showActionErrorSnackBar(
         context,
-        "فشل تحديث الدوام. حاول مرة أخرى.",
-        type: AppSnackBarType.error,
+        exception: e,
+        fallback: "فشل تحديث الدوام. حاول مرة أخرى.",
       );
     } finally {
       setLoading(false);
@@ -403,12 +405,12 @@ class DoctorAvailabilityScreenState extends State<DoctorAvailabilityScreen> {
       );
 
       await loadData();
-    } catch (_) {
+    } catch (e) {
       if (!mounted) return;
-      showAppSnackBar(
+      showActionErrorSnackBar(
         context,
-        "فشل حذف الدوام. حاول مرة أخرى.",
-        type: AppSnackBarType.error,
+        exception: e,
+        fallback: "فشل حذف الدوام. حاول مرة أخرى.",
       );
     } finally {
       setLoading(false);
@@ -416,15 +418,10 @@ class DoctorAvailabilityScreenState extends State<DoctorAvailabilityScreen> {
   }
 
   // -------------------------------
-  // UI States
+  // UI helper for empty state only
   // -------------------------------
 
-  Widget buildStateCard({
-    required IconData icon,
-    required String title,
-    required String message,
-    Widget? action,
-  }) {
+  Widget buildEmptyCard() {
     return Center(
       child: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
@@ -434,20 +431,19 @@ class DoctorAvailabilityScreenState extends State<DoctorAvailabilityScreen> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                CircleAvatar(radius: 26, child: Icon(icon)),
+                const CircleAvatar(radius: 26, child: Icon(Icons.schedule)),
                 const SizedBox(height: 12),
                 Text(
-                  title,
+                  "لا توجد أوقات دوام",
                   textAlign: TextAlign.center,
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  message,
+                  "لم يتم تحديد أوقات الدوام بعد.\nاضغط على زر (إضافة) لإضافة أول دوام.",
                   textAlign: TextAlign.center,
                   style: Theme.of(context).textTheme.bodyMedium,
                 ),
-                if (action != null) ...[const SizedBox(height: 12), action],
               ],
             ),
           ),
@@ -468,31 +464,21 @@ class DoctorAvailabilityScreenState extends State<DoctorAvailabilityScreen> {
 
     if (loading) {
       body = const Center(child: CircularProgressIndicator());
-    } else if (errorMessage != null) {
-      body = buildStateCard(
-        icon: Icons.error_outline,
-        title: "تعذر التحميل",
-        message: errorMessage!,
-        action: SizedBox(
-          width: double.infinity,
-          child: ElevatedButton.icon(
-            onPressed: loadData,
-            icon: const Icon(Icons.refresh),
-            label: const Text("إعادة المحاولة"),
-          ),
-        ),
+    } else if (inlineError != null) {
+      final e = inlineError!;
+      body = AppInlineErrorState(
+        title: e.title,
+        message: e.message,
+        icon: e.icon,
+        onRetry: loadData,
       );
     } else if (items.isEmpty) {
-      body = buildStateCard(
-        icon: Icons.schedule,
-        title: "لا توجد أوقات دوام",
-        message:
-            "لم يتم تحديد أوقات الدوام بعد.\nاضغط على زر (إضافة) لإضافة أول دوام.",
-      );
+      body = buildEmptyCard();
     } else {
       body = RefreshIndicator(
         onRefresh: loadData,
         child: ListView.separated(
+          physics: const AlwaysScrollableScrollPhysics(),
           padding: const EdgeInsets.all(12),
           itemCount: items.length,
           separatorBuilder: (_, __) => const SizedBox(height: 10),

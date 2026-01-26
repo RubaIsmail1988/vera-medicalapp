@@ -1,5 +1,3 @@
-import 'dart:convert';
-
 import 'package:flutter/material.dart';
 
 import '/services/appointments_service.dart';
@@ -121,32 +119,24 @@ class _DoctorUrgentRequestsScreenState
 
     try {
       final data = await appointmentsService.fetchMyUrgentRequests(
-        status: statusFilter, // open | handled | all
+        status: statusFilter,
       );
 
+      if (!mounted) return;
       setState(() {
         items = data;
         loading = false;
       });
-    } on ApiException catch (e) {
+    } catch (e) {
       if (!mounted) return;
 
-      Object? body;
-      try {
-        body = jsonDecode(e.body);
-      } catch (_) {
-        body = e.body;
-      }
+      // موحّد: يشمل ApiException + انقطاع الإنترنت + Timeout
+      showActionErrorSnackBar(
+        context,
+        exception: e,
+        fallback: 'تعذّر تحميل الطلبات العاجلة.',
+      );
 
-      showApiErrorSnackBar(context, statusCode: e.statusCode, data: body);
-
-      setState(() {
-        loading = false;
-        items = const [];
-      });
-    } catch (_) {
-      if (!mounted) return;
-      showAppErrorSnackBar(context, 'تعذّر تحميل الطلبات العاجلة.');
       setState(() {
         loading = false;
         items = const [];
@@ -221,20 +211,14 @@ class _DoctorUrgentRequestsScreenState
 
       showAppSuccessSnackBar(context, 'تم رفض الطلب.');
       await fetchUrgentRequests();
-    } on ApiException catch (e) {
+    } catch (e) {
       if (!mounted) return;
 
-      Object? body;
-      try {
-        body = jsonDecode(e.body);
-      } catch (_) {
-        body = e.body;
-      }
-
-      showApiErrorSnackBar(context, statusCode: e.statusCode, data: body);
-    } catch (_) {
-      if (!mounted) return;
-      showAppErrorSnackBar(context, 'تعذّر رفض الطلب.');
+      showActionErrorSnackBar(
+        context,
+        exception: e,
+        fallback: 'تعذّر رفض الطلب.',
+      );
     } finally {
       if (mounted) setState(() => actionLoading = false);
     }
@@ -389,20 +373,14 @@ class _DoctorUrgentRequestsScreenState
       );
 
       await fetchUrgentRequests();
-    } on ApiException catch (e) {
+    } catch (e) {
       if (!mounted) return;
 
-      Object? body;
-      try {
-        body = jsonDecode(e.body);
-      } catch (_) {
-        body = e.body;
-      }
-
-      showApiErrorSnackBar(context, statusCode: e.statusCode, data: body);
-    } catch (_) {
-      if (!mounted) return;
-      showAppErrorSnackBar(context, 'تعذّر جدولة الطلب.');
+      showActionErrorSnackBar(
+        context,
+        exception: e,
+        fallback: 'تعذّر جدولة الطلب.',
+      );
     } finally {
       if (mounted) setState(() => actionLoading = false);
     }

@@ -116,7 +116,6 @@ class _UserShellScreenState extends State<UserShellScreen> {
   }
 
   Future<void> logout() async {
-    // IMPORTANT: grab reference before awaiting (avoid BuildContext across async gaps)
     final app = MyApp.of(context);
     await app.stopPolling();
 
@@ -131,7 +130,6 @@ class _UserShellScreenState extends State<UserShellScreen> {
     if (index < 0 || index >= tabPaths.length) return;
     if (!mounted) return;
 
-    // لا نعمل setState هنا — الـ route سيعيد بناء UserShellScreen بالـ initialIndex الصحيح
     context.go(tabPaths[index]);
   }
 
@@ -159,51 +157,20 @@ class _UserShellScreenState extends State<UserShellScreen> {
   }
 
   Future<void> requestAccountDeletion(BuildContext context) async {
-    final reasonController = TextEditingController();
+    // ✅ Dialog returns the reason string (or null if cancelled)
+    final String? reason = await showDialog<String?>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const _AccountDeletionDialog(),
+    );
 
+    if (!context.mounted) return;
+    if (reason == null) return; // cancelled
+
+    // ✅ Action network call must be caught to avoid Red Screen
     try {
-      final bool? confirmed = await showDialog<bool>(
-        context: context,
-        builder: (dialogContext) {
-          return AlertDialog(
-            title: const Text('طلب حذف الحساب'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Text(
-                  'هل أنت متأكد من رغبتك في طلب حذف حسابك؟\n'
-                  'سيتم مراجعة الطلب من قبل الإدارة.',
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: reasonController,
-                  decoration: const InputDecoration(
-                    labelText: 'سبب الطلب (اختياري)',
-                  ),
-                  maxLines: 3,
-                ),
-              ],
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(dialogContext, false),
-                child: const Text('إلغاء'),
-              ),
-              ElevatedButton(
-                onPressed: () => Navigator.pop(dialogContext, true),
-                child: const Text('تأكيد الطلب'),
-              ),
-            ],
-          );
-        },
-      );
-
-      if (!context.mounted) return;
-      if (confirmed != true) return;
-
-      final reason = reasonController.text.trim();
       final success = await deletionService.createDeletionRequest(
-        reason: reason,
+        reason: reason.trim(),
       );
 
       if (!context.mounted) return;
@@ -213,8 +180,9 @@ class _UserShellScreenState extends State<UserShellScreen> {
         success ? 'تم إرسال طلب حذف الحساب بنجاح.' : 'لديك طلب قيد المراجعة.',
         type: success ? AppSnackBarType.success : AppSnackBarType.error,
       );
-    } finally {
-      reasonController.dispose();
+    } catch (e) {
+      if (!context.mounted) return;
+      showActionErrorSnackBar(context, exception: e);
     }
   }
 
@@ -306,7 +274,6 @@ class _UserShellScreenState extends State<UserShellScreen> {
                 ),
                 const SizedBox(height: 24),
 
-                // 1) إدارة الحساب (أساسي)
                 SizedBox(
                   width: double.infinity,
                   child: FilledButton(
@@ -333,7 +300,6 @@ class _UserShellScreenState extends State<UserShellScreen> {
                 Divider(color: cs.onSurface.withValues(alpha: 0.12)),
                 const SizedBox(height: 14),
 
-                // 2) حذف الحساب (حساس)
                 SizedBox(
                   width: double.infinity,
                   child: OutlinedButton(
@@ -356,7 +322,6 @@ class _UserShellScreenState extends State<UserShellScreen> {
                 Divider(color: cs.onSurface.withValues(alpha: 0.12)),
                 const SizedBox(height: 14),
 
-                // 3) تسجيل الخروج (منفصل)
                 SizedBox(
                   width: double.infinity,
                   child: FilledButton.icon(
@@ -479,6 +444,73 @@ class _UserShellScreenState extends State<UserShellScreen> {
           ),
           BottomNavigationBarItem(icon: Icon(Icons.science), label: 'المخابر'),
           BottomNavigationBarItem(icon: Icon(Icons.person), label: 'الحساب'),
+        ],
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Dialog (Stateful): isolates TextEditingController lifecycle
+// ---------------------------------------------------------------------------
+
+class _AccountDeletionDialog extends StatefulWidget {
+  const _AccountDeletionDialog();
+
+  @override
+  State<_AccountDeletionDialog> createState() => _AccountDeletionDialogState();
+}
+
+class _AccountDeletionDialogState extends State<_AccountDeletionDialog> {
+  final TextEditingController reasonController = TextEditingController();
+
+  @override
+  void dispose() {
+    reasonController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: AlertDialog(
+        title: const Text('طلب حذف الحساب', textAlign: TextAlign.right),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              const Text(
+                'هل أنت متأكد من رغبتك في طلب حذف حسابك؟\n'
+                'سيتم مراجعة الطلب من قبل الإدارة.',
+                textAlign: TextAlign.right,
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: reasonController,
+                decoration: const InputDecoration(
+                  labelText: 'سبب الطلب (اختياري)',
+                  border: OutlineInputBorder(),
+                ),
+                maxLines: 3,
+                textDirection: TextDirection.rtl,
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, null),
+            child: const Text('إلغاء'),
+          ),
+          FilledButton(
+            onPressed: () {
+              final reason = reasonController.text.trim();
+              Navigator.pop(context, reason);
+            },
+            child: const Text('تأكيد الطلب'),
+          ),
         ],
       ),
     );

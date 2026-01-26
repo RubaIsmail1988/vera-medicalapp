@@ -230,7 +230,7 @@ class _DeletionRequestsScreenState extends State<DeletionRequestsScreen> {
     final cs = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
 
-    // ملاحظة: بدون Scaffold لأننا داخل AdminShell
+    // بدون Scaffold لأننا داخل AdminShell
     return Column(
       children: [
         Padding(
@@ -274,29 +274,28 @@ class _DeletionRequestsScreenState extends State<DeletionRequestsScreen> {
             future: futureRequests,
             builder: (context, snapshot) {
               if (snapshot.connectionState == ConnectionState.waiting) {
-                return const _CenteredStatus(
-                  icon: Icons.hourglass_top_rounded,
-                  title: 'جاري تحميل طلبات الحذف...',
-                  showProgress: true,
-                );
+                return const Center(child: CircularProgressIndicator());
               }
 
               if (snapshot.hasError) {
-                return _CenteredStatus(
-                  icon: Icons.error_outline,
-                  title: 'تعذّر تحميل طلبات الحذف.',
-                  subtitle: 'تحقق من الاتصال ثم أعد المحاولة.',
-                  actionText: 'إعادة المحاولة',
-                  onAction: refresh,
+                // موحّد: يميّز Offline/Timeout/...
+                return AppFetchStateView(
+                  error: snapshot.error!,
+                  onRetry: refresh,
                 );
               }
 
               final requestsAll = snapshot.data ?? [];
 
               if (requestsAll.isEmpty) {
-                return const _CenteredStatus(
-                  icon: Icons.delete_forever_outlined,
-                  title: 'لا يوجد أي طلبات حذف حساب حاليًا.',
+                return const Center(
+                  child: Padding(
+                    padding: EdgeInsets.all(18),
+                    child: Text(
+                      'لا يوجد أي طلبات حذف حساب حاليًا.',
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
                 );
               }
 
@@ -375,10 +374,14 @@ class _DeletionRequestsScreenState extends State<DeletionRequestsScreen> {
                   Expanded(
                     child:
                         filtered.isEmpty
-                            ? const _CenteredStatus(
-                              icon: Icons.search_off,
-                              title: 'لا توجد نتائج مطابقة للبحث.',
-                              subtitle: 'جرّب تعديل كلمة البحث.',
+                            ? const Center(
+                              child: Padding(
+                                padding: EdgeInsets.all(18),
+                                child: Text(
+                                  'لا توجد نتائج مطابقة للبحث.\nجرّب تعديل كلمة البحث.',
+                                  textAlign: TextAlign.center,
+                                ),
+                              ),
                             )
                             : RefreshIndicator(
                               onRefresh: refresh,
@@ -690,79 +693,6 @@ class _InfoRow extends StatelessWidget {
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _CenteredStatus extends StatelessWidget {
-  const _CenteredStatus({
-    required this.icon,
-    required this.title,
-    this.subtitle,
-    this.actionText,
-    this.onAction,
-    this.showProgress = false,
-  });
-
-  final IconData icon;
-  final String title;
-  final String? subtitle;
-  final String? actionText;
-  final Future<void> Function()? onAction;
-  final bool showProgress;
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(18),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 520),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(icon, size: 36, color: cs.onSurface.withValues(alpha: 0.70)),
-              const SizedBox(height: 10),
-              Text(
-                title,
-                textAlign: TextAlign.center,
-                style: Theme.of(
-                  context,
-                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
-              ),
-              if (subtitle != null) ...[
-                const SizedBox(height: 6),
-                Text(
-                  subtitle!,
-                  textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: cs.onSurface.withValues(alpha: 0.70),
-                  ),
-                ),
-              ],
-              if (showProgress) ...[
-                const SizedBox(height: 14),
-                const SizedBox(
-                  width: 28,
-                  height: 28,
-                  child: CircularProgressIndicator(strokeWidth: 3),
-                ),
-              ],
-              if (actionText != null && onAction != null) ...[
-                const SizedBox(height: 14),
-                OutlinedButton(
-                  onPressed: () async {
-                    await onAction!.call();
-                  },
-                  child: Text(actionText!),
-                ),
-              ],
-            ],
-          ),
-        ),
       ),
     );
   }

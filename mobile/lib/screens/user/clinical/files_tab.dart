@@ -1,4 +1,4 @@
-import 'dart:async';
+// mobile/lib/screens/user/clinical/files_tab.dart
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -13,9 +13,7 @@ class FilesTab extends StatefulWidget {
   final String role;
   final int userId;
   final int? selectedPatientId; // doctor context
-
-  // appointment context
-  final int? selectedAppointmentId;
+  final int? selectedAppointmentId; // appointment context
 
   const FilesTab({
     super.key,
@@ -109,8 +107,8 @@ class _FilesTabState extends State<FilesTab> {
 
   IconData _categoryIcon(String raw) {
     final v = raw.trim().toLowerCase();
-    if (v == "lab_test") return Icons.science_outlined; // 🧪
-    if (v == "medical_imaging") return Icons.medical_services_outlined; // 🩻
+    if (v == "lab_test") return Icons.science_outlined;
+    if (v == "medical_imaging") return Icons.medical_services_outlined;
     return Icons.description_outlined;
   }
 
@@ -157,19 +155,16 @@ class _FilesTabState extends State<FilesTab> {
 
       var filtered = list;
 
-      // Doctor context: filter by selected patient
       if (isDoctor && selectedPid != null && selectedPid > 0) {
         filtered =
             filtered.where((o) => _asInt(o["patient"]) == selectedPid).toList();
       }
 
-      // Appointment context: filter by appointment
       if (apptId != null && apptId > 0) {
         filtered =
             filtered.where((o) => _asInt(o["appointment"]) == apptId).toList();
       }
 
-      // newest first
       filtered.sort((a, b) {
         final da = _parseDateOrMin((a["created_at"] ?? "").toString());
         final db = _parseDateOrMin((b["created_at"] ?? "").toString());
@@ -227,12 +222,12 @@ class _FilesTabState extends State<FilesTab> {
     final future = _fetchOrders();
     if (!mounted) return;
     setState(() => ordersFuture = future);
-    final list = await future;
 
+    final list = await future;
     if (!mounted) return;
+
     lastOrders = list;
 
-    // Ensure selectedOrderId still exists after filtering
     final currentSelected = selectedOrderId;
     final stillExists =
         currentSelected != null &&
@@ -246,15 +241,34 @@ class _FilesTabState extends State<FilesTab> {
     }
   }
 
+  Future<void> _reloadFiles() async {
+    final oid = selectedOrderId;
+    if (oid == null) return;
+
+    final future = _fetchFiles(oid);
+    if (!mounted) return;
+    setState(() => filesFuture = future);
+    await future;
+  }
+
   Future<void> _selectOrderAndLoadFiles(int? orderId) async {
+    if (!mounted) return;
+
+    if (orderId == null) {
+      setState(() {
+        selectedOrderId = null;
+        filesFuture = null;
+      });
+      return;
+    }
+
+    final future = _fetchFiles(orderId);
     setState(() {
       selectedOrderId = orderId;
-      filesFuture = (orderId == null) ? null : _fetchFiles(orderId);
+      filesFuture = future;
     });
 
-    if (orderId != null) {
-      await filesFuture;
-    }
+    await future;
   }
 
   // ---------------------------------------------------------------------------
@@ -396,13 +410,7 @@ class _FilesTabState extends State<FilesTab> {
           "تم رفع الملف بنجاح.",
           type: AppSnackBarType.success,
         );
-
-        if (selectedOrderId != null) {
-          setState(() {
-            filesFuture = _fetchFiles(selectedOrderId!);
-          });
-          await filesFuture;
-        }
+        await _reloadFiles();
         return;
       }
 
@@ -459,13 +467,7 @@ class _FilesTabState extends State<FilesTab> {
           "تم حذف الملف بنجاح.",
           type: AppSnackBarType.success,
         );
-
-        if (selectedOrderId != null) {
-          setState(() {
-            filesFuture = _fetchFiles(selectedOrderId!);
-          });
-          await filesFuture;
-        }
+        await _reloadFiles();
         return;
       }
 
@@ -531,56 +533,67 @@ class _FilesTabState extends State<FilesTab> {
 
     return Padding(
       padding: const EdgeInsets.all(12),
-      child: Column(
-        children: [
-          FutureBuilder<List<Map<String, dynamic>>>(
-            future: ordersFuture,
-            builder: (context, snapshot) {
-              if (snapshot.connectionState == ConnectionState.waiting) {
-                return const Padding(
-                  padding: EdgeInsets.all(24),
-                  child: CircularProgressIndicator(),
-                );
-              }
+      child: FutureBuilder<List<Map<String, dynamic>>>(
+        future: ordersFuture,
+        builder: (context, snapshot) {
+          // 1) Loading: لا نعرض القسم السفلي إطلاقًا
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator());
+          }
 
-              if (snapshot.hasError) {
-                final mapped = mapFetchExceptionToInlineState(snapshot.error!);
+          if (snapshot.hasError) {
+            Future<void> reloadFiles() async {
+              final oid = selectedOrderId;
+              if (oid == null) return;
+              final future = _fetchFiles(oid);
+              if (!mounted) return;
+              setState(() => filesFuture = future);
+              await future;
+            }
 
-                return Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(12),
-                    child: Column(
-                      children: [
-                        AppInlineErrorState(
-                          title: mapped.title,
-                          message: mapped.message,
-                          icon: mapped.icon,
-                          onRetry: _reloadOrders,
-                        ),
-                      ],
-                    ),
+            final mapped = mapFetchExceptionToInlineState(snapshot.error!);
+
+            return RefreshIndicator(
+              onRefresh: reloadFiles,
+              child: ListView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                children: [
+                  const SizedBox(height: 80),
+                  AppInlineErrorState(
+                    title: mapped.title,
+                    message: mapped.message,
+                    icon: mapped.icon,
+                    onRetry: reloadFiles,
                   ),
-                );
-              }
+                  const SizedBox(height: 40),
+                ],
+              ),
+            );
+          }
 
-              final list = snapshot.data ?? [];
-              lastOrders = list;
+          final list = snapshot.data ?? [];
+          lastOrders = list;
 
-              if (list.isEmpty) {
-                return Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(12),
-                    child: Text(
-                      emptyOrdersMessage,
-                      textAlign: TextAlign.center,
-                    ),
-                  ),
-                );
-              }
+          // 3) Empty orders
+          if (list.isEmpty) {
+            return RefreshIndicator(
+              onRefresh: _reloadOrders,
+              child: ListView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                children: [
+                  const SizedBox(height: 140),
+                  Center(child: Text(emptyOrdersMessage)),
+                ],
+              ),
+            );
+          }
 
-              final canInteract = !uploading;
+          // 4) Orders exist: Dropdown + files area
+          final canInteract = !uploading;
 
-              return DropdownButtonFormField<int>(
+          return Column(
+            children: [
+              DropdownButtonFormField<int>(
                 isExpanded: true,
                 menuMaxHeight: 320,
                 value: selectedOrderId,
@@ -604,237 +617,216 @@ class _FilesTabState extends State<FilesTab> {
                         })
                         .whereType<DropdownMenuItem<int>>()
                         .toList(),
-                onChanged:
-                    canInteract
-                        ? (value) async {
-                          await _selectOrderAndLoadFiles(value);
-                        }
-                        : null,
-              );
-            },
-          ),
+                onChanged: canInteract ? _selectOrderAndLoadFiles : null,
+              ),
 
-          const SizedBox(height: 12),
+              const SizedBox(height: 12),
 
-          Expanded(
-            child:
-                selectedOrderId == null
-                    ? const Center(
-                      child: Text("اختر طلبًا من الأعلى لعرض ملفاته."),
-                    )
-                    : FutureBuilder<List<Map<String, dynamic>>>(
-                      future: filesFuture,
-                      builder: (context, snapshot) {
-                        // أول اختيار للطلب قد يجعل filesFuture null لحظة
-                        if (filesFuture == null) {
-                          return const Center(
-                            child: CircularProgressIndicator(),
-                          );
-                        }
+              Expanded(
+                child:
+                    selectedOrderId == null
+                        ? const Center(
+                          child: Text("اختر طلبًا من الأعلى لعرض ملفاته."),
+                        )
+                        : FutureBuilder<List<Map<String, dynamic>>>(
+                          future: filesFuture,
+                          builder: (context, fileSnap) {
+                            // عند أول اختيار: filesFuture قد تكون null لحظة واحدة
+                            if (filesFuture == null ||
+                                fileSnap.connectionState ==
+                                    ConnectionState.waiting) {
+                              return const Center(
+                                child: CircularProgressIndicator(),
+                              );
+                            }
 
-                        if (snapshot.connectionState ==
-                            ConnectionState.waiting) {
-                          return const Center(
-                            child: CircularProgressIndicator(),
-                          );
-                        }
+                            if (fileSnap.hasError) {
+                              final mapped = mapFetchExceptionToInlineState(
+                                fileSnap.error!,
+                              );
 
-                        if (snapshot.hasError) {
-                          final mapped = mapFetchExceptionToInlineState(
-                            snapshot.error!,
-                          );
+                              return RefreshIndicator(
+                                onRefresh: _reloadFiles,
+                                child: ListView(
+                                  physics:
+                                      const AlwaysScrollableScrollPhysics(),
+                                  children: [
+                                    const SizedBox(height: 80),
+                                    AppInlineErrorState(
+                                      title: mapped.title,
+                                      message: mapped.message,
+                                      icon: mapped.icon,
+                                      onRetry: _reloadFiles,
+                                    ),
+                                    const SizedBox(height: 40),
+                                  ],
+                                ),
+                              );
+                            }
 
-                          return RefreshIndicator(
-                            onRefresh: () async {
-                              final oid = selectedOrderId;
-                              if (oid == null) return;
-                              final future = _fetchFiles(oid);
-                              setState(() => filesFuture = future);
-                              await future;
-                            },
-                            child: ListView(
-                              physics: const AlwaysScrollableScrollPhysics(),
+                            final files = fileSnap.data ?? [];
+                            final uploadEnabled =
+                                isPatient &&
+                                !uploading &&
+                                _canUploadForPatientWithFiles(files);
+
+                            return Column(
                               children: [
-                                const SizedBox(height: 80),
-                                AppInlineErrorState(
-                                  title: mapped.title,
-                                  message: mapped.message,
-                                  icon: mapped.icon,
-                                  onRetry: () async {
-                                    final oid = selectedOrderId;
-                                    if (oid == null) return;
-                                    final future = _fetchFiles(oid);
-                                    setState(() => filesFuture = future);
-                                    await future;
-                                  },
-                                ),
-                              ],
-                            ),
-                          );
-                        }
-
-                        final files = snapshot.data ?? [];
-                        final uploadEnabled =
-                            isPatient &&
-                            !uploading &&
-                            _canUploadForPatientWithFiles(files);
-
-                        return Column(
-                          children: [
-                            if (isPatient)
-                              SizedBox(
-                                width: double.infinity,
-                                child: ElevatedButton.icon(
-                                  onPressed:
-                                      uploadEnabled
-                                          ? () => _pickAndUpload(files)
-                                          : null,
-                                  icon:
-                                      uploading
-                                          ? const SizedBox(
-                                            width: 18,
-                                            height: 18,
-                                            child: CircularProgressIndicator(
-                                              strokeWidth: 2,
-                                            ),
-                                          )
-                                          : const Icon(Icons.upload_file),
-                                  label: Text(
-                                    uploading
-                                        ? "جارٍ الرفع..."
-                                        : "رفع ملف (JPG/PNG/PDF)",
+                                if (isPatient)
+                                  SizedBox(
+                                    width: double.infinity,
+                                    child: ElevatedButton.icon(
+                                      onPressed:
+                                          uploadEnabled
+                                              ? () => _pickAndUpload(files)
+                                              : null,
+                                      icon:
+                                          uploading
+                                              ? const SizedBox(
+                                                width: 18,
+                                                height: 18,
+                                                child:
+                                                    CircularProgressIndicator(
+                                                      strokeWidth: 2,
+                                                    ),
+                                              )
+                                              : const Icon(Icons.upload_file),
+                                      label: Text(
+                                        uploading
+                                            ? "جارٍ الرفع..."
+                                            : "رفع ملف (JPG/PNG/PDF)",
+                                      ),
+                                    ),
                                   ),
-                                ),
-                              ),
-                            if (isPatient) const SizedBox(height: 12),
+                                if (isPatient) const SizedBox(height: 12),
 
-                            Expanded(
-                              child:
-                                  files.isEmpty
-                                      ? RefreshIndicator(
-                                        onRefresh: () async {
-                                          final oid = selectedOrderId;
-                                          if (oid == null) return;
-                                          final future = _fetchFiles(oid);
-                                          setState(() => filesFuture = future);
-                                          await future;
-                                        },
-                                        child: ListView(
-                                          physics:
-                                              const AlwaysScrollableScrollPhysics(),
-                                          children: const [
-                                            SizedBox(height: 140),
-                                            Center(
-                                              child: Text(
-                                                "لا توجد ملفات مرفوعة لهذا الطلب.",
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      )
-                                      : RefreshIndicator(
-                                        onRefresh: () async {
-                                          final oid = selectedOrderId;
-                                          if (oid == null) return;
-                                          final future = _fetchFiles(oid);
-                                          setState(() => filesFuture = future);
-                                          await future;
-                                        },
-                                        child: ListView.separated(
-                                          itemCount: files.length,
-                                          separatorBuilder:
-                                              (_, __) =>
-                                                  const SizedBox(height: 8),
-                                          itemBuilder: (context, index) {
-                                            final f = files[index];
-
-                                            final fileId = int.tryParse(
-                                              f["id"]?.toString() ?? "",
-                                            );
-
-                                            final original =
-                                                (f["original_filename"]
-                                                            ?.toString()
-                                                            .trim()
-                                                            .isNotEmpty ==
-                                                        true)
-                                                    ? f["original_filename"]
-                                                        .toString()
-                                                    : "";
-
-                                            final fallbackName =
-                                                (f["file"]?.toString() ?? "");
-
-                                            final filename =
-                                                original.isNotEmpty
-                                                    ? original
-                                                    : fallbackName;
-
-                                            final statusNorm =
-                                                _normalizedReviewStatus(
-                                                  f["review_status"]
-                                                          ?.toString() ??
-                                                      "",
-                                                );
-
-                                            final statusLabel =
-                                                _reviewStatusLabel(statusNorm);
-
-                                            final note =
-                                                (f["doctor_note"]?.toString() ??
-                                                        "")
-                                                    .trim();
-
-                                            final canDelete =
-                                                isPatient &&
-                                                !uploading &&
-                                                statusNorm ==
-                                                    "pending_review" &&
-                                                fileId != null;
-
-                                            return Card(
-                                              child: ListTile(
-                                                leading: CircleAvatar(
-                                                  child: Icon(
-                                                    _categoryIconForSelectedOrder(),
+                                Expanded(
+                                  child:
+                                      files.isEmpty
+                                          ? RefreshIndicator(
+                                            onRefresh: _reloadFiles,
+                                            child: ListView(
+                                              physics:
+                                                  const AlwaysScrollableScrollPhysics(),
+                                              children: const [
+                                                SizedBox(height: 140),
+                                                Center(
+                                                  child: Text(
+                                                    "لا توجد ملفات مرفوعة لهذا الطلب.",
                                                   ),
                                                 ),
-                                                title: Text(
-                                                  filename.isNotEmpty
-                                                      ? filename
-                                                      : "ملف",
-                                                ),
-                                                subtitle: Text(
-                                                  "الحالة: $statusLabel${note.isNotEmpty ? "\nملاحظة الطبيب: $note" : ""}",
-                                                ),
-                                                trailing:
-                                                    canDelete
-                                                        ? IconButton(
-                                                          tooltip:
-                                                              "حذف الملف (قيد المراجعة فقط)",
-                                                          icon: const Icon(
-                                                            Icons
-                                                                .delete_outline,
-                                                          ),
-                                                          onPressed: () async {
-                                                            await _deleteFile(
-                                                              fileId,
-                                                            );
-                                                          },
-                                                        )
-                                                        : null,
+                                              ],
+                                            ),
+                                          )
+                                          : RefreshIndicator(
+                                            onRefresh: _reloadFiles,
+                                            child: ListView.separated(
+                                              physics:
+                                                  const AlwaysScrollableScrollPhysics(),
+                                              padding: const EdgeInsets.only(
+                                                bottom: 12,
                                               ),
-                                            );
-                                          },
-                                        ),
-                                      ),
-                            ),
-                          ],
-                        );
-                      },
-                    ),
-          ),
-        ],
+                                              itemCount: files.length,
+                                              separatorBuilder:
+                                                  (_, __) =>
+                                                      const SizedBox(height: 8),
+                                              itemBuilder: (context, index) {
+                                                final f = files[index];
+
+                                                final fileId = int.tryParse(
+                                                  f["id"]?.toString() ?? "",
+                                                );
+
+                                                final original =
+                                                    (f["original_filename"]
+                                                                ?.toString()
+                                                                .trim()
+                                                                .isNotEmpty ==
+                                                            true)
+                                                        ? f["original_filename"]
+                                                            .toString()
+                                                        : "";
+
+                                                final fallbackName =
+                                                    (f["file"]?.toString() ??
+                                                        "");
+
+                                                final filename =
+                                                    original.isNotEmpty
+                                                        ? original
+                                                        : fallbackName;
+
+                                                final statusNorm =
+                                                    _normalizedReviewStatus(
+                                                      f["review_status"]
+                                                              ?.toString() ??
+                                                          "",
+                                                    );
+
+                                                final statusLabel =
+                                                    _reviewStatusLabel(
+                                                      statusNorm,
+                                                    );
+
+                                                final note =
+                                                    (f["doctor_note"]
+                                                                ?.toString() ??
+                                                            "")
+                                                        .trim();
+
+                                                final canDelete =
+                                                    isPatient &&
+                                                    !uploading &&
+                                                    statusNorm ==
+                                                        "pending_review" &&
+                                                    fileId != null;
+
+                                                return Card(
+                                                  child: ListTile(
+                                                    leading: CircleAvatar(
+                                                      child: Icon(
+                                                        _categoryIconForSelectedOrder(),
+                                                      ),
+                                                    ),
+                                                    title: Text(
+                                                      filename.isNotEmpty
+                                                          ? filename
+                                                          : "ملف",
+                                                    ),
+                                                    subtitle: Text(
+                                                      "الحالة: $statusLabel"
+                                                      "${note.isNotEmpty ? "\nملاحظة الطبيب: $note" : ""}",
+                                                    ),
+                                                    trailing:
+                                                        canDelete
+                                                            ? IconButton(
+                                                              tooltip:
+                                                                  "حذف الملف (قيد المراجعة فقط)",
+                                                              icon: const Icon(
+                                                                Icons
+                                                                    .delete_outline,
+                                                              ),
+                                                              onPressed: () async {
+                                                                await _deleteFile(
+                                                                  fileId,
+                                                                );
+                                                              },
+                                                            )
+                                                            : null,
+                                                  ),
+                                                );
+                                              },
+                                            ),
+                                          ),
+                                ),
+                              ],
+                            );
+                          },
+                        ),
+              ),
+            ],
+          );
+        },
       ),
     );
   }

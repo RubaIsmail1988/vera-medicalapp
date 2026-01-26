@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 
 import '/services/auth_service.dart';
+import '/utils/api_exception.dart';
 import '/utils/ui_helpers.dart';
 
 class HealthProfileTab extends StatefulWidget {
@@ -73,9 +74,8 @@ class _HealthProfileTabState extends State<HealthProfileTab> {
       if (!mounted) return;
       setState(() {
         loading = false;
-        fetchError = _InlineMessageException(
-          "لا يوجد مريض محدد لعرض الملف الصحي.",
-        );
+        // نعرضها كـ error "inline" لكن بشكل موحّد
+        fetchError = Exception("لا يوجد مريض محدد لعرض الملف الصحي.");
         data = null;
       });
       return;
@@ -90,46 +90,38 @@ class _HealthProfileTabState extends State<HealthProfileTab> {
       if (!mounted) return;
 
       if (res.statusCode == 200) {
-        try {
-          final decoded = jsonDecode(res.body);
-          if (decoded is Map) {
-            setState(() {
-              data = Map<String, dynamic>.from(decoded);
-              loading = false;
-              fetchError = null;
-            });
-            return;
-          }
-        } catch (e) {
+        final decoded = jsonDecode(res.body);
+        if (decoded is Map) {
           setState(() {
+            data = Map<String, dynamic>.from(decoded);
             loading = false;
-            fetchError = e;
-            data = null;
+            fetchError = null;
           });
           return;
         }
 
         setState(() {
           loading = false;
-          fetchError = _InlineMessageException("تعذر قراءة البيانات.");
+          fetchError = Exception("تعذّر قراءة البيانات.");
           data = null;
         });
         return;
       }
 
-      // Fetch errors: inline only (NO SnackBar)
-      final msg =
-          (res.statusCode == 401)
-              ? "انتهت الجلسة، يرجى تسجيل الدخول مجددًا."
-              : (res.statusCode == 403)
-              ? "لا تملك الصلاحية لعرض الملف الصحي."
-              : (res.statusCode == 404)
-              ? "لا يوجد ملف صحي لهذا المستخدم بعد."
-              : "فشل تحميل الملف الصحي (${res.statusCode}).";
+      // 404 هنا ليس "انترنت"، بل "لا يوجد ملف صحي" → نعرضه inline برسالة مفهومة.
+      if (res.statusCode == 404) {
+        setState(() {
+          loading = false;
+          fetchError = Exception("لا يوجد ملف صحي لهذا المستخدم بعد.");
+          data = null;
+        });
+        return;
+      }
 
+      // باقي أكواد HTTP نخزنها كـ ApiException ليتم mapping موحّد في ui_helpers
       setState(() {
         loading = false;
-        fetchError = _InlineMessageException(msg);
+        fetchError = ApiException(res.statusCode, res.body);
         data = null;
       });
     } catch (e) {
@@ -186,13 +178,8 @@ class _HealthProfileTabState extends State<HealthProfileTab> {
     }
 
     if (fetchError != null) {
-      final mapped = mapFetchExceptionToInlineState(fetchError!);
-      return AppInlineErrorState(
-        title: mapped.title,
-        message: mapped.message,
-        icon: mapped.icon,
-        onRetry: _retry,
-      );
+      // موحّد + يمنع overflow داخل Tabs
+      return AppFetchStateView(error: fetchError!, onRetry: _retry);
     }
 
     final d = data ?? <String, dynamic>{};
@@ -251,13 +238,4 @@ class _HealthProfileTabState extends State<HealthProfileTab> {
       ),
     );
   }
-}
-
-/// Exception محلي لرسائل Fetch الداخلية (بدون SnackBar)
-class _InlineMessageException implements Exception {
-  final String message;
-  _InlineMessageException(this.message);
-
-  @override
-  String toString() => message;
 }

@@ -89,7 +89,7 @@ class ApiExceptionUtils {
     // 5) decoded JSON passed directly
     if (e is Map || e is List) {
       return _extractFromDecoded(
-        e as Object,
+        e, // ✅ بدون cast
         statusCode: statusCode,
         fallback: fallback,
         maxLen: maxLen,
@@ -110,8 +110,7 @@ class ApiExceptionUtils {
     return fallback;
   }
 
-  /// Backward-compatible helper (إذا كنت مستخدمها في أماكن)
-  /// ملاحظة: الأفضل تنتقل لـ extractMessage(...)
+  /// Backward-compatible helper
   static String extractMessageFromBody(String body, {int? statusCode}) {
     return _extractFromBody(
       body,
@@ -149,45 +148,59 @@ class ApiExceptionUtils {
     }
   }
 
+  // ✅ التعديل الأهم: Object? بدل Object
   static String _extractFromDecoded(
-    Object decoded, {
+    Object? decoded, {
     int? statusCode,
     required String fallback,
     required int maxLen,
   }) {
+    if (decoded == null) {
+      return _fallbackByStatus(statusCode) ?? fallback;
+    }
+
     if (decoded is Map) {
       // شائع في DRF: {"detail": "..."}
       final detail = decoded['detail'];
       if (detail != null && detail.toString().trim().isNotEmpty) {
-        return detail.toString();
+        return detail.toString().trim();
       }
 
       // مثال: {"field":["msg"]} أو {"non_field_errors":["msg"]}
       for (final entry in decoded.entries) {
         final v = entry.value;
-        if (v is List && v.isNotEmpty) return v.first.toString();
-        if (v != null && v.toString().trim().isNotEmpty) return v.toString();
+        if (v is List && v.isNotEmpty) {
+          final s = v.first.toString().trim();
+          if (s.isNotEmpty) return s;
+        }
+        if (v != null) {
+          final s = v.toString().trim();
+          if (s.isNotEmpty) return s;
+        }
       }
 
       return _fallbackByStatus(statusCode) ?? fallback;
     }
 
     if (decoded is List && decoded.isNotEmpty) {
-      return decoded.first.toString();
+      final s = decoded.first.toString().trim();
+      return s.isEmpty ? (_fallbackByStatus(statusCode) ?? fallback) : s;
     }
 
-    return _fallbackByStatus(statusCode) ?? fallback;
+    final s = decoded.toString().trim();
+    if (s.isEmpty) return _fallbackByStatus(statusCode) ?? fallback;
+    return s.length > maxLen ? '${s.substring(0, maxLen)}…' : s;
   }
 
   static String? _fallbackByStatus(int? code) {
     if (code == null) return null;
 
+    if (code == -1) return 'لا يوجد اتصال بالإنترنت.';
     if (code == 401) return 'انتهت الجلسة. الرجاء تسجيل الدخول.';
     if (code == 403) return 'ليس لديك صلاحية لتنفيذ هذا الإجراء.';
     if (code == 404) return 'المورد غير موجود.';
     if (code >= 500) return 'مشكلة في الخادم. حاول لاحقاً.';
 
-    // 4xx عامة
     if (code >= 400) return 'تعذّر تنفيذ الطلب. تحقق من المدخلات.';
     return 'HTTP $code';
   }

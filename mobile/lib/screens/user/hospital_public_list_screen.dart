@@ -158,23 +158,11 @@ class _HospitalPublicListScreenState extends State<HospitalPublicListScreen> {
                 }
 
                 if (snapshot.hasError) {
-                  final mapped = mapFetchExceptionToInlineState(
-                    snapshot.error!,
-                  );
-
                   return RefreshIndicator(
                     onRefresh: refresh,
-                    child: ListView(
-                      children: [
-                        const SizedBox(height: 80),
-                        AppInlineErrorState(
-                          title: mapped.title,
-                          message: mapped.message,
-                          icon: mapped.icon,
-                          onRetry: refresh,
-                        ),
-                        const SizedBox(height: 40),
-                      ],
+                    child: AppFetchStateView(
+                      error: snapshot.error!,
+                      onRetry: refresh,
                     ),
                   );
                 }
@@ -183,7 +171,16 @@ class _HospitalPublicListScreenState extends State<HospitalPublicListScreen> {
                 final visible = _applySearchAndSort(hospitals);
 
                 if (visible.isEmpty) {
-                  return const Center(child: Text('لا توجد نتائج مطابقة.'));
+                  return RefreshIndicator(
+                    onRefresh: refresh,
+                    child: ListView(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      children: const [
+                        SizedBox(height: 140),
+                        Center(child: Text('لا توجد نتائج مطابقة.')),
+                      ],
+                    ),
+                  );
                 }
 
                 return RefreshIndicator(
