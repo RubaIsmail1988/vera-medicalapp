@@ -15,6 +15,9 @@ import 'lab_public_list_screen.dart';
 import 'unified_record_screen.dart';
 import 'appointments/my_appointments_screen.dart';
 
+import '/analytics/doctor_home_analytics.dart';
+import '/analytics/doctor_analytics_sheet.dart';
+
 class UserShellScreen extends StatefulWidget {
   const UserShellScreen({super.key, required this.initialIndex});
 
@@ -39,6 +42,7 @@ class _UserShellScreenState extends State<UserShellScreen> {
   bool? isActive;
 
   bool loading = true;
+  DoctorAnalytics? _doctorAnalytics;
 
   final AccountDeletionService deletionService = AccountDeletionService();
 
@@ -135,7 +139,14 @@ class _UserShellScreenState extends State<UserShellScreen> {
 
   Widget buildHomeTab() {
     if (role == 'doctor') {
-      return DoctorHomeScreen(userId: userId, token: token);
+      return DoctorHomeScreen(
+        userId: userId,
+        token: token,
+        onAnalyticsLoaded: (a) {
+          if (!mounted) return;
+          setState(() => _doctorAnalytics = a);
+        },
+      );
     }
     return PatientHomeScreen(userId: userId, token: token);
   }
@@ -156,8 +167,34 @@ class _UserShellScreenState extends State<UserShellScreen> {
     }
   }
 
+  void _openDoctorAnalyticsSheet(DoctorAnalytics analytics) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (ctx) {
+        return Directionality(
+          textDirection: TextDirection.rtl,
+          child: SafeArea(
+            child: Padding(
+              padding: EdgeInsets.only(
+                left: 16,
+                right: 16,
+                top: 8,
+                bottom: 16 + MediaQuery.of(ctx).viewInsets.bottom,
+              ),
+              child: SingleChildScrollView(
+                child: DoctorAnalyticsSheet(analytics: analytics),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   Future<void> requestAccountDeletion(BuildContext context) async {
-    // ✅ Dialog returns the reason string (or null if cancelled)
+    //  Dialog returns the reason string (or null if cancelled)
     final String? reason = await showDialog<String?>(
       context: context,
       barrierDismissible: false,
@@ -167,7 +204,7 @@ class _UserShellScreenState extends State<UserShellScreen> {
     if (!context.mounted) return;
     if (reason == null) return; // cancelled
 
-    // ✅ Action network call must be caught to avoid Red Screen
+    //  Action network call must be caught to avoid Red Screen
     try {
       final success = await deletionService.createDeletionRequest(
         reason: reason.trim(),
@@ -406,6 +443,19 @@ class _UserShellScreenState extends State<UserShellScreen> {
         actions:
             currentIndex == 0
                 ? [
+                  // 1) Analytics (doctor only)
+                  if (role == 'doctor')
+                    IconButton(
+                      tooltip: 'تحليلات آخر 30 يوم',
+                      icon: const Icon(Icons.bar_chart_rounded),
+                      onPressed:
+                          (_doctorAnalytics == null)
+                              ? null
+                              : () =>
+                                  _openDoctorAnalyticsSheet(_doctorAnalytics!),
+                    ),
+
+                  // 2) Theme toggle
                   IconButton(
                     icon: Icon(
                       themeMode == ThemeMode.dark
@@ -414,6 +464,8 @@ class _UserShellScreenState extends State<UserShellScreen> {
                     ),
                     onPressed: () => MyApp.of(context).toggleTheme(),
                   ),
+
+                  // 3) Inbox bell
                   IconButton(
                     tooltip: "Inbox",
                     icon: const Icon(Icons.notifications),

@@ -107,6 +107,13 @@ class DoctorVisitTypesScreenState extends State<DoctorVisitTypesScreen> {
     return false;
   }
 
+  int defaultDurationByTypeId(int id) {
+    for (final t in types) {
+      if (t.id == id) return t.defaultDurationMinutes;
+    }
+    return 15;
+  }
+
   Widget sectionHeader(
     String title, {
     String? subtitle,
@@ -220,7 +227,9 @@ class DoctorVisitTypesScreenState extends State<DoctorVisitTypesScreen> {
     }
 
     int selectedTypeId = pickDefaultTypeId();
-    final durationController = TextEditingController(text: "15");
+    final durationController = TextEditingController(
+      text: defaultDurationByTypeId(selectedTypeId).toString(),
+    );
 
     try {
       final ok = await showDialog<bool>(
@@ -247,6 +256,8 @@ class DoctorVisitTypesScreenState extends State<DoctorVisitTypesScreen> {
                     onChanged: (v) {
                       if (v == null) return;
                       selectedTypeId = v;
+                      durationController.text =
+                          defaultDurationByTypeId(v).toString();
                     },
                     decoration: const InputDecoration(
                       labelText: "نوع الزيارة",

@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:flutter/widgets.dart';
 import 'package:timezone/data/latest.dart' as tzdata;
 import 'package:timezone/timezone.dart' as tz;
 
@@ -20,8 +21,6 @@ class LocalNotificationsService {
 
   static bool _initialized = false;
 
-  // NOTE: نخزّن الدور هنا لتفادي await داخل tap handler (lint صارم)
-  // يتم ضبطه عند بدء التطبيق + بعد login/logout.
   static String _currentRole = "patient";
 
   static void setCurrentRole(String role) {
@@ -38,7 +37,7 @@ class LocalNotificationsService {
 
     tzdata.initializeTimeZones();
 
-    const androidInit = AndroidInitializationSettings('@mipmap/ic_launcher');
+    const androidInit = AndroidInitializationSettings('ic_notification');
     const initSettings = InitializationSettings(android: androidInit);
 
     await _plugin.initialize(
@@ -86,6 +85,7 @@ class LocalNotificationsService {
       channelDescription: _channelDesc,
       importance: Importance.high,
       priority: Priority.high,
+      icon: 'ic_notification',
     );
     return const NotificationDetails(android: androidDetails);
   }
@@ -240,78 +240,109 @@ class LocalNotificationsService {
   }
 
   // ---------------------------------------------------------------------------
-  // Tap handling (NO async, NO context across gaps)
+  // Tap handling (NO async/await, but with retry until navigator context is ready)
   // ---------------------------------------------------------------------------
-  static void _handleNotificationTap(String? payload) {
-    final ctx = rootNavigatorKey.currentContext;
-    if (ctx == null) return;
 
-    final router = GoRouter.of(ctx);
+  static void _navigateWhenReady(void Function(GoRouter router) action) {
+    int tries = 0;
 
-    // role جاهزة بدون await
-    final safeRole = _currentRole;
-
-    // 1) appointment:<id>:hour|day
-    if (payload != null && payload.startsWith("appointment:")) {
-      router.go("/app/appointments");
-      return;
-    }
-
-    // 2) Polling payload JSON
-    final Map<String, dynamic> data = NotificationRouting.parsePayload(payload);
-
-    final String eventType =
-        (data["event_type"] ?? data["type"] ?? "notification").toString();
-    final String status = (data["status"] ?? "").toString();
-
-    if (status == "taken" || status == "skipped") {
-      router.go("/app/record/adherence");
-      return;
-    }
-
-    if (status == "no_show") {
-      router.go("/app/appointments");
-      return;
-    }
-
-    if (eventType == "MEDICAL_FILE_DELETED" ||
-        eventType == "file_uploaded" ||
-        eventType == "file_reviewed") {
-      router.go("/app/record/files");
-      return;
-    }
-
-    if (eventType == "PRESCRIPTION_CREATED" ||
-        eventType == "prescription_created") {
-      router.go("/app/record/prescripts");
-      return;
-    }
-
-    if (eventType == "appointment_created" ||
-        eventType == "appointment_confirmed" ||
-        eventType == "appointment_cancelled") {
-      router.go("/app/appointments");
-      return;
-    }
-
-    if (eventType == "CLINICAL_ORDER_CREATED" ||
-        eventType == "clinical_order_created") {
-      final rawOrderId =
-          data["order_id"] ?? data["object_id"] ?? data["entity_id"];
-      final orderId = int.tryParse(rawOrderId?.toString() ?? "");
-      if (orderId != null) {
-        router.go("/app/record/orders/$orderId?role=$safeRole");
+    void tick() {
+      final ctx = rootNavigatorKey.currentContext;
+      if (ctx != null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          final ctx2 = rootNavigatorKey.currentContext;
+          if (ctx2 == null) return;
+          action(GoRouter.of(ctx2));
+        });
         return;
       }
-      router.go("/app/record");
-      return;
+
+      tries++;
+      if (tries >= 15) {
+        if (kDebugMode) {
+          // ignore: avoid_print
+          print("[LocalNotifications] tap ignored (no navigator context)");
+        }
+        return;
+      }
+
+      Future<void>.delayed(
+        const Duration(milliseconds: 100),
+      ).then((_) => tick());
     }
 
-    final location = NotificationRouting.resolveLocation(
-      data,
-      currentRole: safeRole,
-    );
+    tick();
+  }
 
-    router.go(location.trim().isEmpty ? "/app/inbox" : location);
+  static void _handleNotificationTap(String? payload) {
+    _navigateWhenReady((router) {
+      // role جاهزة بدون await
+      final safeRole = _currentRole;
+
+      // 1) appointment:<id>:hour|day
+      if (payload != null && payload.startsWith("appointment:")) {
+        router.go("/app/appointments");
+        return;
+      }
+
+      // 2) Polling payload JSON
+      final Map<String, dynamic> data = NotificationRouting.parsePayload(
+        payload,
+      );
+
+      final String eventType =
+          (data["event_type"] ?? data["type"] ?? "notification").toString();
+      final String status = (data["status"] ?? "").toString();
+
+      if (status == "taken" || status == "skipped") {
+        router.go("/app/record/adherence");
+        return;
+      }
+
+      if (status == "no_show") {
+        router.go("/app/appointments");
+        return;
+      }
+
+      if (eventType == "MEDICAL_FILE_DELETED" ||
+          eventType == "file_uploaded" ||
+          eventType == "file_reviewed") {
+        router.go("/app/record/files");
+        return;
+      }
+
+      if (eventType == "PRESCRIPTION_CREATED" ||
+          eventType == "prescription_created") {
+        router.go("/app/record/prescripts");
+        return;
+      }
+
+      if (eventType == "appointment_created" ||
+          eventType == "appointment_confirmed" ||
+          eventType == "appointment_cancelled") {
+        router.go("/app/appointments");
+        return;
+      }
+
+      if (eventType == "CLINICAL_ORDER_CREATED" ||
+          eventType == "clinical_order_created") {
+        final rawOrderId =
+            data["order_id"] ?? data["object_id"] ?? data["entity_id"];
+        final orderId = int.tryParse(rawOrderId?.toString() ?? "");
+        if (orderId != null) {
+          router.go("/app/record/orders/$orderId?role=$safeRole");
+          return;
+        }
+        router.go("/app/record");
+        return;
+      }
+
+      final location = NotificationRouting.resolveLocation(
+        data,
+        currentRole: safeRole,
+      );
+
+      router.go(location.trim().isEmpty ? "/app/inbox" : location);
+    });
   }
 }

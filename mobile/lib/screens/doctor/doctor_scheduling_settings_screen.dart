@@ -56,7 +56,7 @@ class DoctorSchedulingSettingsScreen extends StatelessWidget {
 
               // سهم للأمام ضمن RTL
               Icon(
-                Icons.chevron_left_rounded,
+                Icons.chevron_right_rounded,
                 color: cs.onSurface.withValues(alpha: 0.55),
               ),
             ],

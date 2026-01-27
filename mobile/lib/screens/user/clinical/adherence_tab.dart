@@ -1014,12 +1014,12 @@ class _AdherenceTabState extends State<AdherenceTab> {
       segments: const [
         ButtonSegment<String>(
           value: "taken",
-          label: Text("تناولتها"),
+          label: Text("تم"),
           icon: Icon(Icons.check_circle_outline),
         ),
         ButtonSegment<String>(
           value: "skipped",
-          label: Text("نسيتها"),
+          label: Text("نسيت"),
           icon: Icon(Icons.cancel_outlined),
         ),
       ],
@@ -1132,7 +1132,7 @@ class _AdherenceTabState extends State<AdherenceTab> {
                               OutlinedButton(
                                 onPressed:
                                     canDetails ? _showDetailsBottomSheet : null,
-                                child: const Text(" التفاصيل"),
+                                child: const Text("تفاصيل"),
                               ),
                               OutlinedButton(
                                 onPressed:

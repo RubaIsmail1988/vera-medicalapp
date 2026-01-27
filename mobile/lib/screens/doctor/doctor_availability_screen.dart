@@ -114,7 +114,7 @@ class DoctorAvailabilityScreenState extends State<DoctorAvailabilityScreen> {
     } catch (e) {
       if (!mounted) return;
 
-      // ✅ Fetch error => Inline only (wifi_off) — no SnackBar
+      //  Fetch error => Inline only (wifi_off) — no SnackBar
       final mapped = mapFetchExceptionToInlineState(e);
 
       setState(() {

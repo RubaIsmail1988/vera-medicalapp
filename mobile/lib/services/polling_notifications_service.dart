@@ -32,7 +32,7 @@ class PollingNotificationsService {
   // لحماية حالة "تبديل مستخدم" على نفس الجهاز
   int _cachedUserId = 0;
 
-  // --------- lastSeen per user (حتى لا تختلط جلسة الطبيب والمريض على نفس الجهاز) ---------
+  // --------- lastSeen per user ---------
   Future<int> _currentUserId() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getInt("user_id") ?? 0;
@@ -100,10 +100,9 @@ class PollingNotificationsService {
 
     try {
       final dt = DateTime.parse(s).toLocal();
-      // مثال: 2026-01-16 15:17
       return "${dt.year}-${_two(dt.month)}-${_two(dt.day)} ${_two(dt.hour)}:${_two(dt.minute)}";
     } catch (_) {
-      return s; // fallback
+      return s;
     }
   }
 
@@ -116,8 +115,6 @@ class PollingNotificationsService {
   }) {
     final et = eventType.trim().toUpperCase();
 
-    // سياسة: حذف الملف من المريض لنفسه لا يحتاج إشعار نظام (SnackBar داخل الشاشة يكفي)
-    // (ويبقى موجوداً في InboxScreen كسجل، لكن لا نعمل show notification.)
     if (et == "MEDICAL_FILE_DELETED") {
       final reason = (payload["reason"] ?? "").toString();
       final isSelf = actorId != 0 && recipientId != 0 && actorId == recipientId;
@@ -156,23 +153,11 @@ class PollingNotificationsService {
     try {
       final userId = await _currentUserId();
 
-      // إذا لا يوجد مستخدم حالياً، لا نعمل polling
       if (userId <= 0) {
-        if (kDebugMode) {
-          // ignore: avoid_print
-          print("[Polling] skip tick (no user_id saved yet)");
-        }
         return;
       }
 
-      // إذا تغيّر المستخدم (مريض/طبيب) على نفس الجهاز
       if (userId != _cachedUserId) {
-        if (kDebugMode) {
-          // ignore: avoid_print
-          print(
-            "[Polling] user changed $_cachedUserId -> $userId (reset session)",
-          );
-        }
         _cachedUserId = userId;
         deliveredIds.clear();
       }
@@ -193,15 +178,10 @@ class PollingNotificationsService {
       }
 
       final decoded = jsonDecode(resp.body);
-      if (decoded is! List) {
-        if (kDebugMode) {
-          // ignore: avoid_print
-          print("[Polling] inbox invalid body (not list)");
-        }
-        return;
-      }
+      if (decoded is! List) return;
 
-      int maxId = lastSeenId;
+      // ✅ نتابع أعلى ID تمت معالجته فعلاً (نجح show أو تجاهلناه بسياسة ignore)
+      int maxProcessedId = lastSeenId;
 
       for (final item in decoded) {
         if (item is! Map) continue;
@@ -211,24 +191,19 @@ class PollingNotificationsService {
             rawId is int ? rawId : int.tryParse(rawId?.toString() ?? "");
         if (id == null) continue;
 
-        if (id > maxId) maxId = id;
-
         // منع التكرار داخل الجلسة
         if (deliveredIds.contains(id)) continue;
 
-        // payload
         final payloadRaw = item["payload"];
         final Map<String, dynamic> payload =
             (payloadRaw is Map)
                 ? Map<String, dynamic>.from(payloadRaw)
                 : <String, dynamic>{};
 
-        // event type (مع fallback على payload.type)
         final eventType =
             (item["event_type"] ?? payload["type"] ?? "notification")
                 .toString();
 
-        // actor / recipient
         final rawActor = item["actor"];
         final actorId =
             rawActor is int
@@ -241,7 +216,7 @@ class PollingNotificationsService {
                 ? rawRecipient
                 : int.tryParse(rawRecipient?.toString() ?? "") ?? 0;
 
-        // فلترة
+        // فلترة (نعتبرها "processed" لكن بدون show)
         if (_shouldIgnoreEvent(
           eventType: eventType,
           actorId: actorId,
@@ -249,13 +224,13 @@ class PollingNotificationsService {
           payload: payload,
         )) {
           deliveredIds.add(id);
+          if (id > maxProcessedId) maxProcessedId = id;
           continue;
         }
 
         final title = _preferPayloadTitle(eventType, payload);
         var body = _preferPayloadBody(eventType, payload);
 
-        // ---- enrich notification text ----
         final actorName =
             (item["actor_display_name"] ??
                     payload["actor_name"] ??
@@ -278,8 +253,6 @@ class PollingNotificationsService {
           body = "$body — ${parts.join(" • ")}";
         }
 
-        deliveredIds.add(id);
-
         final data = <String, dynamic>{
           "event_type": eventType,
           "outbox_id": id,
@@ -297,20 +270,26 @@ class PollingNotificationsService {
             body: body,
             data: data,
           );
+
+          // ✅ فقط بعد نجاح show نعتبره delivered ونرفع processed
+          deliveredIds.add(id);
+          if (id > maxProcessedId) maxProcessedId = id;
         } catch (e) {
           if (kDebugMode) {
             // ignore: avoid_print
             print("[Polling] show notification failed: $e");
           }
+          // ❌ لا نضيف deliveredIds ولا نرفع lastSeen
         }
       }
 
-      if (maxId > lastSeenId) {
-        await _setLastSeenId(userId, maxId);
+      // ✅ تحديث lastSeen بشكل “غير سريع”: فقط للأحداث اللي تأكدنا إنها اتعالجت
+      if (maxProcessedId > lastSeenId) {
+        await _setLastSeenId(userId, maxProcessedId);
 
         if (kDebugMode) {
           // ignore: avoid_print
-          print("[Polling] updated lastSeenId=$maxId userId=$userId");
+          print("[Polling] updated lastSeenId=$maxProcessedId userId=$userId");
         }
       }
     } catch (e) {
@@ -323,7 +302,7 @@ class PollingNotificationsService {
     }
   }
 
-  // --------- fallback mapping (عند غياب payload richness) ---------
+  // --------- fallback mapping ---------
   String _titleForEventFallback(
     String eventType,
     Map<String, dynamic> payload,

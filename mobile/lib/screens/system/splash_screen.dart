@@ -1,8 +1,14 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../widgets/app_logo.dart';
+
+// Services
+import '../../services/appointments_service.dart';
+import '../../services/local_notifications_service.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -15,6 +21,7 @@ class _SplashScreenState extends State<SplashScreen> {
   @override
   void initState() {
     super.initState();
+    // ignore: unawaited_futures
     start();
   }
 
@@ -38,6 +45,14 @@ class _SplashScreenState extends State<SplashScreen> {
         context.go('/login');
         return;
       }
+
+      // ✅ ثبّت role داخل LocalNotificationsService (بدون await)
+      LocalNotificationsService.setCurrentRole(role);
+
+      // ✅ Sync للتذكيرات عند فتح التطبيق (بدون انتظار)
+      // ملاحظة: نعتمد سياسة confirmed فقط داخل AppointmentsService
+      // ignore: unawaited_futures
+      AppointmentsService().syncMyRemindersNow();
 
       // 2) توجيه حسب الدور
       if (role == 'admin') {

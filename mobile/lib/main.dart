@@ -78,7 +78,7 @@ class MyApp extends StatefulWidget {
   State<MyApp> createState() => MyAppState();
 }
 
-class MyAppState extends State<MyApp> with WidgetsBindingObserver {
+class MyAppState extends State<MyApp> {
   ThemeMode themeMode = ThemeMode.dark;
 
   late final AuthService _authService;
@@ -94,7 +94,6 @@ class MyAppState extends State<MyApp> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
 
     _authService = AuthService();
     _clinicalService = ClinicalService(authService: _authService);
@@ -112,33 +111,17 @@ class MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
   @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    // ignore: unawaited_futures
     _polling.stop();
     super.dispose();
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    // - بالخلفية: أوقف polling
-    // - عند العودة: ابدأ إذا كان المستخدم مسجّل دخول
-    if (state == AppLifecycleState.paused ||
-        state == AppLifecycleState.inactive ||
-        state == AppLifecycleState.detached) {
-      // ignore: unawaited_futures
-      stopPolling();
-      return;
-    }
-
-    if (state == AppLifecycleState.resumed) {
-      // ignore: unawaited_futures
-      maybeStartPolling();
-    }
   }
 
   Future<void> _bootstrap() async {
     if (_bootstrapped) return;
     _bootstrapped = true;
+
+    final prefs = await SharedPreferences.getInstance();
+    final role = (prefs.getString("user_role") ?? "patient").trim();
+    LocalNotificationsService.setCurrentRole(role);
 
     await maybeStartPolling();
   }
@@ -151,6 +134,10 @@ class MyAppState extends State<MyApp> with WidgetsBindingObserver {
     final prefs = await SharedPreferences.getInstance();
     final access = (prefs.getString("access_token") ?? "").trim();
     final userId = prefs.getInt("user_id") ?? 0;
+
+    // ثبّت role كل مرة (مفيد إذا تبدّل المستخدم على نفس الجهاز)
+    final role = (prefs.getString("user_role") ?? "patient").trim();
+    LocalNotificationsService.setCurrentRole(role);
 
     if (access.isEmpty || userId <= 0) {
       await stopPolling();

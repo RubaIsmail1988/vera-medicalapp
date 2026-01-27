@@ -52,11 +52,12 @@ class _InboxScreenState extends State<InboxScreen> {
 
     final isSelf = actorId != 0 && actorId == recipientId;
 
-    // سياسة MVP: حذف المريض لملفه بنفسه لا يظهر في Inbox
+    // سياسة MVP الوحيدة:
+    // نخفي فقط "حذف المريض لملفه بنفسه"
     if (isSelf && reason == "deleted_by_patient") return true;
 
-    // وبشكل عام الحدث لا يملك وجهة واضحة -> نخفيه
-    return true;
+    // غير ذلك: لا نخفيه (حتى يظهر للمريض/الطبيب إذا حذف طبيب ملف مريض مثلاً)
+    return false;
   }
 
   DateTime? _parseCreatedAt(Map<String, dynamic> item) {

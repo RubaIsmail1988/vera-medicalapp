@@ -154,6 +154,18 @@ class AppointmentsService {
     }
   }
 
+  /// Public helper:
+  /// استدعِها من Splash/Login إذا بدك تضمن أن التذكيرات تنضبط فور فتح التطبيق
+  /// حتى لو المستخدم ما فتح شاشة المواعيد.
+  Future<void> syncMyRemindersNow() async {
+    try {
+      // نجلب القائمة الافتراضية (بدون فلاتر) حتى نضمن cleanup + scheduling صحيح
+      await fetchMyAppointments();
+    } catch (_) {
+      // تجاهل: إذا ما في نت، ما بدنا نكسر التطبيق
+    }
+  }
+
   // -------- helper to convert decoded to Map ------
   Map<String, dynamic> _asMap(dynamic decoded) {
     if (decoded is Map<String, dynamic>) return decoded;
@@ -351,9 +363,9 @@ class AppointmentsService {
       throw ApiException(resp.statusCode, resp.body);
     }
 
-    // NOTE: الجهاز الذي ينفّذ confirm قد لا يكون جهاز المريض،
-    // لكن هذا يساعدنا بالاختبار عندما نؤكد على نفس الجهاز.
-    // المريض سيحصل عليها أيضاً عبر fetchMyAppointments (sync).
+    try {
+      await fetchMyAppointments();
+    } catch (_) {}
   }
 
   // ---------------------------------------------------------------------------

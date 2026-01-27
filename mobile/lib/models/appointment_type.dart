@@ -3,13 +3,22 @@ class AppointmentType {
   final String typeName;
   final String? description;
 
-  AppointmentType({required this.id, required this.typeName, this.description});
+  // NEW
+  final int defaultDurationMinutes;
+
+  AppointmentType({
+    required this.id,
+    required this.typeName,
+    this.description,
+    required this.defaultDurationMinutes,
+  });
 
   factory AppointmentType.fromJson(Map<String, dynamic> json) {
     return AppointmentType(
-      id: json['id'] as int,
-      typeName: (json['type_name'] ?? '').toString(),
-      description: json['description']?.toString(),
+      id: json['id'],
+      typeName: json['type_name'],
+      description: json['description'],
+      defaultDurationMinutes: json['default_duration_minutes'] ?? 15,
     );
   }
 }

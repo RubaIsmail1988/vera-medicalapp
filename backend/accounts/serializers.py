@@ -302,7 +302,7 @@ class PasswordResetConfirmSerializer(serializers.Serializer):
 class AppointmentTypeSerializer(serializers.ModelSerializer):
     class Meta:
         model = AppointmentType
-        fields = ["id", "type_name", "description", "created_at", "updated_at"]
+        fields = ["id", "type_name", "description","default_duration_minutes", "created_at", "updated_at"]
         read_only_fields = ["id", "created_at", "updated_at"]
 
 
