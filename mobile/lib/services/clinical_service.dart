@@ -181,6 +181,28 @@ class ClinicalService {
     return sendMultipart(newToken);
   }
 
+  Future<http.Response> uploadFileToOrderBytesResponse({
+    required int orderId,
+    required Uint8List bytes,
+    required String filename,
+    Duration timeout = const Duration(seconds: 120),
+  }) async {
+    final streamed = await uploadFileToOrderBytes(
+      orderId: orderId,
+      bytes: bytes,
+      filename: filename,
+    ).timeout(timeout);
+
+    final response = await http.Response.fromStream(streamed);
+
+    // نجاح ممكن يكون 200/201/204 وبعضها body فاضي -> لازم نرجع Response طبيعي
+    if (response.statusCode == 204) {
+      return http.Response('', 204, headers: response.headers);
+    }
+
+    return response;
+  }
+
   Future<http.Response> approveFile(int fileId, {String? doctorNote}) {
     final Map<String, dynamic> body = {};
     if (doctorNote != null && doctorNote.trim().isNotEmpty) {
@@ -218,45 +240,52 @@ class ClinicalService {
     return authorizedClinicalRequest("/prescriptions/$prescriptionId/", "GET");
   }
 
-  /// Backend contract (per PrescriptionListCreateView):
-  /// - appointment is REQUIRED
-  /// - client must NOT send patient (derived from appointment)
-  /// - doctor derived from token (or appointment for admin)
-  /// - items are nested list under "items"
-  ///
-  /// items payload example:
-  /// [
-  ///   {"medicine_name": "...", "dosage": "...", "frequency": "...", "start_date": "YYYY-MM-DD", "end_date": "YYYY-MM-DD", "instructions": "..."},
-  /// ]
   Future<http.Response> createPrescription({
     required int appointmentId,
     String? notes,
     required List<Map<String, dynamic>> items,
   }) {
+    _validatePrescriptionItemsDates(items);
+
     final Map<String, dynamic> body = {
       "appointment": appointmentId,
       "notes": notes ?? "",
       "items": items,
-      // DO NOT send: patient, doctor
     };
 
     return authorizedClinicalRequest("/prescriptions/", "POST", body: body);
   }
 
-  // ملاحظة: هذا endpoint غير موجود في urls.py الحالية عندك
-  // لذا تركته مُعلّقًا كي لا تعتمد عليه بالخطأ.
-  //
-  // Future<http.Response> addPrescriptionItems({
-  //   required int prescriptionId,
-  //   required List<Map<String, dynamic>> items,
-  // }) {
-  //   final Map<String, dynamic> body = {"items": items};
-  //   return authorizedClinicalRequest(
-  //     "/prescriptions/$prescriptionId/items/",
-  //     "POST",
-  //     body: body,
-  //   );
-  // }
+  void _validatePrescriptionItemsDates(List<Map<String, dynamic>> items) {
+    for (final item in items) {
+      final startRaw = (item['start_date'] ?? '').toString().trim();
+      final endRaw = (item['end_date'] ?? '').toString().trim();
+
+      if (startRaw.isEmpty || endRaw.isEmpty) continue;
+
+      DateTime? start;
+      DateTime? end;
+
+      try {
+        start = DateTime.parse(startRaw);
+        end = DateTime.parse(endRaw);
+      } catch (_) {
+        // نخليها خطأ واضح للمستخدم بدل ما يطلع parsing غامض
+        throw const ApiException(
+          400,
+          '{"detail":"صيغة تاريخ البداية/النهاية غير صحيحة. استخدم YYYY-MM-DD."}',
+        );
+      }
+
+      // شرطك المطلوب: النهاية أكبر من البداية (strictly greater)
+      if (!end.isAfter(start)) {
+        throw const ApiException(
+          400,
+          '{"detail":"تاريخ النهاية يجب أن يكون بعد تاريخ البداية."}',
+        );
+      }
+    }
+  }
 
   // ---------------------------------------------------------------------------
   // Adherence

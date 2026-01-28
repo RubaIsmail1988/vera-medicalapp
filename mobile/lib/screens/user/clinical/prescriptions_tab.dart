@@ -438,28 +438,26 @@ class _PrescriptionsTabState extends State<PrescriptionsTab> {
 
       if (!mounted) return;
 
-      if (response.statusCode == 201) {
+      final ok =
+          response.statusCode == 200 ||
+          response.statusCode == 201 ||
+          response.statusCode == 204;
+
+      if (ok) {
         showAppSnackBar(
           context,
           "تم إنشاء الوصفة بنجاح.",
           type: AppSnackBarType.success,
         );
-        await _reload();
+        _reload();
         return;
       }
-
-      Object? body;
-      try {
-        body = jsonDecode(response.body);
-      } catch (_) {
-        body = response.body;
-      }
-
       showApiErrorSnackBar(
         context,
         statusCode: response.statusCode,
-        data: body,
+        data: response.body,
       );
+      return;
     } catch (e) {
       if (!mounted) return;
       showActionErrorSnackBar(
@@ -1060,6 +1058,28 @@ class PrescriptionItemDialogState extends State<PrescriptionItemDialog> {
                 isOtherFrequency
                     ? frequencyController.text.trim()
                     : frequencyPreset;
+            final startRaw = startDateController.text.trim();
+            final endRaw = endDateController.text.trim();
+
+            try {
+              final start = DateTime.parse(startRaw);
+              final end = DateTime.parse(endRaw);
+              if (!end.isAfter(start)) {
+                showAppSnackBar(
+                  context,
+                  "تاريخ النهاية يجب أن يكون بعد تاريخ البداية.",
+                  type: AppSnackBarType.warning,
+                );
+                return;
+              }
+            } catch (_) {
+              showAppSnackBar(
+                context,
+                "صيغة التاريخ غير صحيحة.",
+                type: AppSnackBarType.warning,
+              );
+              return;
+            }
 
             Navigator.pop<Map<String, dynamic>>(context, <String, dynamic>{
               "medicine_name": name,

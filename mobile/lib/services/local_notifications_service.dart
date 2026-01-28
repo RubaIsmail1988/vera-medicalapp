@@ -228,7 +228,7 @@ class LocalNotificationsService {
   }) async {
     await init();
 
-    final safeId = 1000000 + notificationId;
+    final safeId = 1000000 + (notificationId % 900000);
 
     await _plugin.show(
       safeId,

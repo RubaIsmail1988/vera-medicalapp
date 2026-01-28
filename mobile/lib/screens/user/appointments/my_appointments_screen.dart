@@ -101,6 +101,14 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
     return now.isBefore(cutoff);
   }
 
+  bool _isPastAppointment(Appointment a) {
+    final now = DateTime.now();
+    final endTime = a.dateTime.toLocal().add(
+      Duration(minutes: a.durationMinutes),
+    );
+    return endTime.isBefore(now);
+  }
+
   bool _canCancel(Appointment a) {
     final s = _normStatus(a.status);
 
@@ -249,7 +257,6 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
   // ---------------------------------------------------------------------------
   // Actions (SnackBar allowed)
   // ---------------------------------------------------------------------------
-
   Future<void> _cancel(Appointment a) async {
     final confirm = await showConfirmDialog(
       context,
@@ -598,6 +605,26 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
     return (t.scoreVersion).trim();
   }
 
+  bool _shouldShowDoctorTriageBlock(Appointment a) {
+    if (role != 'doctor') return false;
+    final t = a.triage;
+    if (t == null) return false;
+
+    final symptoms = _triageSymptomsText(a);
+    final vitals = _buildDoctorVitalsChips(a);
+    final scoreLine = _doctorScoreLine(a);
+    final confLine = _doctorConfidenceLine(a);
+    final missing = _doctorMissingFields(a);
+    final model = _doctorModelVersion(a);
+
+    return symptoms.isNotEmpty ||
+        vitals.isNotEmpty ||
+        scoreLine.isNotEmpty ||
+        confLine.isNotEmpty ||
+        missing.isNotEmpty ||
+        model.isNotEmpty;
+  }
+
   Widget _rtlSectionTitle(BuildContext context, String text) {
     return Align(
       alignment: Alignment.centerRight,
@@ -783,7 +810,7 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
                       ),
                     ),
 
-                    // NEW: Doctor urgent requests shortcut
+                    // Doctor urgent requests shortcut
                     if (role == 'doctor')
                       TextButton.icon(
                         onPressed: () {
@@ -915,6 +942,7 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
                   ...appointments.map((a) {
                     final typeName =
                         (a.appointmentTypeName ?? 'نوع زيارة').trim();
+                    final status = _normStatus(a.status);
                     final statusLabel = _statusLabel(a.status);
 
                     final counterpartLine =
@@ -924,77 +952,92 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
 
                     final notes = (a.notes ?? '').trim();
 
-                    final canCancel = _canCancel(a);
+                    final isPast = _isPastAppointment(a);
+
+                    // Base permissions
+                    final canCancelBase = _canCancel(a);
                     final canNoShow = _canMarkNoShow(a);
-                    final canConfirm = _canConfirm(a);
+                    final canConfirmBase = _canConfirm(a);
+
+                    // -----------------------------
+                    // ACTION RULES (as requested)
+                    // -----------------------------
+
+                    // Cancelled: no record
+                    // No_show: hide ⋮ too => no actions
+                    // Pending & past: hide confirm/cancel/record
+                    // Confirmed & past: remove cancel
+                    final canOpenRecord =
+                        (status != 'cancelled') &&
+                        (status != 'no_show') &&
+                        !(status == 'pending' && isPast);
+
+                    final canConfirm =
+                        canConfirmBase && !(status == 'pending' && isPast);
+
+                    final canCancel =
+                        canCancelBase &&
+                        !isPast && // if time passed -> no cancel for both
+                        status != 'no_show' &&
+                        status != 'cancelled' &&
+                        !(status == 'confirmed' && isPast);
+
+                    // If pending and past -> we already blocked cancel via isPast
+                    // If confirmed and past -> blocked via isPast as well
+
+                    final hasAnyAction =
+                        role == 'doctor'
+                            ? (canOpenRecord ||
+                                canConfirm ||
+                                canNoShow ||
+                                canCancel)
+                            : (canOpenRecord || canCancel);
 
                     final title =
                         a.durationMinutes > 0
                             ? '$typeName (${a.durationMinutes} دقيقة)'
                             : typeName;
 
-                    final bool showMenuForDoctor =
-                        role == 'doctor' &&
-                        (canConfirm || canNoShow || canCancel);
+                    // Keep layout stable even when ⋮ hidden
+                    final Widget trailing =
+                        hasAnyAction
+                            ? PopupMenuButton<String>(
+                              onSelected: (v) {
+                                if (v == 'record') _openRecordForAppointment(a);
+                                if (v == 'confirm') _confirm(a);
+                                if (v == 'no_show') _markNoShow(a);
+                                if (v == 'cancel') _cancel(a);
+                              },
+                              itemBuilder:
+                                  (_) => [
+                                    if (canOpenRecord)
+                                      const PopupMenuItem(
+                                        value: 'record',
+                                        child: Text('فتح الإضبارة'),
+                                      ),
+                                    if (role == 'doctor' && canConfirm)
+                                      const PopupMenuItem(
+                                        value: 'confirm',
+                                        child: Text('تأكيد'),
+                                      ),
+                                    if (role == 'doctor' && canNoShow)
+                                      const PopupMenuItem(
+                                        value: 'no_show',
+                                        child: Text('لم يحضر'),
+                                      ),
+                                    if (canCancel)
+                                      const PopupMenuItem(
+                                        value: 'cancel',
+                                        child: Text('إلغاء'),
+                                      ),
+                                  ],
+                            )
+                            : const SizedBox(width: 40);
 
-                    Widget trailing;
-
-                    if (role == 'doctor') {
-                      trailing = PopupMenuButton<String>(
-                        onSelected: (v) {
-                          if (v == 'record') _openRecordForAppointment(a);
-                          if (v == 'confirm') _confirm(a);
-                          if (v == 'no_show') _markNoShow(a);
-                          if (v == 'cancel') _cancel(a);
-                        },
-                        itemBuilder:
-                            (_) => [
-                              const PopupMenuItem(
-                                value: 'record',
-                                child: Text('فتح الإضبارة لهذه الزيارة'),
-                              ),
-                              if (showMenuForDoctor) ...[
-                                if (canConfirm)
-                                  const PopupMenuItem(
-                                    value: 'confirm',
-                                    child: Text('تأكيد'),
-                                  ),
-                                if (canNoShow)
-                                  const PopupMenuItem(
-                                    value: 'no_show',
-                                    child: Text('لم يحضر'),
-                                  ),
-                                if (canCancel)
-                                  const PopupMenuItem(
-                                    value: 'cancel',
-                                    child: Text('إلغاء'),
-                                  ),
-                              ],
-                            ],
-                      );
-                    } else {
-                      trailing = PopupMenuButton<String>(
-                        onSelected: (v) {
-                          if (v == 'record') _openRecordForAppointment(a);
-                          if (v == 'cancel') _cancel(a);
-                        },
-                        itemBuilder:
-                            (_) => [
-                              const PopupMenuItem(
-                                value: 'record',
-                                child: Text('فتح الإضبارة'),
-                              ),
-                              if (canCancel)
-                                const PopupMenuItem(
-                                  value: 'cancel',
-                                  child: Text('إلغاء الموعد'),
-                                ),
-                            ],
-                      );
-                    }
-
+                    // -----------------------------
+                    // Triage blocks
+                    // -----------------------------
                     final symptoms = _triageSymptomsText(a);
-
                     final patientVitals = _buildPatientVitalsChips(a);
                     final doctorVitals = _buildDoctorVitalsChips(a);
 
@@ -1002,6 +1045,8 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
                     final confLine = _doctorConfidenceLine(a);
                     final missing = _doctorMissingFields(a);
                     final model = _doctorModelVersion(a);
+
+                    final showDoctorTriage = _shouldShowDoctorTriageBlock(a);
 
                     return Padding(
                       padding: const EdgeInsets.only(bottom: 8),
@@ -1033,7 +1078,8 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
                                   ].join('\n'),
                                   textAlign: TextAlign.right,
                                 ),
-                                // ---------------- Priority badge ----------------
+
+                                // Priority badge
                                 if (a.priorityBadge?.isRebookingPriority ==
                                     true) ...[
                                   const SizedBox(height: 10),
@@ -1042,6 +1088,7 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
                                   _priorityBadgeChip(context, a),
                                 ],
 
+                                // Patient symptoms
                                 if (symptoms.isNotEmpty &&
                                     role == 'patient') ...[
                                   const SizedBox(height: 10),
@@ -1052,12 +1099,14 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
                                   ),
                                 ],
 
+                                // Doctor symptoms
                                 if (symptoms.isNotEmpty &&
                                     role == 'doctor') ...[
                                   const SizedBox(height: 10),
                                   _symptomsBlock(context, 'الأعراض:', symptoms),
                                 ],
 
+                                // Patient vitals
                                 if (role == 'patient' &&
                                     patientVitals.isNotEmpty) ...[
                                   const SizedBox(height: 10),
@@ -1066,7 +1115,8 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
                                   _chipsWrap(patientVitals),
                                 ],
 
-                                if (role == 'doctor') ...[
+                                // Doctor triage block (ONLY if exists)
+                                if (role == 'doctor' && showDoctorTriage) ...[
                                   if (doctorVitals.isNotEmpty) ...[
                                     const SizedBox(height: 10),
                                     _rtlSectionTitle(
@@ -1077,28 +1127,31 @@ class _MyAppointmentsScreenState extends State<MyAppointmentsScreen> {
                                     _chipsWrap(doctorVitals),
                                   ],
 
-                                  const SizedBox(height: 10),
-                                  _rtlSectionTitle(
-                                    context,
-                                    'تقييم الحالة: قبل الزيارة',
-                                  ),
-                                  const SizedBox(height: 6),
-                                  _chipsWrap([
-                                    if (scoreLine.isNotEmpty) scoreLine,
-                                    if (confLine.isNotEmpty) confLine,
-                                  ]),
-
-                                  if (missing.isNotEmpty)
-                                    _doctorMissingBlock(context, missing),
-
-                                  if (model.isNotEmpty) ...[
+                                  if (scoreLine.isNotEmpty ||
+                                      confLine.isNotEmpty ||
+                                      missing.isNotEmpty ||
+                                      model.isNotEmpty) ...[
                                     const SizedBox(height: 10),
-                                    _rtlSectionTitle(context, 'النموذج:'),
-                                    const SizedBox(height: 6),
-                                    Align(
-                                      alignment: Alignment.centerRight,
-                                      child: Chip(label: Text(model)),
+                                    _rtlSectionTitle(
+                                      context,
+                                      'تقييم الحالة: قبل الزيارة',
                                     ),
+                                    const SizedBox(height: 6),
+                                    _chipsWrap([
+                                      if (scoreLine.isNotEmpty) scoreLine,
+                                      if (confLine.isNotEmpty) confLine,
+                                    ]),
+                                    if (missing.isNotEmpty)
+                                      _doctorMissingBlock(context, missing),
+                                    if (model.isNotEmpty) ...[
+                                      const SizedBox(height: 10),
+                                      _rtlSectionTitle(context, 'النموذج:'),
+                                      const SizedBox(height: 6),
+                                      Align(
+                                        alignment: Alignment.centerRight,
+                                        child: Chip(label: Text(model)),
+                                      ),
+                                    ],
                                   ],
                                 ],
                               ],

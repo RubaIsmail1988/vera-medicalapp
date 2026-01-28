@@ -410,7 +410,7 @@ class _FilesTabState extends State<FilesTab> {
           "تم رفع الملف بنجاح.",
           type: AppSnackBarType.success,
         );
-        await _reloadFiles();
+        _reloadFiles();
         return;
       }
 
@@ -467,7 +467,7 @@ class _FilesTabState extends State<FilesTab> {
           "تم حذف الملف بنجاح.",
           type: AppSnackBarType.success,
         );
-        await _reloadFiles();
+        _reloadFiles();
         return;
       }
 

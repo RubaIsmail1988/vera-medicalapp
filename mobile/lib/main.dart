@@ -1,5 +1,6 @@
 // ----------------- mobile/lib/main.dart -----------------
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
@@ -134,6 +135,12 @@ class MyAppState extends State<MyApp> {
     final prefs = await SharedPreferences.getInstance();
     final access = (prefs.getString("access_token") ?? "").trim();
     final userId = prefs.getInt("user_id") ?? 0;
+    if (kDebugMode) {
+      // ignore: avoid_print
+      print(
+        "[Polling] maybeStartPolling accessEmpty=${access.isEmpty} userId=$userId running=$_pollingRunning prevUserId=$_pollingUserId",
+      );
+    }
 
     // ثبّت role كل مرة (مفيد إذا تبدّل المستخدم على نفس الجهاز)
     final role = (prefs.getString("user_role") ?? "patient").trim();
@@ -155,15 +162,29 @@ class MyAppState extends State<MyApp> {
     }
 
     await _polling.start();
+    if (kDebugMode) {
+      // ignore: avoid_print
+      print("[Polling] started for userId=$userId");
+    }
     _pollingRunning = true;
     _pollingUserId = userId;
   }
 
   Future<void> stopPolling() async {
+    if (kDebugMode) {
+      // ignore: avoid_print
+      print(
+        "[Polling] stopPolling called running=$_pollingRunning current=$_pollingUserId",
+      );
+    }
     if (!_pollingRunning) return;
     await _polling.stop();
     _pollingRunning = false;
     _pollingUserId = 0;
+    if (kDebugMode) {
+      // ignore: avoid_print
+      print("[Polling] stopPolling done");
+    }
   }
 
   // --------------------------------------------------------------------------

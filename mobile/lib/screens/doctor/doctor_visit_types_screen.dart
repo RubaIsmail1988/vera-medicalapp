@@ -1,14 +1,11 @@
+//mobile\lib\screens\doctor\doctor_visit_types_screen.dart
 import 'package:flutter/material.dart';
 
 import '../../models/appointment_type.dart';
 import '../../models/doctor_appointment_type.dart';
-// NOTE: DoctorSpecificVisitType is intentionally disabled for now (future feature).
-// import '../../models/doctor_specific_visit_type.dart';
 
 import '../../services/appointment_type_service.dart';
 import '../../services/doctor_appointment_type_service.dart';
-// NOTE: DoctorSpecificVisitType is intentionally disabled for now (future feature).
-// import '../../services/doctor_specific_visit_type_service.dart';
 
 import '../../utils/ui_helpers.dart';
 
@@ -25,10 +22,6 @@ class DoctorVisitTypesScreenState extends State<DoctorVisitTypesScreen> {
   final DoctorAppointmentTypeService doctorTypeService =
       DoctorAppointmentTypeService();
 
-  // NOTE: Disabled for now (future feature).
-  // final DoctorSpecificVisitTypeService doctorSpecificService =
-  //     DoctorSpecificVisitTypeService();
-
   bool loading = false;
 
   // Fetch errors => inline state (no SnackBar)
@@ -37,8 +30,10 @@ class DoctorVisitTypesScreenState extends State<DoctorVisitTypesScreen> {
   List<AppointmentType> types = [];
   List<DoctorAppointmentType> items = [];
 
-  // NOTE: Disabled for now (future feature).
-  // List<DoctorSpecificVisitType> specificItems = [];
+  bool isDurationValid(String raw) {
+    final v = int.tryParse(raw.trim());
+    return v != null && v > 0;
+  }
 
   @override
   void initState() {
@@ -59,22 +54,16 @@ class DoctorVisitTypesScreenState extends State<DoctorVisitTypesScreen> {
           await appointmentTypeService.fetchAppointmentTypesReadOnly();
       final resultMine = await doctorTypeService.fetchMine();
 
-      // NOTE: Disabled for now (future feature).
-      // final resultSpecific = await doctorSpecificService.fetchMine();
-      // resultSpecific.sort((a, b) => a.name.compareTo(b.name));
-
       if (!mounted) return;
 
       setState(() {
         types = resultTypes;
         items = resultMine;
-        // specificItems = resultSpecific;
         inlineError = null;
       });
     } catch (e) {
       if (!mounted) return;
 
-      // ✅ Fetch error => Inline only (wifi_off) — no SnackBar
       final mapped = mapFetchExceptionToInlineState(e);
 
       setState(() {
@@ -87,9 +76,7 @@ class DoctorVisitTypesScreenState extends State<DoctorVisitTypesScreen> {
         );
       });
     } finally {
-      if (mounted) {
-        setState(() => loading = false);
-      }
+      if (mounted) setState(() => loading = false);
     }
   }
 
@@ -201,18 +188,15 @@ class DoctorVisitTypesScreenState extends State<DoctorVisitTypesScreen> {
   }
 
   // ---------------------------------------------------------------------------
-  // Dialogs: Central types (existing)
+  // Dialogs: Central types
   // ---------------------------------------------------------------------------
 
   int pickDefaultTypeId() {
     if (types.isEmpty) return 0;
 
-    // الأفضل: اختر أول نوع غير مُضاف
     for (final t in types) {
       if (!isTypeAlreadyAdded(t.id)) return t.id;
     }
-
-    // إن كانت كلها مضافة، رجّع أول واحد
     return types.first.id;
   }
 
@@ -226,100 +210,143 @@ class DoctorVisitTypesScreenState extends State<DoctorVisitTypesScreen> {
       return;
     }
 
-    int selectedTypeId = pickDefaultTypeId();
+    final int initialTypeId = pickDefaultTypeId();
     final durationController = TextEditingController(
-      text: defaultDurationByTypeId(selectedTypeId).toString(),
+      text: defaultDurationByTypeId(initialTypeId).toString(),
     );
 
     try {
-      final ok = await showDialog<bool>(
+      final result = await showDialog<({int typeId, int duration})>(
         context: context,
+        barrierDismissible: false,
         builder: (dialogContext) {
+          int localTypeId = initialTypeId;
+
+          int? parseDuration() => int.tryParse(durationController.text.trim());
+
           return Directionality(
             textDirection: TextDirection.rtl,
-            child: AlertDialog(
-              title: const Text("إضافة نوع زيارة (مركزي)"),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  DropdownButtonFormField<int>(
-                    value: selectedTypeId == 0 ? null : selectedTypeId,
-                    items:
-                        types
-                            .map(
-                              (t) => DropdownMenuItem<int>(
-                                value: t.id,
-                                child: Text(t.typeName),
+            child: StatefulBuilder(
+              builder: (innerContext, setInnerState) {
+                final dur = parseDuration();
+                final typeInvalid = localTypeId <= 0;
+                final durationInvalid = dur == null || dur <= 0;
+                final canSave = !typeInvalid && !durationInvalid;
+
+                final cs = Theme.of(innerContext).colorScheme;
+
+                return AlertDialog(
+                  title: const Text("إضافة نوع زيارة (مركزي)"),
+                  content: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      DropdownButtonFormField<int>(
+                        value: localTypeId == 0 ? null : localTypeId,
+                        isExpanded: true,
+                        items:
+                            types
+                                .map(
+                                  (t) => DropdownMenuItem<int>(
+                                    value: t.id,
+                                    child: Text(t.typeName),
+                                  ),
+                                )
+                                .toList(),
+                        onChanged: (v) {
+                          if (v == null) return;
+                          setInnerState(() {
+                            localTypeId = v;
+                            durationController.text =
+                                defaultDurationByTypeId(v).toString();
+                          });
+                        },
+                        decoration: const InputDecoration(
+                          labelText: "نوع الزيارة",
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                      if (typeInvalid)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 6),
+                          child: Align(
+                            alignment: Alignment.centerRight,
+                            child: Text(
+                              "يرجى اختيار نوع الزيارة.",
+                              style: TextStyle(
+                                color: cs.error,
+                                fontWeight: FontWeight.w600,
                               ),
-                            )
-                            .toList(),
-                    onChanged: (v) {
-                      if (v == null) return;
-                      selectedTypeId = v;
-                      durationController.text =
-                          defaultDurationByTypeId(v).toString();
-                    },
-                    decoration: const InputDecoration(
-                      labelText: "نوع الزيارة",
-                      border: OutlineInputBorder(),
-                    ),
+                              textAlign: TextAlign.right,
+                            ),
+                          ),
+                        ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: durationController,
+                        keyboardType: TextInputType.number,
+                        onChanged: (_) => setInnerState(() {}),
+                        decoration: const InputDecoration(
+                          labelText: "المدة بالدقائق",
+                          hintText: "مثال: 15",
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                      if (durationInvalid)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 6),
+                          child: Align(
+                            alignment: Alignment.centerRight,
+                            child: Text(
+                              "أدخل مدة صحيحة أكبر من 0.",
+                              style: TextStyle(
+                                color: cs.error,
+                                fontWeight: FontWeight.w600,
+                              ),
+                              textAlign: TextAlign.right,
+                            ),
+                          ),
+                        ),
+                    ],
                   ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: durationController,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(
-                      labelText: "المدة بالدقائق",
-                      hintText: "مثال: 15",
-                      border: OutlineInputBorder(),
+                  actions: [
+                    TextButton(
+                      onPressed: () {
+                        if (!isDurationValid(durationController.text)) {
+                          durationController.text =
+                              defaultDurationByTypeId(localTypeId).toString();
+                        }
+                        Navigator.pop(dialogContext, null);
+                      },
+                      child: const Text("إلغاء"),
                     ),
-                  ),
-                ],
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(dialogContext, false),
-                  child: const Text("إلغاء"),
-                ),
-                ElevatedButton(
-                  onPressed: () => Navigator.pop(dialogContext, true),
-                  child: const Text("حفظ"),
-                ),
-              ],
+
+                    ElevatedButton(
+                      onPressed:
+                          canSave
+                              ? () => Navigator.pop(dialogContext, (
+                                typeId: localTypeId,
+                                duration: dur,
+                              ))
+                              : null,
+                      child: const Text("حفظ"),
+                    ),
+                  ],
+                );
+              },
             ),
           );
         },
       );
 
       if (!mounted) return;
-      if (ok != true) return;
-
-      if (selectedTypeId == 0) {
-        showAppSnackBar(
-          context,
-          "يرجى اختيار نوع الزيارة.",
-          type: AppSnackBarType.warning,
-        );
-        return;
-      }
-
-      final durationRaw = durationController.text.trim();
-      final duration = int.tryParse(durationRaw) ?? 0;
-      if (duration <= 0) {
-        showAppSnackBar(
-          context,
-          "أدخل مدة صحيحة أكبر من 0.",
-          type: AppSnackBarType.warning,
-        );
-        return;
-      }
+      if (result == null) return;
 
       setState(() => loading = true);
 
       try {
         await doctorTypeService.create(
-          appointmentTypeId: selectedTypeId,
-          durationMinutes: duration,
+          appointmentTypeId: result.typeId,
+          durationMinutes: result.duration,
         );
 
         if (!mounted) return;
@@ -330,7 +357,7 @@ class DoctorVisitTypesScreenState extends State<DoctorVisitTypesScreen> {
           type: AppSnackBarType.success,
         );
 
-        await loadData();
+        loadData(); // بدون await
       } catch (e) {
         if (!mounted) return;
         showActionErrorSnackBar(
@@ -350,59 +377,91 @@ class DoctorVisitTypesScreenState extends State<DoctorVisitTypesScreen> {
     final durationController = TextEditingController(
       text: item.durationMinutes.toString(),
     );
+    final oldText = item.durationMinutes.toString();
 
     try {
-      final ok = await showDialog<bool>(
+      final result = await showDialog<int?>(
         context: context,
+        barrierDismissible: false,
         builder: (dialogContext) {
+          int? parseDuration() => int.tryParse(durationController.text.trim());
+
           return Directionality(
             textDirection: TextDirection.rtl,
-            child: AlertDialog(
-              title: Text("تعديل: ${typeNameById(item.appointmentType)}"),
-              content: TextField(
-                controller: durationController,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
-                  labelText: "المدة بالدقائق",
-                  hintText: "مثال: 15",
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(dialogContext, false),
-                  child: const Text("إلغاء"),
-                ),
-                ElevatedButton(
-                  onPressed: () => Navigator.pop(dialogContext, true),
-                  child: const Text("حفظ"),
-                ),
-              ],
+            child: StatefulBuilder(
+              builder: (innerContext, setInnerState) {
+                final dur = parseDuration();
+                final durationInvalid = dur == null || dur <= 0;
+                final canSave = !durationInvalid;
+
+                final cs = Theme.of(innerContext).colorScheme;
+
+                return AlertDialog(
+                  title: Text("تعديل: ${typeNameById(item.appointmentType)}"),
+                  content: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      TextField(
+                        controller: durationController,
+                        keyboardType: TextInputType.number,
+                        onChanged: (_) => setInnerState(() {}),
+                        decoration: const InputDecoration(
+                          labelText: "المدة بالدقائق",
+                          hintText: "مثال: 15",
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                      if (durationInvalid)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 6),
+                          child: Align(
+                            alignment: Alignment.centerRight,
+                            child: Text(
+                              "أدخل مدة صحيحة أكبر من 0.",
+                              style: TextStyle(
+                                color: cs.error,
+                                fontWeight: FontWeight.w600,
+                              ),
+                              textAlign: TextAlign.right,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () {
+                        if (!isDurationValid(durationController.text)) {
+                          durationController.text = oldText; // رجّع القديمة
+                        }
+                        Navigator.pop(dialogContext, null);
+                      },
+                      child: const Text("إلغاء"),
+                    ),
+                    ElevatedButton(
+                      onPressed:
+                          canSave
+                              ? () => Navigator.pop(dialogContext, dur)
+                              : null,
+                      child: const Text("حفظ"),
+                    ),
+                  ],
+                );
+              },
             ),
           );
         },
       );
 
       if (!mounted) return;
-      if (ok != true) return;
-
-      final durationRaw = durationController.text.trim();
-      final duration = int.tryParse(durationRaw) ?? 0;
-      if (duration <= 0) {
-        showAppSnackBar(
-          context,
-          "أدخل مدة صحيحة أكبر من 0.",
-          type: AppSnackBarType.warning,
-        );
-        return;
-      }
+      if (result == null) return; // cancel/back safe
 
       setState(() => loading = true);
 
       try {
         await doctorTypeService.updateDuration(
           id: item.id,
-          durationMinutes: duration,
+          durationMinutes: result,
         );
 
         if (!mounted) return;
@@ -413,7 +472,7 @@ class DoctorVisitTypesScreenState extends State<DoctorVisitTypesScreen> {
           type: AppSnackBarType.success,
         );
 
-        await loadData();
+        loadData(); // بدون await
       } catch (e) {
         if (!mounted) return;
         showActionErrorSnackBar(
@@ -455,7 +514,7 @@ class DoctorVisitTypesScreenState extends State<DoctorVisitTypesScreen> {
         type: AppSnackBarType.success,
       );
 
-      await loadData();
+      loadData(); // بدون await
     } catch (e) {
       if (!mounted) return;
       showActionErrorSnackBar(
@@ -463,7 +522,6 @@ class DoctorVisitTypesScreenState extends State<DoctorVisitTypesScreen> {
         exception: e,
         fallback: "فشل حذف الإعداد. حاول مرة أخرى.",
       );
-      if (mounted) setState(() => loading = false);
     } finally {
       if (mounted) setState(() => loading = false);
     }
@@ -496,16 +554,6 @@ class DoctorVisitTypesScreenState extends State<DoctorVisitTypesScreen> {
           physics: const AlwaysScrollableScrollPhysics(),
           padding: const EdgeInsets.only(bottom: 90),
           children: [
-            //      sectionHeader(
-            //        "الأنواع المركزية (Admin)",
-            //        subtitle: "تحدد النوع من قائمة الأدمن ثم تضبط مدته لديك.",
-            //       icon: Icons.list_alt_outlined,
-            //       trailing: TextButton.icon(
-            //         onPressed: canAddCentral ? openAddCentralDialog : null,
-            //         icon: const Icon(Icons.add, size: 18),
-            //         label: const Text("إضافة"),
-            //       ),
-            //     ),
             if (items.isEmpty)
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -588,7 +636,6 @@ class DoctorVisitTypesScreenState extends State<DoctorVisitTypesScreen> {
 
             sectionHeader(
               "أنواع خاصة بالطبيب",
-              //  subtitle: "ميزة مستقبلية سيتم تفعيلها لاحقًا.",
               icon: Icons.person_pin_outlined,
             ),
             disabledFeatureCard(

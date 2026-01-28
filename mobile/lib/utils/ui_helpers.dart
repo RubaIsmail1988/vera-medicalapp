@@ -301,10 +301,7 @@ void showActionErrorSnackBar(
 }) {
   final message = () {
     if (exception is ApiException) {
-      return mapHttpErrorToArabicMessage(
-        statusCode: exception.statusCode,
-        data: exception.body,
-      );
+      return ApiExceptionUtils.extractMessage(exception, fallback: fallback);
     }
 
     if (statusCode != null) {

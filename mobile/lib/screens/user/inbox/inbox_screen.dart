@@ -83,7 +83,7 @@ class _InboxScreenState extends State<InboxScreen> {
     });
 
     try {
-      final resp = await clinicalService.fetchInbox(limit: 50);
+      final resp = await clinicalService.fetchInbox(limit: 100);
 
       if (!mounted) return;
 

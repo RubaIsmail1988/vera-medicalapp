@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../services/auth_service.dart';
 import '../../utils/ui_helpers.dart';
 import '../../widgets/app_logo.dart';
+import '../../main.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -122,6 +123,7 @@ class _LoginScreenState extends State<LoginScreen> {
       if (!mounted) return;
 
       setState(() => loading = false);
+      MyApp.of(context).maybeStartPolling();
 
       // Admin -> Admin shell
       if (role == 'admin') {

@@ -55,10 +55,6 @@ class PollingNotificationsService {
     if (running) return;
     running = true;
 
-    try {
-      await LocalNotificationsService.init();
-    } catch (_) {}
-
     _cachedUserId = await _currentUserId();
     deliveredIds.clear();
 
@@ -180,7 +176,7 @@ class PollingNotificationsService {
       final decoded = jsonDecode(resp.body);
       if (decoded is! List) return;
 
-      // ✅ نتابع أعلى ID تمت معالجته فعلاً (نجح show أو تجاهلناه بسياسة ignore)
+      //  نتابع أعلى ID تمت معالجته فعلاً (نجح show أو تجاهلناه بسياسة ignore)
       int maxProcessedId = lastSeenId;
 
       for (final item in decoded) {
@@ -271,7 +267,7 @@ class PollingNotificationsService {
             data: data,
           );
 
-          // ✅ فقط بعد نجاح show نعتبره delivered ونرفع processed
+          //  فقط بعد نجاح show نعتبره delivered ونرفع processed
           deliveredIds.add(id);
           if (id > maxProcessedId) maxProcessedId = id;
         } catch (e) {
@@ -279,11 +275,11 @@ class PollingNotificationsService {
             // ignore: avoid_print
             print("[Polling] show notification failed: $e");
           }
-          // ❌ لا نضيف deliveredIds ولا نرفع lastSeen
+          //  لا نضيف deliveredIds ولا نرفع lastSeen
         }
       }
 
-      // ✅ تحديث lastSeen بشكل “غير سريع”: فقط للأحداث اللي تأكدنا إنها اتعالجت
+      //  تحديث lastSeen بشكل “غير سريع”: فقط للأحداث اللي تأكدنا إنها اتعالجت
       if (maxProcessedId > lastSeenId) {
         await _setLastSeenId(userId, maxProcessedId);
 

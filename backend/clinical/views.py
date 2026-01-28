@@ -781,30 +781,12 @@ class OutboxEventListView(generics.ListAPIView):
 
 
 class MyInboxEventsView(generics.ListAPIView):
-    """
-    GET /api/clinical/inbox/
-    Inbox = events where current user is the recipient.
-    NOTE: OutboxEvent.patient field is used as recipient in DB.
-
-    Optional filters:
-      - ?status=pending|sent|failed
-      - ?since_id=123   (only events with id > since_id)
-      - ?event_type=appointment_created (exact match)
-      - ?limit=50       (caps results)
-    """
     serializer_class = OutboxEventSerializer
     permission_classes = [IsAuthenticated]
-
     def get_queryset(self):
         user = self.request.user
 
-        # IMPORTANT for polling with since_id:
-        # sort by id ASC to guarantee stable incremental delivery
-        qs = (
-            OutboxEvent.objects
-            .filter(patient_id=user.id)   # recipient
-            .order_by("id")
-        )
+        qs = OutboxEvent.objects.filter(patient_id=user.id).select_related("actor", "patient")
 
         status_param = (self.request.query_params.get("status") or "").strip().lower()
         if status_param in ("pending", "sent", "failed"):
@@ -814,19 +796,24 @@ class MyInboxEventsView(generics.ListAPIView):
         if event_type:
             qs = qs.filter(event_type=event_type)
 
+        since_id = None
         since_id_raw = (self.request.query_params.get("since_id") or "").strip()
         if since_id_raw:
             try:
                 since_id = int(since_id_raw)
                 qs = qs.filter(id__gt=since_id)
             except ValueError:
-                pass
+                since_id = None
 
         limit_raw = (self.request.query_params.get("limit") or "").strip()
         try:
-            limit = int(limit_raw) if limit_raw else 100
+            limit = int(limit_raw) if limit_raw else 50
         except ValueError:
-            limit = 100
-
+            limit = 50
         limit = max(1, min(limit, 200))
+
+        # ordering
+        qs = qs.order_by("id" if since_id is not None else "-id")
+
         return qs[:limit]
+

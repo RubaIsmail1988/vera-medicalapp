@@ -13,6 +13,7 @@ import '/utils/api_exception.dart';
 
 class AppointmentsService {
   final AuthService authService = AuthService();
+  static Future<void>? _remindersSyncInFlight;
 
   // ---------------- URL helpers ----------------
 
@@ -158,12 +159,15 @@ class AppointmentsService {
   /// استدعِها من Splash/Login إذا بدك تضمن أن التذكيرات تنضبط فور فتح التطبيق
   /// حتى لو المستخدم ما فتح شاشة المواعيد.
   Future<void> syncMyRemindersNow() async {
-    try {
-      // نجلب القائمة الافتراضية (بدون فلاتر) حتى نضمن cleanup + scheduling صحيح
-      await fetchMyAppointments();
-    } catch (_) {
-      // تجاهل: إذا ما في نت، ما بدنا نكسر التطبيق
+    // لا تعمل أكثر من sync بنفس الوقت
+    if (_remindersSyncInFlight != null) {
+      await _remindersSyncInFlight!;
+      return;
     }
+
+    try {
+      await fetchMyAppointments();
+    } catch (_) {}
   }
 
   // -------- helper to convert decoded to Map ------
@@ -321,9 +325,17 @@ class AppointmentsService {
             .toList();
 
     // Sync reminders (confirmed only)
-    try {
-      await _syncLocalRemindersForAppointments(items);
-    } catch (_) {}
+    _remindersSyncInFlight ??= () async {
+      try {
+        await _syncLocalRemindersForAppointments(items);
+      } catch (_) {
+        // ignore
+      } finally {
+        _remindersSyncInFlight = null;
+      }
+    }();
+
+    await _remindersSyncInFlight!;
 
     return items;
   }
