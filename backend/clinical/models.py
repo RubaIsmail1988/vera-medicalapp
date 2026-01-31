@@ -1,6 +1,7 @@
 from django.conf import settings
 from django.db import models
 from django.utils import timezone
+from .models_advice import AdviceRun, AdviceFeedback
 
 class ClinicalOrder(models.Model):
     class OrderCategory(models.TextChoices):

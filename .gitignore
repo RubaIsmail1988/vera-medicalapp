@@ -26,6 +26,7 @@ mobile/.pub/
 mobile/build/
 mobile/.flutter-plugins
 mobile/.flutter-plugins-dependencies
+mobile/pubspec.lock
 
 # Flutter generated (platform-specific)
 mobile/**/flutter/generated_*

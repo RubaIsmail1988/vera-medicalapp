@@ -88,9 +88,51 @@ class PatientDetailsSerializer(serializers.ModelSerializer):
             "bmi",
             "gender",
             "blood_type",
+
+            # NEW
+            "smoking_status",
+            "cigarettes_per_day",
+            "alcohol_use",
+            "activity_level",
+            "has_diabetes",
+            "has_hypertension",
+            "has_heart_disease",
+            "has_asthma_copd",
+            "has_kidney_disease",
+            "is_pregnant",
+            "last_bp_systolic",
+            "last_bp_diastolic",
+            "bp_measured_at",
+            "last_hba1c",
+            "hba1c_measured_at",
+            "allergies",
+
+            # existing
             "chronic_disease",
             "health_notes",
         ]
+
+    def validate(self, attrs):
+        # attrs contains potentially partial updates; merge with instance for checks
+        instance = getattr(self, "instance", None)
+
+        gender = attrs.get("gender", getattr(instance, "gender", None))
+        is_pregnant = attrs.get("is_pregnant", getattr(instance, "is_pregnant", False))
+
+        smoking_status = attrs.get("smoking_status", getattr(instance, "smoking_status", None))
+        cigarettes_per_day = attrs.get("cigarettes_per_day", getattr(instance, "cigarettes_per_day", None))
+
+        if gender != "female" and is_pregnant:
+            raise serializers.ValidationError({"is_pregnant": "Pregnancy can only be true when gender is female."})
+
+        if smoking_status != "current" and cigarettes_per_day is not None:
+            raise serializers.ValidationError({"cigarettes_per_day": "Only allowed when smoking_status is current."})
+        # NEW: convert empty strings to None (NULL in DB)
+        for f in ["allergies", "chronic_disease", "health_notes"]:
+            if f in attrs and isinstance(attrs[f], str):
+                v = attrs[f].strip()
+                attrs[f] = v if v else None
+        return attrs
 
 
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):

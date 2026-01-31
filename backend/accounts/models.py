@@ -116,17 +116,29 @@ class DoctorDetails(models.Model):
         return f"{self.user.username} - {self.specialty}"
 
 # نموذج تفاصيل المريض
+
 class PatientDetails(models.Model):
-    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, primary_key=True)
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        primary_key=True
+    )
+
     date_of_birth = models.DateField()
-    height = models.FloatField(blank=True, null=True)
+    height = models.FloatField(blank=True, null=True)   # لاحقًا ممكن نخليها cm int
     weight = models.FloatField(blank=True, null=True)
     bmi = models.FloatField(blank=True, null=True)
-    GENDER_CHOICES = [
-        ('male', 'Male'),
-        ('female', 'Female'),
-    ]
-    gender = models.CharField(max_length=10, choices=GENDER_CHOICES, blank=True, null=True)
+
+    class Gender(models.TextChoices):
+        MALE = "male", "Male"
+        FEMALE = "female", "Female"
+
+    gender = models.CharField(
+        max_length=10,
+        choices=Gender.choices,
+        blank=True,
+        null=True
+    )
 
     BLOOD_TYPES = [
         ('A+', 'A+'), ('A-', 'A-'),
@@ -136,17 +148,88 @@ class PatientDetails(models.Model):
     ]
     blood_type = models.CharField(max_length=3, choices=BLOOD_TYPES, blank=True, null=True)
 
-    chronic_disease = models.TextField(blank=True, null=True)    
+    # --- NEW: Lifestyle
+    class SmokingStatus(models.TextChoices):
+        NEVER = "never", "Never"
+        FORMER = "former", "Former"
+        CURRENT = "current", "Current"
+
+    smoking_status = models.CharField(
+        max_length=10,
+        choices=SmokingStatus.choices,
+        default=SmokingStatus.NEVER
+    )
+    cigarettes_per_day = models.PositiveSmallIntegerField(blank=True, null=True)
+
+    class AlcoholUse(models.TextChoices):
+        NONE = "none", "None"
+        OCCASIONAL = "occasional", "Occasional"
+        REGULAR = "regular", "Regular"
+
+    alcohol_use = models.CharField(
+        max_length=12,
+        choices=AlcoholUse.choices,
+        default=AlcoholUse.NONE
+    )
+
+    class ActivityLevel(models.TextChoices):
+        LOW = "low", "Low"
+        MODERATE = "moderate", "Moderate"
+        HIGH = "high", "High"
+
+    activity_level = models.CharField(
+        max_length=10,
+        choices=ActivityLevel.choices,
+        default=ActivityLevel.MODERATE
+    )
+
+    # --- NEW: Chronic conditions (structured)
+    has_diabetes = models.BooleanField(default=False)
+    has_hypertension = models.BooleanField(default=False)
+    has_heart_disease = models.BooleanField(default=False)
+    has_asthma_copd = models.BooleanField(default=False)
+    has_kidney_disease = models.BooleanField(default=False)
+
+    # --- NEW: Pregnancy (depends on gender)
+    is_pregnant = models.BooleanField(default=False)
+
+    # --- NEW: Optional measurements
+    last_bp_systolic = models.PositiveSmallIntegerField(blank=True, null=True)
+    last_bp_diastolic = models.PositiveSmallIntegerField(blank=True, null=True)
+    bp_measured_at = models.DateTimeField(blank=True, null=True)
+
+    last_hba1c = models.FloatField(blank=True, null=True)
+    hba1c_measured_at = models.DateField(blank=True, null=True)
+
+    # Existing free-text fields (keep for now)
+    chronic_disease = models.TextField(blank=True, null=True)
     health_notes = models.TextField(blank=True, null=True)
+
+    allergies = models.TextField(blank=True, null=True)
+
     created_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(auto_now=True)
     is_archived = models.BooleanField(default=False)
-    
-
-    
-
+  
     def __str__(self):
         return f"{self.user.username} - Patient"
+   
+    def save(self, *args, **kwargs):
+        # enforce pregnancy consistency
+        if self.gender != self.Gender.FEMALE:
+            self.is_pregnant = False
+
+        # enforce cigarettes_per_day consistency
+        if self.smoking_status != self.SmokingStatus.CURRENT:
+            self.cigarettes_per_day = None
+        # auto-calculate BMI if possible
+        if self.height and self.weight:
+            height_m = self.height / 100.0  # assuming height stored in cm
+            if height_m > 0:
+                self.bmi = round(self.weight / (height_m * height_m), 2)
+        else:
+            self.bmi = None
+        super().save(*args, **kwargs)
 
 
 #------------------------------

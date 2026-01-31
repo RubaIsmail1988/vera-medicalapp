@@ -186,3 +186,7 @@ DEFAULT_FROM_EMAIL = os.environ.get(
 
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
+
+ADVICE_ENGINE = "rules"        # or "ml"
+ADVICE_MODEL_VERSION = "v0"    # used when ADVICE_ENGINE="ml"
+ADVICE_LOGGING_ENABLED = False

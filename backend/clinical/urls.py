@@ -15,6 +15,7 @@ from .views import (
     ClinicalRecordAggregationView,
     MyInboxEventsView,
 )
+from .views_advice import PatientAdviceCardsView
 
 urlpatterns = [
     # Orders
@@ -44,5 +45,7 @@ urlpatterns = [
     path("outbox/", OutboxEventListView.as_view(), name="outbox-list"),
     
     path("inbox/", MyInboxEventsView.as_view(), name="my-inbox"),
+
+    path("patients/<int:user_id>/advice/", PatientAdviceCardsView.as_view(), name="patient-advice-cards"),
 
 ]
