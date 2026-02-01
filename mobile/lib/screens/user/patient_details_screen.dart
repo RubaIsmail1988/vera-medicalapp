@@ -75,7 +75,6 @@ class _PatientDetailsScreenState extends State<PatientDetailsScreen> {
         return;
       }
 
-      // أي status غير 200/404: نعتبره خطأ تحميل
       setState(() {
         loading = false;
         fetchError = ApiException(response.statusCode, response.body);
@@ -127,7 +126,6 @@ class _PatientDetailsScreenState extends State<PatientDetailsScreen> {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
-    // 404: لا يوجد بيانات
     if (notFound) {
       return Directionality(
         textDirection: TextDirection.rtl,
@@ -176,7 +174,6 @@ class _PatientDetailsScreenState extends State<PatientDetailsScreen> {
       );
     }
 
-    // خطأ تحميل (بدون عرض نص exception الخام)
     if (details == null) {
       final state = mapFetchExceptionToInlineState(fetchError ?? 'unknown');
 
@@ -194,7 +191,38 @@ class _PatientDetailsScreenState extends State<PatientDetailsScreen> {
       );
     }
 
-    // يوجد بيانات
+    final gender = details!["gender"]?.toString();
+    final smokingStatus = details!["smoking_status"]?.toString();
+
+    final showPregnant = gender == "female";
+    final showCigarettes = smokingStatus == "current";
+
+    // Values helpers
+    final dob = details!["date_of_birth"]?.toString();
+    final height = details!["height"];
+    final weight = details!["weight"];
+    final bmi = details!["bmi"];
+
+    final bloodType = details!["blood_type"]?.toString();
+
+    final alcoholUse = details!["alcohol_use"]?.toString();
+    final activityLevel = details!["activity_level"]?.toString();
+
+    final hasDiabetes = details!["has_diabetes"];
+    final hasHypertension = details!["has_hypertension"];
+    final hasHeartDisease = details!["has_heart_disease"];
+    final hasAsthmaCopd = details!["has_asthma_copd"];
+    final hasKidneyDisease = details!["has_kidney_disease"];
+
+    final lastBpSys = details!["last_bp_systolic"];
+    final lastBpDia = details!["last_bp_diastolic"];
+
+    final lastHba1c = details!["last_hba1c"];
+
+    final allergiesRaw = details!["allergies"]?.toString();
+    final chronicRaw = details!["chronic_disease"]?.toString();
+    final notesRaw = details!["health_notes"]?.toString();
+
     return Directionality(
       textDirection: TextDirection.rtl,
       child: Scaffold(
@@ -203,45 +231,142 @@ class _PatientDetailsScreenState extends State<PatientDetailsScreen> {
           padding: const EdgeInsets.all(16),
           child: ListView(
             children: [
-              infoTile(
-                context: context,
-                title: "تاريخ الميلاد",
-                value: details!["date_of_birth"]?.toString() ?? "-",
+              // ---------------- Section: Basic measurements ----------------
+              _sectionHeader(
+                context,
+                'القياسات الأساسية',
+                icon: Icons.monitor_weight_outlined,
               ),
-              infoTile(
-                context: context,
+              const SizedBox(height: 10),
+
+              _maybeTile(context, title: "تاريخ الميلاد", value: dob),
+              _maybeTile(
+                context,
                 title: "الطول",
-                value: "${details!["height"] ?? "-"} سم",
+                value: _withUnit(height, "سم"),
               ),
-              infoTile(
-                context: context,
+              _maybeTile(
+                context,
                 title: "الوزن",
-                value: "${details!["weight"] ?? "-"} كغ",
+                value: _withUnit(weight, "كغ"),
               ),
-              infoTile(
-                context: context,
-                title: "BMI",
-                value: details!["bmi"]?.toString() ?? "-",
+              _maybeTile(context, title: "BMI", value: bmi?.toString()),
+
+              const SizedBox(height: 18),
+
+              // ---------------- Section: General info ----------------
+              _sectionHeader(
+                context,
+                'معلومات عامة',
+                icon: Icons.badge_outlined,
               ),
-              infoTile(
-                context: context,
+              const SizedBox(height: 10),
+
+              _maybeTile(context, title: "الجنس", value: gender),
+              _maybeTile(context, title: "زمرة الدم", value: bloodType),
+
+              if (showPregnant)
+                _maybeTile(
+                  context,
+                  title: "حامل",
+                  value: _boolText(details!["is_pregnant"]),
+                  hideIfFalse: true,
+                ),
+
+              const SizedBox(height: 18),
+
+              // ---------------- Section: Lifestyle ----------------
+              _sectionHeader(
+                context,
+                'نمط الحياة',
+                icon: Icons.self_improvement_outlined,
+              ),
+              const SizedBox(height: 10),
+
+              _maybeTile(context, title: "حالة التدخين", value: smokingStatus),
+              if (showCigarettes)
+                _maybeTile(
+                  context,
+                  title: "عدد السجائر/يوم",
+                  value: details!["cigarettes_per_day"]?.toString(),
+                ),
+
+              _maybeTile(context, title: "الكحول", value: alcoholUse),
+              _maybeTile(context, title: "مستوى النشاط", value: activityLevel),
+
+              const SizedBox(height: 18),
+
+              // ---------------- Section: Conditions & readings ----------------
+              _sectionHeader(
+                context,
+                'الحالات والقراءات',
+                icon: Icons.health_and_safety_outlined,
+              ),
+              const SizedBox(height: 10),
+
+              // Hide boolean rows if false/null
+              _maybeTile(
+                context,
+                title: "سكري",
+                value: _boolText(hasDiabetes),
+                hideIfFalse: true,
+              ),
+              _maybeTile(
+                context,
+                title: "ضغط",
+                value: _boolText(hasHypertension),
+                hideIfFalse: true,
+              ),
+              _maybeTile(
+                context,
+                title: "أمراض قلب",
+                value: _boolText(hasHeartDisease),
+                hideIfFalse: true,
+              ),
+              _maybeTile(
+                context,
+                title: "ربو/انسداد رئوي",
+                value: _boolText(hasAsthmaCopd),
+                hideIfFalse: true,
+              ),
+              _maybeTile(
+                context,
+                title: "أمراض كلى",
+                value: _boolText(hasKidneyDisease),
+                hideIfFalse: true,
+              ),
+
+              // Readings (hide if missing)
+              _maybeTile(
+                context,
+                title: "آخر قراءة ضغط",
+                value: _bpLabel(lastBpSys, lastBpDia),
+                hideIfDash: true,
+              ),
+              _maybeTile(context, title: "HbA1c", value: lastHba1c?.toString()),
+
+              // Text fields (hide if empty)
+              _maybeTile(
+                context,
+                title: "حساسية",
+                value: allergiesRaw,
+                treatEmptyAsNull: true,
+              ),
+              _maybeTile(
+                context,
                 title: "أمراض مزمنة",
-                value:
-                    details!["chronic_disease"]?.toString().trim().isNotEmpty ==
-                            true
-                        ? details!["chronic_disease"].toString()
-                        : "لا يوجد",
+                value: chronicRaw,
+                treatEmptyAsNull: true,
               ),
-              infoTile(
-                context: context,
+              _maybeTile(
+                context,
                 title: "ملاحظات صحية",
-                value:
-                    details!["health_notes"]?.toString().trim().isNotEmpty ==
-                            true
-                        ? details!["health_notes"].toString()
-                        : "لا يوجد",
+                value: notesRaw,
+                treatEmptyAsNull: true,
               ),
+
               const SizedBox(height: 20),
+
               SizedBox(
                 width: double.infinity,
                 child: FilledButton.icon(
@@ -260,13 +385,41 @@ class _PatientDetailsScreenState extends State<PatientDetailsScreen> {
                               height: _parseDouble(details!["height"]),
                               weight: _parseDouble(details!["weight"]),
                               bmi: _parseDouble(details!["bmi"]),
+                              gender: gender,
+                              bloodType: details!["blood_type"]?.toString(),
+                              smokingStatus: smokingStatus,
+                              cigarettesPerDay: _parseInt(
+                                details!["cigarettes_per_day"],
+                              ),
+                              alcoholUse: details!["alcohol_use"]?.toString(),
+                              activityLevel:
+                                  details!["activity_level"]?.toString(),
+                              hasDiabetes: details!["has_diabetes"] as bool?,
+                              hasHypertension:
+                                  details!["has_hypertension"] as bool?,
+                              hasHeartDisease:
+                                  details!["has_heart_disease"] as bool?,
+                              hasAsthmaCopd:
+                                  details!["has_asthma_copd"] as bool?,
+                              hasKidneyDisease:
+                                  details!["has_kidney_disease"] as bool?,
+                              isPregnant: details!["is_pregnant"] as bool?,
+                              lastBpSystolic: _parseInt(
+                                details!["last_bp_systolic"],
+                              ),
+                              lastBpDiastolic: _parseInt(
+                                details!["last_bp_diastolic"],
+                              ),
+                              lastHba1c: _parseDouble(details!["last_hba1c"]),
+                              allergies: details!["allergies"]?.toString(),
+                              chronicDisease:
+                                  details!["chronic_disease"]?.toString(),
                               healthNotes: details!["health_notes"]?.toString(),
                             ),
                       ),
                     );
 
                     if (!mounted) return;
-
                     if (updated == true) {
                       await fetchDetails();
                     }
@@ -288,6 +441,10 @@ class _PatientDetailsScreenState extends State<PatientDetailsScreen> {
     );
   }
 
+  // ---------------------------------------------------------------------------
+  // Navigation
+  // ---------------------------------------------------------------------------
+
   void _goBack() {
     if (!mounted) return;
 
@@ -298,11 +455,103 @@ class _PatientDetailsScreenState extends State<PatientDetailsScreen> {
     context.go('/app/account');
   }
 
+  // ---------------------------------------------------------------------------
+  // Parsing helpers
+  // ---------------------------------------------------------------------------
+
   double? _parseDouble(dynamic v) {
     if (v == null) return null;
     if (v is num) return v.toDouble();
     return double.tryParse(v.toString());
   }
+
+  int? _parseInt(dynamic v) {
+    if (v == null) return null;
+    if (v is int) return v;
+    if (v is num) return v.toInt();
+    return int.tryParse(v.toString());
+  }
+
+  String _withUnit(dynamic v, String unit) {
+    if (v == null) return "-";
+    final s = v.toString().trim();
+    if (s.isEmpty || s == "null") return "-";
+    return "$s $unit";
+  }
+
+  String _boolText(dynamic v) {
+    if (v == true) return "نعم";
+    if (v == false) return "لا";
+    return "-";
+  }
+
+  String _bpLabel(dynamic sys, dynamic dia) {
+    if (sys == null || dia == null) return "-";
+    return "$sys/$dia";
+  }
+
+  // ---------------------------------------------------------------------------
+  // Section UI
+  // ---------------------------------------------------------------------------
+
+  Widget _sectionHeader(
+    BuildContext context,
+    String title, {
+    required IconData icon,
+  }) {
+    final cs = Theme.of(context).colorScheme;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: cs.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: cs.outline.withValues(alpha: 0.16)),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, color: cs.primary),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              title,
+              style: Theme.of(
+                context,
+              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w900),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _maybeTile(
+    BuildContext context, {
+    required String title,
+    required String? value,
+    bool hideIfFalse = false,
+    bool treatEmptyAsNull = false,
+    bool hideIfDash = false,
+  }) {
+    final v = (value ?? "").trim();
+
+    if (treatEmptyAsNull && v.isEmpty) return const SizedBox.shrink();
+
+    // for boolean tiles passed as "لا"
+    if (hideIfFalse && (v.isEmpty || v == "-" || v == "لا")) {
+      return const SizedBox.shrink();
+    }
+
+    if (hideIfDash && (v.isEmpty || v == "-")) {
+      return const SizedBox.shrink();
+    }
+
+    return infoTile(context: context, title: title, value: v.isEmpty ? "-" : v);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Tile (yours)
+  // ---------------------------------------------------------------------------
 
   Widget infoTile({
     required BuildContext context,

@@ -1,9 +1,15 @@
 // lib/screens/user/patient_home_screen.dart
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '/models/appointment.dart';
 import '/services/appointments_service.dart';
+import '/services/auth_service.dart';
+import '/services/clinical_service.dart';
+import '/utils/api_exception.dart';
 import '/utils/ui_helpers.dart';
 
 class PatientHomeScreen extends StatefulWidget {
@@ -23,15 +29,25 @@ class PatientHomeScreen extends StatefulWidget {
 class _PatientHomeScreenState extends State<PatientHomeScreen> {
   final AppointmentsService appointmentsService = AppointmentsService();
 
+  late final AuthService _authService;
+  late final ClinicalService _clinicalService;
+
   String? userName;
   late Future<List<Appointment>> upcomingFuture;
+  late Future<List<Map<String, dynamic>>> adviceFuture;
 
   @override
   void initState() {
     super.initState();
+
+    _authService = AuthService();
+    _clinicalService = ClinicalService(authService: _authService);
+
     // ignore: unawaited_futures
     _loadUserName();
+
     upcomingFuture = _loadUpcoming();
+    adviceFuture = _loadAdvice();
   }
 
   Future<void> _loadUserName() async {
@@ -43,7 +59,6 @@ class _PatientHomeScreenState extends State<PatientHomeScreen> {
   }
 
   Future<List<Appointment>> _loadUpcoming() async {
-    // نعتمد upcoming من الباك + نرتّب محلياً + نأخذ أقرب 3
     final items = await appointmentsService.fetchMyAppointments(
       time: 'upcoming',
     );
@@ -58,12 +73,39 @@ class _PatientHomeScreenState extends State<PatientHomeScreen> {
     return filtered.take(3).toList();
   }
 
+  Future<List<Map<String, dynamic>>> _loadAdvice() async {
+    final res = await _clinicalService.fetchPatientAdviceCards(
+      patientId: widget.userId,
+    );
+
+    if (res.statusCode == 200) {
+      final decoded = jsonDecode(res.body);
+      if (decoded is List) {
+        return decoded
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList();
+      }
+      throw const ApiException(500, '{"detail":"Invalid advice response."}');
+    }
+
+    if (res.statusCode == 404) {
+      return <Map<String, dynamic>>[];
+    }
+
+    throw ApiException(res.statusCode, res.body);
+  }
+
   Future<void> _refresh() async {
-    setState(() => upcomingFuture = _loadUpcoming());
+    setState(() {
+      upcomingFuture = _loadUpcoming();
+      adviceFuture = _loadAdvice();
+    });
+
     try {
-      await upcomingFuture;
+      await Future.wait([upcomingFuture, adviceFuture]);
     } catch (_) {
-      // AppFetchStateView يعرض الخطأ
+      // AppFetchStateView / inline error handles it
     }
   }
 
@@ -244,6 +286,157 @@ class _PatientHomeScreenState extends State<PatientHomeScreen> {
     );
   }
 
+  // ---------------------------------------------------------------------------
+  // Unified Section Header (appointments + advice)
+  // ---------------------------------------------------------------------------
+
+  Widget _homeSectionHeader(
+    BuildContext context, {
+    required String title,
+    required String subtitle,
+    required IconData icon,
+  }) {
+    final cs = Theme.of(context).colorScheme;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: cs.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: cs.outline.withValues(alpha: 0.16)),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, color: cs.primary),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  subtitle,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: cs.onSurface.withValues(alpha: 0.65),
+                    height: 1.3,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Advice UI (calm, no scary numbers)
+  // ---------------------------------------------------------------------------
+
+  String _severityLabel(int s) {
+    if (s >= 7) return "أولوية عالية";
+    if (s >= 4) return "أولوية متوسطة";
+    return "إرشاد عام";
+  }
+
+  Color _severityColor(ColorScheme cs, int s) {
+    if (s >= 7) return cs.error;
+    if (s >= 4) return cs.tertiary;
+    return cs.primary;
+  }
+
+  Widget _adviceCard(BuildContext context, Map<String, dynamic> card) {
+    final cs = Theme.of(context).colorScheme;
+
+    final title = (card["title"] ?? "").toString().trim();
+    final message = (card["message"] ?? "").toString().trim();
+    final severityRaw = card["severity"];
+    final int severity =
+        (severityRaw is int)
+            ? severityRaw
+            : int.tryParse(severityRaw?.toString() ?? "") ?? 1;
+
+    final ctaLabel = (card["cta_label"] ?? "").toString().trim();
+    final ctaRoute = (card["cta_route"] ?? "").toString().trim();
+
+    final sevColor = _severityColor(cs, severity);
+    final sevLabel = _severityLabel(severity);
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: cs.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: cs.outline.withValues(alpha: 0.16)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  color: sevColor.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(
+                  sevLabel,
+                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                    color: sevColor,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  title.isNotEmpty ? title : "نصيحة",
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(
+            message.isNotEmpty ? message : "-",
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+              height: 1.6,
+              color: cs.onSurface.withValues(alpha: 0.85),
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          if (ctaLabel.isNotEmpty && ctaRoute.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton(
+                onPressed: () {
+                  if (!mounted) return;
+                  context.go(ctaRoute);
+                },
+                child: Text(ctaLabel),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
@@ -286,16 +479,16 @@ class _PatientHomeScreenState extends State<PatientHomeScreen> {
                         fontWeight: FontWeight.w900,
                       ),
                     ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'أقرب 3 مواعيد قادمة (إن وُجدت).',
-                      textAlign: TextAlign.center,
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        height: 1.6,
-                        color: cs.onSurface.withValues(alpha: 0.65),
-                      ),
+                    const SizedBox(height: 14),
+
+                    // ---------------- Appointments Header (unified style) ----------------
+                    _homeSectionHeader(
+                      context,
+                      title: "المواعيد",
+                      subtitle: "أقرب 3 مواعيد قادمة (إن وُجدت).",
+                      icon: Icons.calendar_month_outlined,
                     ),
-                    const SizedBox(height: 18),
+                    const SizedBox(height: 12),
 
                     if (items.isEmpty)
                       Container(
@@ -324,6 +517,111 @@ class _PatientHomeScreenState extends State<PatientHomeScreen> {
                         const SizedBox(height: 12),
                       ],
                     ],
+
+                    const SizedBox(height: 18),
+
+                    // ---------------- Advice Header (unified style) ----------------
+                    _homeSectionHeader(
+                      context,
+                      title: "نصائح مخصصة لك",
+                      subtitle: "بناءً على بياناتك الصحية الحالية.",
+                      icon: Icons.lightbulb_outline,
+                    ),
+                    const SizedBox(height: 12),
+
+                    FutureBuilder<List<Map<String, dynamic>>>(
+                      future: adviceFuture,
+                      builder: (context, adviceSnap) {
+                        if (adviceSnap.connectionState ==
+                            ConnectionState.waiting) {
+                          return Container(
+                            padding: const EdgeInsets.all(16),
+                            decoration: BoxDecoration(
+                              color: cs.surface,
+                              borderRadius: BorderRadius.circular(16),
+                              border: Border.all(
+                                color: cs.outline.withValues(alpha: 0.16),
+                              ),
+                            ),
+                            child: const Center(
+                              child: CircularProgressIndicator(),
+                            ),
+                          );
+                        }
+
+                        if (adviceSnap.hasError) {
+                          return Container(
+                            padding: const EdgeInsets.all(16),
+                            decoration: BoxDecoration(
+                              color: cs.surface,
+                              borderRadius: BorderRadius.circular(16),
+                              border: Border.all(
+                                color: cs.outline.withValues(alpha: 0.16),
+                              ),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                Text(
+                                  'تعذّر تحميل النصائح حالياً.',
+                                  textAlign: TextAlign.center,
+                                  style: Theme.of(
+                                    context,
+                                  ).textTheme.bodyMedium?.copyWith(
+                                    fontWeight: FontWeight.w800,
+                                    color: cs.onSurface.withValues(alpha: 0.80),
+                                  ),
+                                ),
+                                const SizedBox(height: 10),
+                                FilledButton(
+                                  onPressed: () {
+                                    setState(
+                                      () => adviceFuture = _loadAdvice(),
+                                    );
+                                  },
+                                  child: const Text('إعادة المحاولة'),
+                                ),
+                              ],
+                            ),
+                          );
+                        }
+
+                        final cards =
+                            adviceSnap.data ?? const <Map<String, dynamic>>[];
+
+                        if (cards.isEmpty) {
+                          return Container(
+                            padding: const EdgeInsets.all(16),
+                            decoration: BoxDecoration(
+                              color: cs.surface,
+                              borderRadius: BorderRadius.circular(16),
+                              border: Border.all(
+                                color: cs.outline.withValues(alpha: 0.16),
+                              ),
+                            ),
+                            child: Text(
+                              'لا توجد نصائح حالياً.',
+                              textAlign: TextAlign.center,
+                              style: Theme.of(
+                                context,
+                              ).textTheme.bodyMedium?.copyWith(
+                                color: cs.onSurface.withValues(alpha: 0.75),
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          );
+                        }
+
+                        return Column(
+                          children: [
+                            for (final c in cards) ...[
+                              _adviceCard(context, c),
+                              const SizedBox(height: 12),
+                            ],
+                          ],
+                        );
+                      },
+                    ),
                   ],
                 ),
               ),

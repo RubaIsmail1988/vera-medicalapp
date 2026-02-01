@@ -25,16 +25,16 @@ TEMPLATES: dict[str, AdviceTemplate] = {
         severity=3,
         score=0.90,
         cta_label="تعديل البيانات الصحية",
-        cta_route="/patient/profile/edit",
+        cta_route="/app/account/patient-details",
     ),
     "bmi_underweight": AdviceTemplate(
         key="bmi_underweight",
         title="وزن أقل من الطبيعي",
-        message="قد يفيد تحسين الوجبات وزيادة البروتين والسعرات بشكل صحي. إذا كان هناك فقدان وزن غير مبرّر، راجع طبيبًا.",
+        message="قد يفيد تحسين الوجبات وزيادة البروتين والسعرات بشكل صحي. إذا كان هناك فقدان وزن غير مبرّر، راجع طبيباً.",
         severity=5,
         score=0.70,
         cta_label="حجز موعد",
-        cta_route="/patient/appointments/book",
+        cta_route="/app/appointments/book",
     ),
     "bmi_normal": AdviceTemplate(
         key="bmi_normal",
@@ -49,17 +49,17 @@ TEMPLATES: dict[str, AdviceTemplate] = {
         message="المشي 30 دقيقة يوميًا وتقليل السكريات قد يساعد. إذا لديك ضغط/سكر، المتابعة الدورية مهمة.",
         severity=4,
         score=0.65,
-        cta_label="نصائح نمط حياة",
-        cta_route="/patient/health/tips",
+        cta_label="حجز موعد",
+        cta_route="/app/appointments/book",
     ),
     "bmi_obese": AdviceTemplate(
         key="bmi_obese",
-        title="سمنة (BMI مرتفع)",
+        title="سمنة",
         message="قد يفيد وضع خطة غذائية ونشاط تدريجي. إذا لديك أمراض مزمنة، الأفضل المتابعة مع طبيب.",
         severity=7,
         score=0.80,
         cta_label="حجز موعد",
-        cta_route="/patient/appointments/book",
+        cta_route="/app/appointments/book",
     ),
 
     # Smoking
@@ -69,8 +69,8 @@ TEMPLATES: dict[str, AdviceTemplate] = {
         message="الإقلاع عن التدخين يقلل مخاطر القلب والرئة بشكل كبير.",
         severity=6,
         score=0.85,
-        cta_label="خطة الإقلاع",
-        cta_route="/patient/health/quit-smoking",
+        cta_label="حجز موعد",
+        cta_route="/app/appointments/book"
     ),
     "smoking_former": AdviceTemplate(
         key="smoking_former",
@@ -84,22 +84,22 @@ TEMPLATES: dict[str, AdviceTemplate] = {
     "alcohol_regular": AdviceTemplate(
         key="alcohol_regular",
         title="استهلاك كحول منتظم",
-        message="تقليل الكحول يساعد على تحسين النوم، الضغط، وصحة الكبد. إذا لديك أعراض أو أدوية مزمنة، استشر طبيبًا.",
+        message="تقليل الكحول يساعد على تحسين النوم، الضغط، وصحة الكبد. إذا لديك أعراض أو أدوية مزمنة، استشر طبيباً.",
         severity=5,
         score=0.70,
-        cta_label="نصائح",
-        cta_route="/patient/health/tips",
+        cta_label="حجز موعد",
+        cta_route="/app/appointments/book"
     ),
 
     # Activity
     "activity_low": AdviceTemplate(
         key="activity_low",
         title="نشاط منخفض",
-        message="ابدأ بخطوات بسيطة: 15–30 دقيقة مشي يوميًا 4–5 أيام بالأسبوع.",
+        message="ابدأ بخطوات بسيطة: 15–30 دقيقة مشي يومياً 4–5 أيام بالأسبوع.",
         severity=3,
         score=0.60,
-        cta_label="خطة نشاط",
-        cta_route="/patient/health/activity-plan",
+        cta_label="حجز موعد",
+        cta_route="/app/appointments/book"
     ),
 
     # Chronic conditions
@@ -110,27 +110,27 @@ TEMPLATES: dict[str, AdviceTemplate] = {
         severity=6,
         score=0.80,
         cta_label="إدخال قراءة ضغط",
-        cta_route="/patient/health/bp",
+        cta_route="/app/account/patient-details",
     ),
     "diabetes": AdviceTemplate(
         key="diabetes",
         title="السكري",
-        message="تابع السكر ونمط الأكل، وراجع طبيبك دوريًا.",
+        message="تابع السكر ونمط الأكل، وراجع طبيبك دورياً.",
         severity=6,
         score=0.80,
         cta_label="إدخال HbA1c",
-        cta_route="/patient/health/hba1c",
+        cta_route="/app/account/patient-details",
     ),
 
     # Pregnancy
     "pregnancy": AdviceTemplate(
         key="pregnancy",
         title="الحمل",
-        message="يفيد متابعة منتظمة مع طبيب/ة النساء والتأكد من الفيتامينات والفحوصات الدورية.",
+        message="من المفيد متابعة منتظمة مع طبيب النساء والتأكد من الفيتامينات والفحوصات الدورية.",
         severity=6,
         score=0.75,
         cta_label="حجز موعد",
-        cta_route="/patient/appointments/book",
+        cta_route="/app/appointments/book",
     ),
 
     # Age

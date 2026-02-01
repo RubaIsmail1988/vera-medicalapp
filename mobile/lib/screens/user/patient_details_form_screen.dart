@@ -26,14 +26,39 @@ class _PatientDetailsFormScreenState extends State<PatientDetailsFormScreen> {
   final dobController = TextEditingController();
   final heightController = TextEditingController();
   final weightController = TextEditingController();
+
   final notesController = TextEditingController();
   final chronicController = TextEditingController();
+
+  // NEW controllers
+  final cigarettesPerDayController = TextEditingController();
+  final bpSysController = TextEditingController();
+  final bpDiaController = TextEditingController();
+  final hba1cController = TextEditingController();
+  final allergiesController = TextEditingController();
 
   String? selectedGender;
   String? selectedBloodType;
 
+  // NEW selections
+  String smokingStatus = "never"; // never/former/current
+  String alcoholUse = "none"; // none/occasional/regular
+  String activityLevel = "moderate"; // low/moderate/high
+
+  // NEW switches
+  bool hasDiabetes = false;
+  bool hasHypertension = false;
+  bool hasHeartDisease = false;
+  bool hasAsthmaCopd = false;
+  bool hasKidneyDisease = false;
+
+  bool isPregnant = false;
+
   bool loading = false;
   double? bmi;
+
+  bool get _showCigarettesPerDay => smokingStatus == "current";
+  bool get _showPregnant => selectedGender == "female";
 
   @override
   void initState() {
@@ -65,6 +90,13 @@ class _PatientDetailsFormScreenState extends State<PatientDetailsFormScreen> {
     weightController.dispose();
     notesController.dispose();
     chronicController.dispose();
+
+    cigarettesPerDayController.dispose();
+    bpSysController.dispose();
+    bpDiaController.dispose();
+    hba1cController.dispose();
+    allergiesController.dispose();
+
     super.dispose();
   }
 
@@ -75,6 +107,43 @@ class _PatientDetailsFormScreenState extends State<PatientDetailsFormScreen> {
     if (v == null) return null;
     if (v <= 0) return null;
     return v;
+  }
+
+  int? _parseIntOrNull(String raw) {
+    final t = raw.trim();
+    if (t.isEmpty) return null;
+    return int.tryParse(t);
+  }
+
+  double? _parseDoubleOrNull(String raw) {
+    final t = raw.trim();
+    if (t.isEmpty) return null;
+    return double.tryParse(t);
+  }
+
+  String? _nullIfEmpty(String raw) {
+    final v = raw.trim();
+    return v.isEmpty ? null : v;
+  }
+
+  void _handleGenderChanged(String? val) {
+    setState(() {
+      selectedGender = val;
+      // if not female => force isPregnant false
+      if (!_showPregnant) {
+        isPregnant = false;
+      }
+    });
+  }
+
+  void _handleSmokingStatusChanged(String? val) {
+    setState(() {
+      smokingStatus = val ?? "never";
+      // if not current => clear cigarettes
+      if (!_showCigarettesPerDay) {
+        cigarettesPerDayController.text = '';
+      }
+    });
   }
 
   Future<void> submitDetails() async {
@@ -121,14 +190,34 @@ class _PatientDetailsFormScreenState extends State<PatientDetailsFormScreen> {
       bmi: bmi!,
       gender: selectedGender,
       bloodType: selectedBloodType,
-      chronicDisease:
-          chronicController.text.trim().isEmpty
-              ? null
-              : chronicController.text.trim(),
-      healthNotes:
-          notesController.text.trim().isEmpty
-              ? null
-              : notesController.text.trim(),
+
+      // NEW fields
+      smokingStatus: smokingStatus,
+      cigarettesPerDay:
+          _showCigarettesPerDay
+              ? _parseIntOrNull(cigarettesPerDayController.text)
+              : null,
+      alcoholUse: alcoholUse,
+      activityLevel: activityLevel,
+
+      hasDiabetes: hasDiabetes,
+      hasHypertension: hasHypertension,
+      hasHeartDisease: hasHeartDisease,
+      hasAsthmaCopd: hasAsthmaCopd,
+      hasKidneyDisease: hasKidneyDisease,
+
+      // linked to gender
+      isPregnant: _showPregnant ? isPregnant : false,
+
+      lastBpSystolic: _parseIntOrNull(bpSysController.text),
+      lastBpDiastolic: _parseIntOrNull(bpDiaController.text),
+
+      lastHba1c: _parseDoubleOrNull(hba1cController.text),
+
+      allergies: _nullIfEmpty(allergiesController.text),
+
+      chronicDisease: _nullIfEmpty(chronicController.text),
+      healthNotes: _nullIfEmpty(notesController.text),
     );
 
     try {
@@ -143,7 +232,6 @@ class _PatientDetailsFormScreenState extends State<PatientDetailsFormScreen> {
         type: AppSnackBarType.success,
       );
 
-      // رجوع آمن
       if (context.canPop()) {
         context.pop();
         return;
@@ -153,7 +241,6 @@ class _PatientDetailsFormScreenState extends State<PatientDetailsFormScreen> {
       if (!mounted) return;
       setState(() => loading = false);
 
-      // Action error => SnackBar موحّد (يتعامل مع NO_INTERNET/401/500...)
       showActionErrorSnackBar(
         context,
         exception: e,
@@ -236,13 +323,19 @@ class _PatientDetailsFormScreenState extends State<PatientDetailsFormScreen> {
                   DropdownMenuItem(value: "male", child: Text("ذكر")),
                   DropdownMenuItem(value: "female", child: Text("أنثى")),
                 ],
-                onChanged:
-                    loading
-                        ? null
-                        : (val) => setState(() => selectedGender = val),
+                onChanged: loading ? null : _handleGenderChanged,
                 validator: (v) => v == null ? "الحقل مطلوب" : null,
               ),
               const SizedBox(height: 15),
+
+              // linked field: pregnant only if female
+              if (_showPregnant)
+                SwitchListTile(
+                  value: isPregnant,
+                  onChanged:
+                      loading ? null : (v) => setState(() => isPregnant = v),
+                  title: const Text('حامل'),
+                ),
 
               DropdownButtonFormField<String>(
                 decoration: const InputDecoration(labelText: "زمرة الدم"),
@@ -265,10 +358,137 @@ class _PatientDetailsFormScreenState extends State<PatientDetailsFormScreen> {
               ),
               const SizedBox(height: 15),
 
+              DropdownButtonFormField<String>(
+                decoration: const InputDecoration(labelText: "حالة التدخين"),
+                value: smokingStatus,
+                items: const [
+                  DropdownMenuItem(value: "never", child: Text("never")),
+                  DropdownMenuItem(value: "former", child: Text("former")),
+                  DropdownMenuItem(value: "current", child: Text("current")),
+                ],
+                onChanged: loading ? null : _handleSmokingStatusChanged,
+              ),
+              const SizedBox(height: 15),
+
+              // linked field: cigarettes only if current smoker
+              if (_showCigarettesPerDay)
+                TextFormField(
+                  controller: cigarettesPerDayController,
+                  enabled: !loading,
+                  decoration: const InputDecoration(
+                    labelText: "عدد السجائر/يوم",
+                  ),
+                  keyboardType: TextInputType.number,
+                ),
+              const SizedBox(height: 15),
+
+              DropdownButtonFormField<String>(
+                decoration: const InputDecoration(labelText: "الكحول"),
+                value: alcoholUse,
+                items: const [
+                  DropdownMenuItem(value: "none", child: Text("none")),
+                  DropdownMenuItem(
+                    value: "occasional",
+                    child: Text("occasional"),
+                  ),
+                  DropdownMenuItem(value: "regular", child: Text("regular")),
+                ],
+                onChanged:
+                    loading
+                        ? null
+                        : (v) => setState(() => alcoholUse = v ?? "none"),
+              ),
+              const SizedBox(height: 15),
+
+              DropdownButtonFormField<String>(
+                decoration: const InputDecoration(labelText: "مستوى النشاط"),
+                value: activityLevel,
+                items: const [
+                  DropdownMenuItem(value: "low", child: Text("low")),
+                  DropdownMenuItem(value: "moderate", child: Text("moderate")),
+                  DropdownMenuItem(value: "high", child: Text("high")),
+                ],
+                onChanged:
+                    loading
+                        ? null
+                        : (v) =>
+                            setState(() => activityLevel = v ?? "moderate"),
+              ),
+              const SizedBox(height: 10),
+
+              SwitchListTile(
+                value: hasDiabetes,
+                onChanged:
+                    loading ? null : (v) => setState(() => hasDiabetes = v),
+                title: const Text('سكري'),
+              ),
+              SwitchListTile(
+                value: hasHypertension,
+                onChanged:
+                    loading ? null : (v) => setState(() => hasHypertension = v),
+                title: const Text('ضغط'),
+              ),
+              SwitchListTile(
+                value: hasHeartDisease,
+                onChanged:
+                    loading ? null : (v) => setState(() => hasHeartDisease = v),
+                title: const Text('أمراض قلب'),
+              ),
+              SwitchListTile(
+                value: hasAsthmaCopd,
+                onChanged:
+                    loading ? null : (v) => setState(() => hasAsthmaCopd = v),
+                title: const Text('ربو/انسداد رئوي'),
+              ),
+              SwitchListTile(
+                value: hasKidneyDisease,
+                onChanged:
+                    loading
+                        ? null
+                        : (v) => setState(() => hasKidneyDisease = v),
+                title: const Text('أمراض كلى'),
+              ),
+              const SizedBox(height: 10),
+
+              TextFormField(
+                controller: bpSysController,
+                enabled: !loading,
+                decoration: const InputDecoration(labelText: "ضغط (انقباضي)"),
+                keyboardType: TextInputType.number,
+              ),
+              const SizedBox(height: 15),
+
+              TextFormField(
+                controller: bpDiaController,
+                enabled: !loading,
+                decoration: const InputDecoration(labelText: "ضغط (انبساطي)"),
+                keyboardType: TextInputType.number,
+              ),
+              const SizedBox(height: 15),
+
+              TextFormField(
+                controller: hba1cController,
+                enabled: !loading,
+                decoration: const InputDecoration(labelText: "HbA1c"),
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+              ),
+              const SizedBox(height: 15),
+
+              TextFormField(
+                controller: allergiesController,
+                enabled: !loading,
+                decoration: const InputDecoration(labelText: "حساسية"),
+                maxLines: 2,
+              ),
+              const SizedBox(height: 15),
+
               TextFormField(
                 controller: chronicController,
                 enabled: !loading,
                 decoration: const InputDecoration(labelText: "أمراض مزمنة"),
+                maxLines: 2,
               ),
               const SizedBox(height: 15),
 

@@ -334,4 +334,12 @@ class ClinicalService {
     final query = Uri(queryParameters: qp).query;
     return authorizedClinicalRequest("/inbox/?$query", "GET");
   }
+  // ---------------------------------------------------------------------------
+  // Patient Advice Cards
+  // GET /api/clinical/patients/<id>/advice/
+  // ---------------------------------------------------------------------------
+
+  Future<http.Response> fetchPatientAdviceCards({required int patientId}) {
+    return authorizedClinicalRequest("/patients/$patientId/advice/", "GET");
+  }
 }
