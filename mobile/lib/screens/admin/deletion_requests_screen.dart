@@ -117,8 +117,10 @@ class _DeletionRequestsScreenState extends State<DeletionRequestsScreen> {
         userMap?['email']?.toString() ?? req['user_email']?.toString() ?? '';
     final String username =
         userMap?['username']?.toString() ??
-        req['user_username']?.toString() ??
+        req['user_name']?.toString() ?? // NEW
+        req['user_username']?.toString() ?? // legacy fallback
         '';
+
     final String role =
         userMap?['role']?.toString() ?? req['user_role']?.toString() ?? '';
 
@@ -411,7 +413,9 @@ class _DeletionRequestsScreenState extends State<DeletionRequestsScreen> {
                                       '';
                                   final String username =
                                       userMap?['username']?.toString() ??
-                                      req['user_username']?.toString() ??
+                                      req['user_name']?.toString() ?? // NEW
+                                      req['user_username']
+                                          ?.toString() ?? // legacy fallback
                                       '';
                                   final String role =
                                       userMap?['role']?.toString() ??

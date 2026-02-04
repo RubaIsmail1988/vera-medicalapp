@@ -8,10 +8,12 @@ class AccountDeletionRequest {
   final String? adminNote;
   final DateTime createdAt;
   final DateTime? processedAt;
+  final String userName;
 
   AccountDeletionRequest({
     required this.id,
     required this.userId,
+    required this.userName, // NEW
     required this.userEmail,
     required this.userRole,
     required this.reason,
@@ -25,6 +27,7 @@ class AccountDeletionRequest {
     return AccountDeletionRequest(
       id: json['id'] as int,
       userId: json['user'] as int,
+      userName: json['user_name']?.toString() ?? '', // NEW
       userEmail: json['user_email']?.toString() ?? '',
       userRole: json['user_role']?.toString() ?? '',
       reason: json['reason']?.toString(),

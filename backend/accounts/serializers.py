@@ -251,12 +251,14 @@ class AccountDeletionRequestCreateSerializer(serializers.ModelSerializer):
 class AccountDeletionRequestListSerializer(serializers.ModelSerializer):
     user_email = serializers.EmailField(source="user.email", read_only=True)
     user_role = serializers.CharField(source="user.role", read_only=True)
+    user_name = serializers.CharField(source="user.username", read_only=True)  # NEW
 
     class Meta:
         model = AccountDeletionRequest
         fields = [
             "id",
             "user",
+            "user_name",      # NEW
             "user_email",
             "user_role",
             "reason",
@@ -268,6 +270,7 @@ class AccountDeletionRequestListSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = [
             "user",
+            "user_name",      # NEW
             "user_email",
             "user_role",
             "status",

@@ -106,7 +106,7 @@ TEMPLATES: dict[str, AdviceTemplate] = {
     "hypertension": AdviceTemplate(
         key="hypertension",
         title="ارتفاع ضغط",
-        message="راقب ضغطك بانتظام وقلّل الملح.",
+        message="راقب ضغطك بانتظام وانتبه لتناول الملح.",
         severity=6,
         score=0.80,
         cta_label="إدخال قراءة ضغط",
