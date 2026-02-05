@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../../services/auth_service.dart';
 
 import '../../widgets/app_logo.dart';
 
@@ -37,46 +38,43 @@ class _SplashScreenState extends State<SplashScreen> {
       final role = (prefs.getString('user_role') ?? '').trim();
       final userId = prefs.getInt('user_id') ?? 0;
 
-      // مهم لتوحيد سلوك الطبيب غير المفعّل
-      final bool? isActive = prefs.getBool('user_is_active');
-
-      // 1) لا يوجد تسجيل دخول
       if (token.isEmpty || role.isEmpty || userId == 0) {
         context.go('/login');
         return;
       }
 
-      // ✅ ثبّت role داخل LocalNotificationsService (بدون await)
-      LocalNotificationsService.setCurrentRole(role);
+      // 1) Validate session BEFORE routing or syncing anything
+      final auth = AuthService();
+      final me = await auth.fetchAndStoreCurrentUser();
+      if (!mounted) return;
 
-      // ✅ Sync للتذكيرات عند فتح التطبيق (بدون انتظار)
-      // ملاحظة: نعتمد سياسة confirmed فقط داخل AppointmentsService
+      if (me == null) {
+        await auth.logout();
+        if (!mounted) return;
+        context.go('/login');
+        return;
+      }
+
+      //  2) Now it's safe to set role + do reminder sync
+      final backendRole = (me["role"]?.toString() ?? role).trim();
+      final bool isActive = prefs.getBool('user_is_active') ?? true;
+
+      LocalNotificationsService.setCurrentRole(backendRole);
+
       // ignore: unawaited_futures
       AppointmentsService().syncMyRemindersNow();
 
-      // 2) توجيه حسب الدور
-      if (role == 'admin') {
+      if (backendRole == 'admin') {
         context.go('/admin');
         return;
       }
 
-      if (role == 'doctor') {
-        // إذا الطبيب غير مفعّل → شاشة انتظار التفعيل
-        if (isActive == false) {
-          context.go('/waiting-activation');
-          return;
-        }
-        context.go('/app');
+      if (backendRole == 'doctor' && isActive == false) {
+        context.go('/waiting-activation');
         return;
       }
 
-      if (role == 'patient') {
-        context.go('/app');
-        return;
-      }
-
-      // 3) احتياطي
-      context.go('/login');
+      context.go('/app');
     } catch (_) {
       if (!mounted) return;
       context.go('/login');

@@ -87,18 +87,14 @@ class AppointmentsService {
 
     String? token = await authService.getAccessToken();
 
-    // إذا لا يوجد توكن أصلًا → جرّب refresh
-    if (token == null) {
+    if (token == null || token.trim().isEmpty) {
       try {
         await authService.refreshToken();
-      } catch (_) {
-        // تجاهل: ممكن يكون لا إنترنت أو refresh فشل
-      }
+      } catch (_) {}
       token = await authService.getAccessToken();
     }
 
-    // IMPORTANT: لا نرجّع Response "مزيف" — نرمي ApiException ليبقى موحّد
-    if (token == null) {
+    if (token == null || token.trim().isEmpty) {
       throw const ApiException(401, 'Unauthorized');
     }
 
@@ -155,19 +151,19 @@ class AppointmentsService {
     }
   }
 
-  /// Public helper:
-  /// استدعِها من Splash/Login إذا بدك تضمن أن التذكيرات تنضبط فور فتح التطبيق
-  /// حتى لو المستخدم ما فتح شاشة المواعيد.
   Future<void> syncMyRemindersNow() async {
-    // لا تعمل أكثر من sync بنفس الوقت
+    // إذا في sync شغال، استنى وخلص
     if (_remindersSyncInFlight != null) {
       await _remindersSyncInFlight!;
       return;
     }
 
+    // لا تعمل lock هون — خلي fetchMyAppointments هو اللي يعمل lock
     try {
       await fetchMyAppointments();
-    } catch (_) {}
+    } catch (_) {
+      // ignore
+    }
   }
 
   // -------- helper to convert decoded to Map ------

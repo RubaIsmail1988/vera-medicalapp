@@ -235,12 +235,12 @@ class AuthService {
 
     String? token = await getAccessToken();
 
-    if (token == null) {
+    if (token == null || token.trim().isEmpty) {
       await refreshToken();
       token = await getAccessToken();
     }
 
-    if (token == null) {
+    if (token == null || token.trim().isEmpty) {
       return http.Response('Unauthorized', 401);
     }
 

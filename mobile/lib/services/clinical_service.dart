@@ -74,12 +74,12 @@ class ClinicalService {
 
     String? token = await _authService.getAccessToken();
 
-    if (token == null) {
+    if (token == null || token.trim().isEmpty) {
       await _authService.refreshToken();
       token = await _authService.getAccessToken();
     }
 
-    if (token == null) {
+    if (token == null || token.trim().isEmpty) {
       throw const ApiException(401, 'Unauthorized');
     }
 
