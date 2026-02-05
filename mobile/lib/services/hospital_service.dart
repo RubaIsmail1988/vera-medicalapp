@@ -1,22 +1,54 @@
 import 'dart:convert';
+
+import 'package:http/http.dart' as http;
+
 import '/models/hospital.dart';
 import '/utils/api_exception.dart';
+import '/utils/constants.dart';
 import 'auth_service.dart';
 
 class HospitalService {
   final AuthService authService = AuthService();
 
+  // --------------------------------------------------------------------------
+  // URL helpers
+  // --------------------------------------------------------------------------
+
+  Uri _buildAccountsUri(String endpoint) {
+    final cleanBase =
+        accountsBaseUrl.endsWith('/')
+            ? accountsBaseUrl.substring(0, accountsBaseUrl.length - 1)
+            : accountsBaseUrl;
+
+    final cleanEndpoint = endpoint.startsWith('/') ? endpoint : '/$endpoint';
+    return Uri.parse('$cleanBase$cleanEndpoint');
+  }
+
+  // --------------------------------------------------------------------------
+  // Public (no auth) — used in user/public screens (and before login)
+  // --------------------------------------------------------------------------
+
   Future<List<Hospital>> fetchHospitals() async {
     try {
-      final response = await authService.authorizedRequest(
-        '/hospitals/',
-        'GET',
+      final url = _buildAccountsUri('/hospitals/');
+
+      final response = await http.get(
+        url,
+        headers: const {"Accept": "application/json"},
       );
 
       if (response.statusCode == 200) {
-        final List<dynamic> data = jsonDecode(response.body) as List<dynamic>;
-        return data
-            .map((e) => Hospital.fromJson(e as Map<String, dynamic>))
+        final dynamic decoded = jsonDecode(response.body);
+
+        // API may return List OR {results:[...]}
+        final List<dynamic> items =
+            (decoded is Map && decoded["results"] is List)
+                ? (decoded["results"] as List<dynamic>)
+                : (decoded is List ? decoded : <dynamic>[]);
+
+        return items
+            .whereType<Map>()
+            .map((e) => Hospital.fromJson(Map<String, dynamic>.from(e)))
             .toList();
       }
 
@@ -31,9 +63,11 @@ class HospitalService {
 
   Future<Hospital> getHospital(int id) async {
     try {
-      final response = await authService.authorizedRequest(
-        '/hospitals/$id/',
-        'GET',
+      final url = _buildAccountsUri('/hospitals/$id/');
+
+      final response = await http.get(
+        url,
+        headers: const {"Accept": "application/json"},
       );
 
       if (response.statusCode == 200) {
@@ -50,6 +84,10 @@ class HospitalService {
       rethrow;
     }
   }
+
+  // --------------------------------------------------------------------------
+  // Admin (authorized) — keep as-is for CRUD
+  // --------------------------------------------------------------------------
 
   Future<Hospital> createHospital(Hospital hospital) async {
     try {

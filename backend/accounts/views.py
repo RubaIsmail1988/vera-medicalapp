@@ -289,20 +289,43 @@ class HospitalListCreateView(generics.ListCreateAPIView):
     queryset = Hospital.objects.all()
     serializer_class = HospitalSerializer
 
+    def get_permissions(self):
+        if self.request.method in ("GET", "HEAD", "OPTIONS"):
+            return [AllowAny()]
+        return [IsAdminUser()]
+
 class HospitalRetrieveUpdateDestroyView(generics.RetrieveUpdateDestroyAPIView):
     queryset = Hospital.objects.all()
     serializer_class = HospitalSerializer
     lookup_field = 'id'
+
+    def get_permissions(self):
+        if self.request.method in ("GET", "HEAD", "OPTIONS"):
+            return [AllowAny()]
+        return [IsAdminUser()]
+
 
 # LAB CRUD
 class LabListCreateView(generics.ListCreateAPIView):
     queryset = Lab.objects.all()
     serializer_class = LabSerializer
 
+    def get_permissions(self):
+        if self.request.method in ("GET", "HEAD", "OPTIONS"):
+            return [AllowAny()]
+        return [IsAdminUser()]
+
+
 class LabRetrieveUpdateDestroyView(generics.RetrieveUpdateDestroyAPIView):
     queryset = Lab.objects.all()
     serializer_class = LabSerializer
     lookup_field = 'id'
+
+    def get_permissions(self):
+        if self.request.method in ("GET", "HEAD", "OPTIONS"):
+            return [AllowAny()]
+        return [IsAdminUser()]
+
 
 @api_view(['POST'])
 @permission_classes([IsAdminUser])
