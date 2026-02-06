@@ -97,7 +97,7 @@ class _LabPublicListScreenState extends State<LabPublicListScreen> {
 
     final filtered = labs.where(matches).toList();
 
-    // ترتيب: المطابق للمحافظة أولًا (عندما يكون البحث يتضمن محافظة)
+    // ترتيب: المطابق للمحافظة أولاً (عندما يكون البحث يتضمن محافظة)
     filtered.sort((a, b) {
       final govA = governorateNamesById[a.governorate]?.toLowerCase() ?? '';
       final govB = governorateNamesById[b.governorate]?.toLowerCase() ?? '';

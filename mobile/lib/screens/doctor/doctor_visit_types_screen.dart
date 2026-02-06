@@ -641,7 +641,7 @@ class DoctorVisitTypesScreenState extends State<DoctorVisitTypesScreen> {
             disabledFeatureCard(
               title: "أنواع خاصة بالطبيب (قيد التطوير)",
               message:
-                  "حاليًا الحجز يعتمد فقط على الأنواع المركزية مع إمكانية تخصيص المدة للطبيب. "
+                  "حالياً الحجز يعتمد فقط على الأنواع المركزية مع إمكانية تخصيص المدة للطبيب. "
                   "الأنواع الخاصة ستُفعّل لاحقا.",
             ),
           ],

@@ -59,7 +59,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         governorates = list;
         loadingGovernorates = false;
 
-        // اجعل الاختيار صالحًا دائمًا بالنسبة للقائمة الجديدة
+        // اجعل الاختيار صالحاً دائماً بالنسبة للقائمة الجديدة
         final bool exists =
             selectedGovernorateId != null &&
             governorates.any((g) => g.id == selectedGovernorateId);
@@ -407,7 +407,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   const SizedBox(height: 12),
                   TextButton(
                     onPressed: loading ? null : () => context.go('/login'),
-                    child: const Text('لديك حساب مسبقًا؟ تسجيل الدخول'),
+                    child: const Text('لديك حساب مسبقاً؟ تسجيل الدخول'),
                   ),
                 ],
               ),

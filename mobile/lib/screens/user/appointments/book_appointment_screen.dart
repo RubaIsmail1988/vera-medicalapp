@@ -639,7 +639,7 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
       showApiErrorSnackBar(context, statusCode: e.statusCode, data: body);
     } catch (_) {
       if (!mounted) return;
-      showAppErrorSnackBar(context, 'تعذّر إنشاء الطلب العاجل. حاول لاحقًا.');
+      showAppErrorSnackBar(context, 'تعذّر إنشاء الطلب العاجل. حاول لاحقاً.');
     } finally {
       if (mounted) setState(() => creatingUrgent = false);
     }
@@ -675,7 +675,7 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
     if (selectedDay == null || selectedDay!.trim().isEmpty) {
       showAppSnackBar(
         context,
-        'اختر يومًا متاحًا أولاً.',
+        'اختر يوماً متاحاً أولاً.',
         type: AppSnackBarType.warning,
       );
       return;
@@ -684,7 +684,7 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
     if (selectedSlot == null || selectedSlot!.trim().isEmpty) {
       showAppSnackBar(
         context,
-        'اختر وقتًا متاحًا أولاً.',
+        'اختر وقتاً متاحاً أولاً.',
         type: AppSnackBarType.warning,
       );
       return;
@@ -740,7 +740,7 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
       showApiErrorSnackBar(context, statusCode: e.statusCode, data: body);
     } catch (_) {
       if (!mounted) return;
-      showAppErrorSnackBar(context, 'حدث خطأ غير متوقع. حاول مرة أخرى لاحقًا.');
+      showAppErrorSnackBar(context, 'حدث خطأ غير متوقع. حاول مرة أخرى لاحقاً.');
     } finally {
       if (mounted) setState(() => booking = false);
     }
@@ -1003,7 +1003,7 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
             if (loadingRange || rangeInline != null)
               const SizedBox.shrink()
             else if (selectedDay == null)
-              const Text('اختر يومًا متاحًا أولاً.')
+              const Text('اختر يوماً متاحاً أولاً.')
             else if (slots.isEmpty)
               const Text('لا توجد أوقات متاحة في هذا اليوم.')
             else

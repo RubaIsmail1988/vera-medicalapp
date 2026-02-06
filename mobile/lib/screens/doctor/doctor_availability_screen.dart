@@ -311,7 +311,7 @@ class DoctorAvailabilityScreenState extends State<DoctorAvailabilityScreen> {
       showAppSnackBar(
         // ignore: use_build_context_synchronously
         context,
-        "هذا اليوم مضاف مسبقًا.",
+        "هذا اليوم مضاف مسبقاً.",
         type: AppSnackBarType.warning,
       );
       return;

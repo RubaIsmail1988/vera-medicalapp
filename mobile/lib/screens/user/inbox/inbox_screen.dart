@@ -447,7 +447,7 @@ class _InboxScreenState extends State<InboxScreen> {
       case "urgent_request_created_no_slots":
       case "urgent_request_without_slots":
       case "urgent_request_created":
-        return "لا توجد مواعيد متاحة حاليًا للطلب العاجل. يرجى مراجعة شاشة المواعيد.";
+        return "لا توجد مواعيد متاحة حالياً للطلب العاجل. يرجى مراجعة شاشة المواعيد.";
     }
 
     switch (eventType) {

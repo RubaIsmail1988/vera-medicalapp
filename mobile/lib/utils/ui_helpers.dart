@@ -216,7 +216,7 @@ String mapHttpErrorToArabicMessage({required int? statusCode, Object? data}) {
   }
 
   if (statusCode == 401) {
-    return 'انتهت الجلسة، يرجى تسجيل الدخول مجددًا.';
+    return 'انتهت الجلسة، يرجى تسجيل الدخول مجدداً.';
   }
 
   if (statusCode == 403) {
@@ -232,7 +232,7 @@ String mapHttpErrorToArabicMessage({required int? statusCode, Object? data}) {
   }
 
   if (statusCode >= 500) {
-    return 'حدث خطأ غير متوقع. حاول مرة أخرى لاحقًا.';
+    return 'حدث خطأ غير متوقع. حاول مرة أخرى لاحقاً.';
   }
 
   return extractApiErrorMessage(data, fallback: 'تعذّر تنفيذ العملية.');

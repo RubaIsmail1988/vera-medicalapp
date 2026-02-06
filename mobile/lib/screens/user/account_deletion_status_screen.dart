@@ -71,7 +71,7 @@ class _AccountDeletionStatusScreenState
       // لا يوجد أي طلبات
       if (requests.isEmpty) {
         setState(() {
-          statusMessage = 'لا يوجد طلب حذف حساب فعّال حاليًا.';
+          statusMessage = 'لا يوجد طلب حذف حساب فعّال حالياً.';
           canRequestDeletion = true;
           loading = false;
         });
@@ -116,7 +116,7 @@ class _AccountDeletionStatusScreenState
         setState(() {
           statusMessage =
               'تمت الموافقة على طلب حذف سابق، ثم تمت إعادة تفعيل حسابك بواسطة الإدارة.\n'
-              'لا يوجد حاليًا طلب حذف حساب فعّال.';
+              'لا يوجد حالياً طلب حذف حساب فعّال.';
           canRequestDeletion = true;
           loading = false;
         });
@@ -126,7 +126,7 @@ class _AccountDeletionStatusScreenState
       // 3) حالة احتياطية
       setState(() {
         statusMessage =
-            'لا يوجد طلب حذف حساب فعّال حاليًا.\n(آخر حالة معروفة: $latestStatus)';
+            'لا يوجد طلب حذف حساب فعّال حالياً.\n(آخر حالة معروفة: $latestStatus)';
         canRequestDeletion = true;
         loading = false;
       });

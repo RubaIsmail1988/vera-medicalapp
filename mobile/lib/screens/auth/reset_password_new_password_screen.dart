@@ -72,7 +72,7 @@ class _ResetPasswordNewPasswordScreenState
       if (!success) {
         showActionErrorSnackBar(
           context,
-          fallback: 'فشل تغيير كلمة المرور. تحقق من الرمز وحاول مجددًا.',
+          fallback: 'فشل تغيير كلمة المرور. تحقق من الرمز وحاول مجدداً.',
         );
         return;
       }

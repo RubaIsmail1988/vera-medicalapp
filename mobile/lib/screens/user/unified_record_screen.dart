@@ -183,7 +183,7 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
   // ---------------------------------------------------------------------------
 
   Future<void> _loadDoctorPatientsFromOrders() async {
-    // ✅ هنا نضمن أن أي فشل يتحول فوراً لواجهة Offline موحدة
+    //  هنا نضمن أن أي فشل يتحول فوراً لواجهة Offline موحدة
     try {
       final res = await clinicalService.listOrders();
       if (!mounted) return;
@@ -421,7 +421,7 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                "اختر مريضًا لعرض الإضبارة",
+                                "اختر مريضاً لعرض الإضبارة",
                                 style: Theme.of(context).textTheme.titleMedium,
                               ),
                               const SizedBox(height: 12),
@@ -532,7 +532,7 @@ class _UnifiedRecordScreenState extends State<UnifiedRecordScreen>
             if (isDoctor && selectedPatientId == null) {
               showAppSnackBar(
                 context,
-                "اختر مريضًا أولاً لعرض الإضبارة.",
+                "اختر مريضاً أولاً لعرض الإضبارة.",
                 type: AppSnackBarType.warning,
               );
               return;

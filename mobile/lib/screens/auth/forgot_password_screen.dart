@@ -94,7 +94,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
       // الوضع الطبيعي: email
       showAppSnackBar(
         context,
-        'إذا كان البريد صحيحًا، سيصلك رمز التحقق خلال لحظات.',
+        'إذا كان البريد صحيحاً، سيصلك رمز التحقق خلال لحظات.',
         type: AppSnackBarType.success,
       );
 

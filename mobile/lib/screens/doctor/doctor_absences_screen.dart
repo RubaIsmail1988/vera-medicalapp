@@ -227,7 +227,7 @@ class _DoctorAbsencesScreenState extends State<DoctorAbsencesScreen> {
     if (isEmergency) {
       showAppSnackBar(
         context,
-        'لا يمكن تعديل الغياب الطارئ. احذفه ثم أنشئ غيابًا طارئًا جديدًا.',
+        'لا يمكن تعديل الغياب الطارئ. احذفه ثم أنشئ غياباً طارئاً جديداً.',
         type: AppSnackBarType.warning,
       );
       return;

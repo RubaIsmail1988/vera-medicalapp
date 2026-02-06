@@ -99,7 +99,7 @@ class _HospitalPublicListScreenState extends State<HospitalPublicListScreen> {
 
     final filtered = hospitals.where(matches).toList();
 
-    // ترتيب: المطابق للمحافظة أولًا
+    // ترتيب: المطابق للمحافظة أولاً
     filtered.sort((a, b) {
       final govA = governorateNamesById[a.governorate]?.toLowerCase() ?? '';
       final govB = governorateNamesById[b.governorate]?.toLowerCase() ?? '';

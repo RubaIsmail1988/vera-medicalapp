@@ -179,7 +179,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     if (!ok) {
       showAppSnackBar(
         context,
-        "تعذر فتح الرابط. انسخه وافتحه يدويًا.",
+        "تعذر فتح الرابط. انسخه وافتحه يدوياً.",
         type: AppSnackBarType.warning,
       );
     }

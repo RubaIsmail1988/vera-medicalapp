@@ -294,7 +294,7 @@ class _DeletionRequestsScreenState extends State<DeletionRequestsScreen> {
                   child: Padding(
                     padding: EdgeInsets.all(18),
                     child: Text(
-                      'لا يوجد أي طلبات حذف حساب حاليًا.',
+                      'لا يوجد أي طلبات حذف حساب حالياً.',
                       textAlign: TextAlign.center,
                     ),
                   ),

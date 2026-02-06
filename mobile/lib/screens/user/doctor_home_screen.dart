@@ -195,7 +195,7 @@ class _DoctorHomeScreenState extends State<DoctorHomeScreen> {
   @override
   Widget build(BuildContext context) {
     final name = (userName ?? '').trim();
-    final greeting = name.isNotEmpty ? 'أهلًا د. $name' : 'أهلًا بك';
+    final greeting = name.isNotEmpty ? 'أهلاً د. $name' : 'أهلاً بك';
 
     return FutureBuilder<DoctorHomeData>(
       future: homeFuture,

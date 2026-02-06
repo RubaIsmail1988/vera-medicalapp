@@ -444,7 +444,7 @@ class _FilesTabState extends State<FilesTab> {
     final ok = await showConfirmDialog(
       context,
       title: "تأكيد الحذف",
-      message: "هل أنت متأكد من حذف هذا الملف؟\nسيتم حذف الملف نهائيًا.",
+      message: "هل أنت متأكد من حذف هذا الملف؟\nسيتم حذف الملف نهائياً.",
       confirmText: "حذف",
       cancelText: "إلغاء",
       danger: true,
@@ -598,7 +598,7 @@ class _FilesTabState extends State<FilesTab> {
                 menuMaxHeight: 320,
                 value: selectedOrderId,
                 decoration: const InputDecoration(
-                  labelText: "اختر طلبًا طبيًا",
+                  labelText: "اختر طلباً طبياً",
                   border: OutlineInputBorder(),
                 ),
                 items:
@@ -626,7 +626,7 @@ class _FilesTabState extends State<FilesTab> {
                 child:
                     selectedOrderId == null
                         ? const Center(
-                          child: Text("اختر طلبًا من الأعلى لعرض ملفاته."),
+                          child: Text("اختر طلباً من الأعلى لعرض ملفاته."),
                         )
                         : FutureBuilder<List<Map<String, dynamic>>>(
                           future: filesFuture,

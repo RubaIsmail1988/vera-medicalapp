@@ -415,7 +415,7 @@ class _PrescriptionsTabState extends State<PrescriptionsTab> {
     if (apptId == null || apptId <= 0) {
       showAppSnackBar(
         context,
-        "اختر موعدًا أولًا لإنشاء وصفة مرتبطة به.",
+        "اختر موعداً أولاً لإنشاء وصفة مرتبطة به.",
         type: AppSnackBarType.warning,
       );
       return;
@@ -788,12 +788,12 @@ class PrescriptionItemDialogState extends State<PrescriptionItemDialog> {
   final TextEditingController otherUnitController = TextEditingController();
 
   final TextEditingController frequencyController = TextEditingController();
-  String frequencyPreset = "مرة يوميًا";
+  String frequencyPreset = "مرة يومياً";
   bool isOtherFrequency = false;
   final List<String> frequencyOptions = const [
-    "مرة يوميًا",
-    "مرتين يوميًا",
-    "ثلاث مرات يوميًا",
+    "مرة يومياً",
+    "مرتين يومياً",
+    "ثلاث مرات يومياً",
     "كل 8 ساعات",
     "كل 12 ساعة",
     "عند اللزوم",

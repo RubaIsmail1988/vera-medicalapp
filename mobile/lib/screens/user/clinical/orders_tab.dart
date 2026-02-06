@@ -39,7 +39,7 @@ class _OrdersTabState extends State<OrdersTab> {
   bool get hasApptFilter =>
       widget.selectedAppointmentId != null && widget.selectedAppointmentId! > 0;
 
-  /// المطلوب: الطبيب لا يُنشئ طلبًا إلا ضمن سياق موعد
+  /// المطلوب: الطبيب لا يُنشئ طلباً إلا ضمن سياق موعد
   bool get canDoctorCreateOrder => isDoctor && hasApptFilter;
 
   @override
@@ -185,7 +185,7 @@ class _OrdersTabState extends State<OrdersTab> {
     if (apptId == null || apptId <= 0) {
       showAppSnackBar(
         context,
-        "اختر موعدًا أولًا لإنشاء طلب مرتبط به.",
+        "اختر موعداً أولاً لإنشاء طلب مرتبط به.",
         type: AppSnackBarType.warning,
       );
       return;
@@ -248,7 +248,7 @@ class _OrdersTabState extends State<OrdersTab> {
       if (pid == null || pid <= 0) {
         showAppSnackBar(
           context,
-          "اختر مريضًا أولًا.",
+          "اختر مريضاً أولاً.",
           type: AppSnackBarType.warning,
         );
         return;

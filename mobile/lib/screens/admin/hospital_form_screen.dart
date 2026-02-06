@@ -74,7 +74,7 @@ class _HospitalFormScreenState extends State<HospitalFormScreen> {
           if (!exists) selectedGovernorateId = null;
         }
 
-        // في حالة الإضافة: اختاري أول محافظة تلقائياً إن لم يكن هناك اختيار
+        // في حالة الإضافة: اختار أول محافظة تلقائياإن لم يكن هناك اختيار
         if (widget.hospital == null &&
             selectedGovernorateId == null &&
             governorates.isNotEmpty) {
