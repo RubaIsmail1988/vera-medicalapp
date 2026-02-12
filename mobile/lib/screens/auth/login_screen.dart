@@ -156,7 +156,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
+    // final cs = Theme.of(context).colorScheme;
 
     return Scaffold(
       appBar: AppBar(title: const Text('الدخول إلى الحساب')),
@@ -170,21 +170,21 @@ class _LoginScreenState extends State<LoginScreen> {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  const AppLogo(width: 220),
+                  const AppLogo(width: 260, framed: false),
                   const SizedBox(height: 18),
                   Text(
-                    'مرحباً بعودتك',
+                    ' ',
                     style: Theme.of(context).textTheme.titleLarge?.copyWith(
                       fontWeight: FontWeight.w800,
                     ),
                   ),
                   const SizedBox(height: 6),
-                  Text(
-                    'يرجى تسجيل الدخول للمتابعة',
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: cs.onSurface.withValues(alpha: 0.72),
-                    ),
-                  ),
+                  //   Text(
+                  //    'يرجى تسجيل الدخول للمتابعة',
+                  //   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  //     color: cs.onSurface.withValues(alpha: 0.72),
+                  //   ),
+                  // ),
                   const SizedBox(height: 16),
                   Card(
                     child: Padding(
@@ -200,7 +200,14 @@ class _LoginScreenState extends State<LoginScreen> {
                             validator: emailValidator,
                             enabled: !loading,
                             textInputAction: TextInputAction.next,
+                            autofillHints: const [
+                              AutofillHints.username,
+                              AutofillHints.email,
+                            ],
+                            autocorrect: false,
+                            enableSuggestions: false,
                           ),
+
                           const SizedBox(height: 16),
                           TextFormField(
                             controller: passwordController,
@@ -224,12 +231,14 @@ class _LoginScreenState extends State<LoginScreen> {
                             validator: passwordValidator,
                             enabled: !loading,
                             textInputAction: TextInputAction.done,
-                            onFieldSubmitted: (_) {
-                              if (!loading) {
-                                login();
-                              }
+                            autofillHints: const [AutofillHints.password],
+                            autocorrect: false,
+                            enableSuggestions: false,
+                            onFieldSubmitted: (value) {
+                              if (!loading) login();
                             },
                           ),
+
                           const SizedBox(height: 18),
                           SizedBox(
                             width: double.infinity,

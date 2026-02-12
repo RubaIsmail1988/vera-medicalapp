@@ -56,10 +56,15 @@ class AppTheme {
             RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
           ),
           padding: const WidgetStatePropertyAll<EdgeInsets>(
-            EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            EdgeInsets.symmetric(horizontal: 16, vertical: 14),
           ),
+          minimumSize: const WidgetStatePropertyAll<Size>(
+            Size(double.infinity, 52),
+          ),
+          elevation: const WidgetStatePropertyAll<double>(1),
         ),
       ),
+
       textButtonTheme: TextButtonThemeData(
         style: ButtonStyle(
           foregroundColor: WidgetStatePropertyAll<Color>(scheme.primary),
@@ -161,10 +166,15 @@ class AppTheme {
             RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
           ),
           padding: const WidgetStatePropertyAll<EdgeInsets>(
-            EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            EdgeInsets.symmetric(horizontal: 16, vertical: 14),
           ),
+          minimumSize: const WidgetStatePropertyAll<Size>(
+            Size(double.infinity, 52),
+          ),
+          elevation: const WidgetStatePropertyAll<double>(1),
         ),
       ),
+
       textButtonTheme: TextButtonThemeData(
         style: ButtonStyle(
           foregroundColor: WidgetStatePropertyAll<Color>(scheme.primary),

@@ -3,8 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import '../../services/auth_service.dart';
 
+import '../../services/auth_service.dart';
 import '../../widgets/app_logo.dart';
 
 // Services
@@ -55,9 +55,9 @@ class _SplashScreenState extends State<SplashScreen> {
         return;
       }
 
-      //  2) Now it's safe to set role + do reminder sync
+      // 2) Now it's safe to set role + do reminder sync
       final backendRole = (me["role"]?.toString() ?? role).trim();
-      final bool isActive = prefs.getBool('user_is_active') ?? true;
+      final isActive = prefs.getBool('user_is_active') ?? true;
 
       LocalNotificationsService.setCurrentRole(backendRole);
 
@@ -75,7 +75,7 @@ class _SplashScreenState extends State<SplashScreen> {
       }
 
       context.go('/app');
-    } catch (_) {
+    } catch (e) {
       if (!mounted) return;
       context.go('/login');
     }
@@ -83,37 +83,15 @@ class _SplashScreenState extends State<SplashScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-
-    return Scaffold(
+    return const Scaffold(
       body: Center(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(24),
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 520),
-            child: Card(
-              child: Padding(
-                padding: const EdgeInsets.all(20),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    const AppLogo(width: 220),
-                    const SizedBox(height: 20),
-                    Text(
-                      'Vera Smart Health',
-                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                        color: cs.onSurface,
-                        fontWeight: FontWeight.w800,
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 20),
-                    const CircularProgressIndicator(),
-                  ],
-                ),
-              ),
-            ),
-          ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            AppLogo(width: 220),
+            SizedBox(height: 32),
+            CircularProgressIndicator(),
+          ],
         ),
       ),
     );
