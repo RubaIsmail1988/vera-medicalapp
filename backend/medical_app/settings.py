@@ -42,8 +42,7 @@ INSTALLED_APPS = [
     'appointments',
     'notifications',   
     'rest_framework',
-    'corsheaders',
-    'django_extensions'
+    'corsheaders'
 ]
 
 AUTH_USER_MODEL = 'accounts.CustomUser'
