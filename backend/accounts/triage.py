@@ -16,14 +16,15 @@ class TriageResult:
     score_version: str = "triage_v2"
 
 
-def compute_vitals_score(triage_data: Dict[str, Any], model_score: int) -> int:
+def compute_vitals_score(triage_data: Dict[str, Any], model_score: Any) -> int:
     """Compute rule-based score using vitals only (temperature, BP, HR)."""
     temperature_c = triage_data.get("temperature_c")
     bp_systolic = triage_data.get("bp_systolic")
     bp_diastolic = triage_data.get("bp_diastolic")
     heart_rate = triage_data.get("heart_rate")
 
-    score = model_score
+    # Start baseline safely
+    score = float(model_score) if isinstance(model_score, (int, float)) else 0.0
 
     # Temperature
     try:
@@ -136,35 +137,30 @@ def compute_triage_score(triage_data: Dict[str, Any]) -> TriageResult:
     """
     symptoms_text = (triage_data.get("symptoms_text") or "").strip()
 
-    model_score: Optional[int] = None
+    model_score: int = 0
     model_conf: int = 0
+    score_version = "triage_v1"
+
     if symptoms_text:
-        try:
-
-            logger.info("predict_symptoms_score is from: %s",
-            inspect.getsourcefile(predict_symptoms_score))
-
-            model_score, model_conf = predict_symptoms_score(symptoms_text)
-            logger.info(
-                "Model returned score=%s confidence=%s",
-                model_score,
-                model_conf
-            )
-            score_version="triage_v2"
-        except Exception as e:
-            logger.exception("Model prediction failed: %s", e)
-            # If model fails, fall back to rule-only combine logic
-            model_score = None
-            model_conf = 0
-            score_version="triage_v1"
+        model_score, model_conf = predict_symptoms_score(symptoms_text)
+        if model_score > 0:
+            score_version = "triage_v2"
+        else:
+            score_version = "triage_v1"
 
     result = compute_triage(triage_data, model_score=model_score)
 
-    if model_score is not None:
-        # cap overall confidence by model confidence (so weak model predictions don't show 100%)
+    if model_score > 0:
         result = TriageResult(
             score=result.score,
             confidence=min(result.confidence, model_conf),
+            missing_fields=result.missing_fields,
+            score_version=score_version,
+        )
+    else:
+        result = TriageResult(
+            score=result.score,
+            confidence=result.confidence,
             missing_fields=result.missing_fields,
             score_version=score_version,
         )
