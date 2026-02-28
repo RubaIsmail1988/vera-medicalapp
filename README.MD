@@ -4,16 +4,18 @@
      سجل طبي الكتروني يحوي الطلبات السريرية، الوصفات، الالتزام الدوائي، و بيانات المريض.
      نظام إشعارات محلي.
      بطاقات نصائح.
+## تنزيل التطبيق
+https://github.com/RubaIsmail1988/vera-medicalapp/releases/tag/v1.0.0
 
-# تقنيات بناء التطبيق
+## تقنيات بناء التطبيق
      Backend: Django REST Framework
      Frontend: Flutter
 
-# هيكلية المشروع
+## هيكلية المشروع
      backend/    # مشروع Django (REST API)
      mobile/     # تطبيق Flutter
 
-# تشغيل Backend (Django) محلياً.
+## تشغيل Backend (Django) محلياً.
   المتطلبات:
      Python 3.x
      pip
@@ -34,7 +36,7 @@
          python manage.py runserver
          سيعمل الخادم على http://127.0.0.1:8000/
 
-# تشغيل Frontend (flutter):
+## تشغيل Frontend (flutter):
    المتطلبات:
       Flutter SDK
       Android Studio أو Emulator
@@ -43,7 +45,7 @@
       flutter pub get
       flutter run
 
-# ربط التطبيق مع السرفر:
+## ربط التطبيق مع السرفر:
     عنوان السرفر موجود بالملف mobile/lib/utils/constants.dart
     المتغير الأساسي هو const String baseUrl = "...";
     1) عند استخدام الخادم المنشور على pythonanywhere:
@@ -56,12 +58,12 @@
         flutter clean
         flutter run
 
-# نظام التقييم الأولي (Triage)
+## نظام التقييم الأولي (Triage)
      يعتمد نظام التقييم الأولي على نمط hybrid يتكون من:
     1) خدمة ذكاء اصطناعي  خارجية.
     2) منطق rule-based داخلي يعتمد على العلامات الحيوية
     3) في حال عدم تشغيل خدمة ml يعمل النظام تلقائياً باستخدام المنطق الداخلي فقط.
 
-## ملاحظة مهمة:
+### ملاحظة مهمة:
 خدمة ML لا تعمل تلقائياً داخل Django.
 يجب تشغيلها يدوياً عبر google colab
